@@ -1,0 +1,102 @@
+name: fitmemory
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - fitmemory-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - private
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      DB_PROVIDER: postgres
+      ConnectionStrings__FitMemory: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};
+        Include Error Detail=false
+      APP_ORIGINS: ${APP_ORIGINS}
+      AI_PROVIDER: ${AI_PROVIDER}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - private
+
+  migrate:
+    profiles:
+      - tools
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_CONNECTION_STRING: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};
+        Include Error Detail=false
+    entrypoint:
+      - dotnet
+      - /app/migrate/FitMemory.Migrate.dll
+    command:
+      - --sqlite
+      - /data/fitmemory.db
+    volumes:
+      - ../backend/fitmemory.db:/data/fitmemory.db:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - private
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - fitmemory-caddy-data:/data
+      - fitmemory-caddy-config:/config
+    depends_on:
+      - api
+    networks:
+      - private
+
+networks:
+  private:
+
+volumes:
+  fitmemory-postgres:
+  fitmemory-caddy-data:
+  fitmemory-caddy-config:

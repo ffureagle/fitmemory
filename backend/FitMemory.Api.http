@@ -1,0 +1,97 @@
+@baseUrl = http://localhost:5158
+@userId = demo-user-001
+
+### Health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Create or update a profile
+PUT {{baseUrl}}/api/profiles/{{userId}}
+Content-Type: application/json
+
+{
+  "heightCm": 181,
+  "weightKg": 78,
+  "shoulderWidthCm": 48,
+  "waistCircumferenceCm": 84,
+  "fitPreference": "Oversized"
+}
+
+### Add a kept item
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+
+{
+  "userId": "{{userId}}",
+  "brand": "Pull&Bear",
+  "productName": "Heavyweight Oversized T-Shirt",
+  "category": "Tops",
+  "purchasedSize": "L",
+  "outcome": "KeptGoodFit",
+  "fitNotes": "Ideal drop shoulder and roomy chest.",
+  "chestWidthCm": 60,
+  "shoulderWidthCm": 53,
+  "waistWidthCm": null,
+  "lengthCm": 73,
+  "sleeveLengthCm": 25,
+  "inseamCm": null
+}
+
+### Add a returned item
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+
+{
+  "userId": "{{userId}}",
+  "brand": "Zara",
+  "productName": "Relaxed Fit T-Shirt",
+  "category": "Tops",
+  "purchasedSize": "XL",
+  "outcome": "ReturnedTooBaggy",
+  "returnConfirmedByUser": true,
+  "fitNotes": "Too wide through the body.",
+  "chestWidthCm": 65,
+  "shoulderWidthCm": 57,
+  "waistWidthCm": null,
+  "lengthCm": 76,
+  "sleeveLengthCm": 27,
+  "inseamCm": null
+}
+
+### List order history
+GET {{baseUrl}}/api/orders?userId={{userId}}
+Accept: application/json
+
+### Analyze a product
+POST {{baseUrl}}/api/recommendations/analyze
+Content-Type: application/json
+
+{
+  "userId": "{{userId}}",
+  "product": {
+    "url": "https://shop.example/products/washed-tee",
+    "brand": "Example",
+    "name": "Washed Oversized Tee",
+    "category": "Tops",
+    "price": "39 USD",
+    "imageUrl": ""
+  },
+  "sizeChart": {
+    "found": true,
+    "title": "Product size guide",
+    "unit": "Centimeters",
+    "headers": [
+      "Size",
+      "Chest Width (cm)",
+      "Shoulder (cm)",
+      "Length (cm)"
+    ],
+    "rows": [
+      { "cells": ["S", "56", "49", "69"] },
+      { "cells": ["M", "59", "51", "71"] },
+      { "cells": ["L", "62", "53", "73"] },
+      { "cells": ["XL", "65", "55", "75"] }
+    ],
+    "rawText": "Size | Chest Width (cm) | Shoulder (cm) | Length (cm)\nS | 56 | 49 | 69\nM | 59 | 51 | 71\nL | 62 | 53 | 73\nXL | 65 | 55 | 75"
+  }
+}

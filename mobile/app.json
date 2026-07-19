@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "FitMemory",
+    "slug": "fitmemory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fitmemory.mobile",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.fitmemory.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#F3F1EA"
+      }
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "FitMemory oturumunu güvenli biçimde açmak için Face ID kullan."
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://api.mfurkangokbag.com.tr"
+    }
+  }
+}

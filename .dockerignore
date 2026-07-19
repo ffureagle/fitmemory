@@ -1,0 +1,14 @@
+**/bin
+**/obj
+**/node_modules
+**/.expo
+.git
+.agents
+.pnpm-store
+Backups
+backend/*.db
+backend/*.db-*
+backend/*.log
+deploy/.env
+extension
+mobile
