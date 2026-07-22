@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -92,8 +93,37 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+var configuredPostgresHost = builder.Configuration["POSTGRES_HOST"]?.Trim();
+var configuredPostgresPassword = builder.Configuration["POSTGRES_PASSWORD"];
 var connectionString = builder.Configuration.GetConnectionString("FitMemory")
     ?? "Data Source=fitmemory.db";
+if (!string.IsNullOrWhiteSpace(configuredPostgresHost))
+{
+    if (string.IsNullOrWhiteSpace(configuredPostgresPassword))
+    {
+        throw new InvalidOperationException(
+            "POSTGRES_HOST tanımlıyken POSTGRES_PASSWORD da tanımlanmalıdır.");
+    }
+
+    var postgresConnection = new NpgsqlConnectionStringBuilder
+    {
+        Host = configuredPostgresHost,
+        Port = int.TryParse(
+            builder.Configuration["POSTGRES_PORT"],
+            out var postgresPort)
+                ? postgresPort
+                : 5432,
+        Database = builder.Configuration["POSTGRES_DATABASE"]?.Trim()
+            ?? "postgres",
+        Username = builder.Configuration["POSTGRES_USERNAME"]?.Trim()
+            ?? "postgres",
+        Password = configuredPostgresPassword,
+        SslMode = SslMode.Require,
+        IncludeErrorDetail = false
+    };
+    postgresConnection["GSS Encryption Mode"] = "Disable";
+    connectionString = postgresConnection.ConnectionString;
+}
 var configuredDatabaseProvider = (
         builder.Configuration["DB_PROVIDER"] ??
         builder.Configuration["Database:Provider"] ??
