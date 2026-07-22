@@ -202,14 +202,19 @@ public sealed class SizeRecommendationService(
                 : excludedFitCount > 0
                     ? $"Kalıp koruması aktif: {activeFit.Label}; {excludedFitCount} farklı fit kaydı beden sınırının dışında bırakıldı."
                     : $"Kalıp koruması aktif: beden kanıtı {activeFit.Label} ailesi içinde değerlendirildi.";
+        var silhouetteWarning =
+            $"{activeFit.Label}: {activeFit.Silhouette} {activeFit.SizingRule}".Trim();
         return familyResult with
         {
             FitNotes = familyResult.FitNotes
                 .Prepend(fitScopeNote)
+                .Prepend(silhouetteWarning)
                 .Prepend(
                     $"Kategori koruması aktif: analiz yalnız {categoryLabel.ToLowerInvariant()} hafızasıyla yapıldı.")
-                .Take(5)
+                .Take(6)
                 .ToArray(),
+            Explanation =
+                $"{silhouetteWarning} {familyResult.Explanation}".Trim(),
             EvidenceSummary =
                 $"{categoryLabel} · {activeFit.Label} · {familyResult.EvidenceSummary}"
         };

@@ -1,23 +1,31 @@
-const DEFAULT_API_BASE_URL = "https://api.mfurkangokbag.com.tr";
+const DEFAULT_API_BASE_URL = "https://fitmemory-api.onrender.com";
 const IDENTITY_KEY = "fitMemoryUserId";
 const SETTINGS_KEY = "fitMemorySettings";
 const AUTH_KEY = "fitMemoryAuth";
 const TARGET_TAB_KEY = "fitMemoryTargetTabId";
 const tabStateQueues = new Map();
-let appWindowId = null;
 
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.storage.session.clear();
   await getLegacyIdentity();
   const { [SETTINGS_KEY]: existing } = await chrome.storage.local.get(SETTINGS_KEY);
-  if (!existing) {
-    await chrome.storage.local.set({
-      [SETTINGS_KEY]: {
-        apiBaseUrl: DEFAULT_API_BASE_URL,
-        autoAnalyze: true
-      }
-    });
-  }
+  await chrome.storage.local.set({
+    [SETTINGS_KEY]: {
+      ...existing,
+      apiBaseUrl: DEFAULT_API_BASE_URL,
+      autoAnalyze: existing?.autoAnalyze ?? true
+    }
+  });
+  await configureSidePanel();
+  await clearLegacyPageCards();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  enforceProductionApiUrl().catch((error) => {
+    console.error("FitMemory API address could not be enforced.", error);
+  });
+  configureSidePanel().catch(console.error);
+  clearLegacyPageCards().catch(console.error);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -28,12 +36,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     analysisKey(tabId)
   ]);
   tabStateQueues.delete(tabId);
-});
-
-chrome.action.onClicked.addListener((tab) => {
-  openPersistentAppWindow(tab).catch((error) => {
-    console.error("FitMemory window could not be opened.", error);
-  });
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
@@ -49,12 +51,6 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   }
 });
 
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === appWindowId) {
-    appWindowId = null;
-  }
-});
-
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!changeInfo.url) {
     return;
@@ -64,53 +60,22 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   });
 });
 
-async function openPersistentAppWindow(sourceTab) {
-  if (sourceTab?.id !== undefined &&
-      isScannableWebUrl(sourceTab.url)) {
-    await chrome.storage.session.set({
-      [TARGET_TAB_KEY]: sourceTab.id
-    });
-  }
-
-  const existingWindowId = await findExistingAppWindow();
-  if (existingWindowId !== null) {
-    appWindowId = existingWindowId;
-    await chrome.windows.update(existingWindowId, {
-      focused: true,
-      state: "normal"
-    });
-    return;
-  }
-
-  const created = await chrome.windows.create({
-    url: chrome.runtime.getURL("popup.html"),
-    type: "popup",
-    width: 432,
-    height: 760,
-    focused: true
+async function configureSidePanel() {
+  await chrome.sidePanel.setPanelBehavior({
+    openPanelOnActionClick: true
   });
-  appWindowId = created?.id ?? null;
 }
 
-async function findExistingAppWindow() {
-  if (appWindowId !== null) {
-    try {
-      await chrome.windows.get(appWindowId);
-      return appWindowId;
-    } catch {
-      appWindowId = null;
-    }
-  }
-
-  const appUrl = chrome.runtime.getURL("popup.html");
-  const windows = await chrome.windows.getAll({
-    populate: true,
-    windowTypes: ["popup"]
+async function clearLegacyPageCards() {
+  const tabs = await chrome.tabs.query({
+    url: ["http://*/*", "https://*/*"]
   });
-  const existing = windows.find(window =>
-    window.tabs?.some(tab =>
-      (tab.url || tab.pendingUrl) === appUrl));
-  return existing?.id ?? null;
+  await Promise.allSettled(tabs.map((tab) =>
+    tab.id === undefined
+      ? Promise.resolve()
+      : chrome.tabs.sendMessage(tab.id, {
+          type: "CLEAR_FITMEMORY_RECOMMENDATION"
+        })));
 }
 
 function isScannableWebUrl(value) {
@@ -136,6 +101,11 @@ async function handlePopupMessage(message) {
   switch (message?.type) {
     case "GET_BOOTSTRAP":
       return getBootstrap();
+    case "GET_FIT_PROGRESS": {
+      const userId = await getIdentity();
+      return apiFetch(
+        `/api/profiles/${encodeURIComponent(userId)}/progress`);
+    }
     case "REGISTER_ACCOUNT":
       return registerAccount(message.payload);
     case "LOGIN_ACCOUNT":
@@ -203,6 +173,7 @@ async function getBootstrap() {
   let profile = null;
   let orders = [];
   let styleBoardItems = [];
+  let progress = null;
   let apiError = null;
   let auth = storedAuth;
   let account = storedAuth?.account ?? null;
@@ -221,11 +192,13 @@ async function getBootstrap() {
         `/api/profiles/${encodeURIComponent(account.userId)}`,
         { allowNotFound: true });
       if (profile) {
-        [orders, styleBoardItems] = await Promise.all([
+        [orders, styleBoardItems, progress] = await Promise.all([
           apiFetch(
             `/api/orders?userId=${encodeURIComponent(account.userId)}`),
           apiFetch(
-            `/api/style-board?userId=${encodeURIComponent(account.userId)}`)
+            `/api/style-board?userId=${encodeURIComponent(account.userId)}`),
+          apiFetch(
+            `/api/profiles/${encodeURIComponent(account.userId)}/progress`)
         ]);
       }
     }
@@ -246,6 +219,7 @@ async function getBootstrap() {
     profile,
     orders,
     styleBoardItems,
+    progress,
     activeTabId: activeTab?.id ?? null,
     snapshot,
     recommendation,
@@ -808,7 +782,7 @@ async function setApiBaseUrl(value) {
   }
 
   const settings = await getSettings();
-  settings.apiBaseUrl = parsed.href.replace(/\/$/, "");
+  settings.apiBaseUrl = DEFAULT_API_BASE_URL;
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
   return settings;
 }
@@ -1043,20 +1017,6 @@ async function storeAndDisplayRecommendation(tabId, recommendation, analyzedSnap
     return false;
   }
 
-  try {
-    await sendContentMessageWithRecovery(
-      tabId,
-      {
-        type: "SHOW_FITMEMORY_RECOMMENDATION",
-        payload: recommendation,
-        productUrl: analyzedSnapshot?.product?.url || ""
-      },
-      (candidate) => candidate?.shown === true,
-      "beden önerisi"
-    );
-  } catch {
-    return true;
-  }
   return true;
 }
 
@@ -1272,10 +1232,19 @@ async function getAuth() {
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
-  return {
-    apiBaseUrl: stored[SETTINGS_KEY]?.apiBaseUrl || DEFAULT_API_BASE_URL,
+  const settings = {
+    apiBaseUrl: DEFAULT_API_BASE_URL,
     autoAnalyze: stored[SETTINGS_KEY]?.autoAnalyze ?? true
   };
+  if (stored[SETTINGS_KEY]?.apiBaseUrl !== DEFAULT_API_BASE_URL) {
+    await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+  }
+  return settings;
+}
+
+async function enforceProductionApiUrl() {
+  const settings = await getSettings();
+  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
 
 async function apiFetch(path, options = {}) {
@@ -1507,7 +1476,7 @@ function analysisKey(tabId) {
 
 function normalizeError(error) {
   if (error instanceof TypeError && /fetch/i.test(error.message)) {
-    return "FitMemory API'ına ulaşılamıyor. Backend'i başlatın ve Profil ekranındaki API adresini kontrol edin.";
+    return "FitMemory sunucusu şu an yanıt vermiyor. Ücretsiz sunucu uyanırken kısa bir gecikme olabilir; birkaç saniye sonra yeniden deneyin.";
   }
   return error?.message || "Beklenmeyen bir hata oluştu.";
 }

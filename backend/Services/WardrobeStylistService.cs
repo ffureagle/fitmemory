@@ -923,10 +923,18 @@ public sealed class WardrobeStylistService(
         var ageLead = profile.Age is int age
             ? $"{age} yaş kullanım bağlamında"
             : "Günlük kullanım bağlamında";
+        var footwearText =
+            $"{activeProduct.Category} {activeProduct.Name} " +
+            string.Join(" ", selected.Select(order =>
+                $"{order.Category} {order.ProductName}"));
+        var hasFootwear = ContainsAny(
+            footwearText.ToLowerInvariant(),
+            "ayakkabı", "ayakkabi", "shoe", "sneaker", "bot", "boot", "loafer");
         var sequence = (variant % 3) switch
         {
             1 => "katmanlar açık bırakıldığında",
-            2 => "aksesuar ve ayakkabı sade tutulduğunda",
+            2 when hasFootwear => "seçili ayakkabı görünümün hacmiyle yarışmadığında",
+            2 => "renk tekrarları kontrollü tutulduğunda",
             _ => "ana parça görünür merkezde kaldığında"
         };
         var outfitText = (

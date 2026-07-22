@@ -7,6 +7,7 @@ const state = {
   profile: null,
   orders: [],
   styleBoardItems: [],
+  progress: null,
   styleBoardAnalysis: null,
   activeTabId: null,
   snapshot: null,
@@ -45,6 +46,7 @@ async function initialize() {
     }
     hydrateProfileForm();
     renderFit();
+    renderProgress();
     renderOrders();
     renderStudio();
     if (!state.profile || !state.profile.age) {
@@ -76,12 +78,16 @@ function cacheElements() {
     "register-email",
     "register-password",
     "register-password-confirm",
+    "register-legal-consent",
     "register-button",
     "api-status-dot",
     "api-status-text",
     "refresh-page",
     "empty-rescan",
     "fit-loading",
+    "fit-progress",
+    "fit-progress-headline",
+    "fit-progress-detail",
     "fit-empty",
     "fit-ready",
     "size-orb",
@@ -136,6 +142,10 @@ function cacheElements() {
     "orders-empty",
     "orders-list",
     "profile-form",
+    "profile-summary",
+    "profile-summary-title",
+    "profile-summary-values",
+    "edit-profile-button",
     "account-avatar",
     "account-name",
     "account-email",
@@ -214,6 +224,11 @@ function bindEvents() {
     clearStudio);
   elements.scanOrdersButton.addEventListener("click", scanOrderHistory);
   elements.profileForm.addEventListener("submit", saveProfile);
+  elements.editProfileButton.addEventListener("click", () => {
+    elements.profileSummary.classList.add("hidden");
+    elements.profileForm.classList.remove("hidden");
+    elements.age.focus();
+  });
   chrome.storage.onChanged.addListener(handleStorageChanges);
 }
 
@@ -425,6 +440,16 @@ function renderApiStatus(forceValue) {
   const healthy = forceValue ?? state.apiHealthy;
   elements.apiStatusDot.classList.toggle("is-live", healthy);
   elements.apiStatusText.textContent = healthy ? "API açık" : "API kapalı";
+}
+
+function renderProgress() {
+  const progress = state.progress;
+  elements.fitProgress.classList.toggle("hidden", !progress);
+  if (!progress) {
+    return;
+  }
+  elements.fitProgressHeadline.textContent = progress.headline;
+  elements.fitProgressDetail.textContent = progress.detail;
 }
 
 function renderFit() {
@@ -1289,18 +1314,7 @@ function createOrderCard(order) {
   title.className = "closet-product-title";
   title.textContent = order.productName;
 
-  const compactMeta = document.createElement("div");
-  compactMeta.className = "closet-product-meta";
-  const outcome = document.createElement("span");
-  outcome.className = `closet-outcome-dot ${outcomeClass(order.outcome)}`;
-  outcome.textContent = outcomeLabel(order.outcome);
-  compactMeta.append(outcome);
-  if (order.fitLabel) {
-    const fit = document.createElement("span");
-    fit.textContent = order.fitLabel;
-    compactMeta.append(fit);
-  }
-  copy.append(brand, title, compactMeta);
+  copy.append(brand, title);
 
   const trailing = document.createElement("div");
   trailing.className = "closet-product-trailing";
@@ -1325,6 +1339,18 @@ function createOrderCard(order) {
 
   const body = document.createElement("div");
   body.className = "closet-product-body";
+  const detailMeta = document.createElement("div");
+  detailMeta.className = "closet-product-meta";
+  const outcome = document.createElement("span");
+  outcome.className = `closet-outcome-dot ${outcomeClass(order.outcome)}`;
+  outcome.textContent = outcomeLabel(order.outcome);
+  detailMeta.append(outcome);
+  if (order.fitLabel) {
+    const fit = document.createElement("span");
+    fit.textContent = order.fitLabel;
+    detailMeta.append(fit);
+  }
+  body.append(detailMeta);
   const fitPanel = document.createElement("section");
   fitPanel.className = "closet-assessment";
   const fitHeader = document.createElement("div");
@@ -1383,7 +1409,7 @@ function createOrderCard(order) {
     "text-[11px] font-semibold tracking-[0.02em] text-mango";
   feedbackTitle.textContent = "Sende nasıl oldu?";
   const userNote = document.createElement("textarea");
-  userNote.className = "field mt-2 min-h-[84px] resize-y text-xs leading-[1.5]";
+  userNote.className = "field closet-fit-note mt-2 resize-y text-xs leading-[1.5]";
   userNote.maxLength = 500;
   userNote.placeholder = "Örn. Boydan tam, belden biraz dar; omuzları iyi.";
   userNote.value = order.userFitNotes || "";
@@ -1671,8 +1697,11 @@ function renderImportStatus(result) {
 }
 
 function hydrateProfileForm() {
-  elements.apiBaseUrl.value = state.settings?.apiBaseUrl || "http://localhost:5158";
+  elements.apiBaseUrl.value =
+    state.settings?.apiBaseUrl || "https://fitmemory-api.onrender.com";
   if (!state.profile) {
+    elements.profileSummary.classList.add("hidden");
+    elements.profileForm.classList.remove("hidden");
     return;
   }
   elements.age.value = state.profile.age ?? "";
@@ -1684,6 +1713,35 @@ function hydrateProfileForm() {
   elements.footLengthCm.value = state.profile.footLengthCm || "";
   elements.shoeSizeEu.value = state.profile.usualShoeSizeEu || "";
   elements.fitPreference.value = state.profile.fitPreference;
+  renderProfileSummary();
+}
+
+function renderProfileSummary() {
+  if (!state.profile) {
+    return;
+  }
+  const profile = state.profile;
+  const preferenceLabels = {
+    TrueToSize: "Standart",
+    Relaxed: "Rahat",
+    Oversized: "Oversize",
+    Slim: "Dar"
+  };
+  elements.profileSummaryTitle.textContent =
+    `${preferenceLabels[profile.fitPreference] || "Standart"} kalıp tercihi`;
+  const values = [
+    ["Boy", `${profile.heightCm} cm`],
+    ["Göğüs", profile.chestCircumferenceCm ? `${profile.chestCircumferenceCm} cm` : "—"],
+    ["Bel", `${profile.waistCircumferenceCm} cm`],
+    ["Ayakkabı", profile.usualShoeSizeEu ? `EU ${profile.usualShoeSizeEu}` : "—"]
+  ];
+  elements.profileSummaryValues.replaceChildren(...values.map(([label, value]) => {
+    const item = document.createElement("span");
+    item.innerHTML = `<small>${label}</small><strong>${value}</strong>`;
+    return item;
+  }));
+  elements.profileForm.classList.add("hidden");
+  elements.profileSummary.classList.remove("hidden");
 }
 
 async function rescanPage() {
@@ -1786,6 +1844,8 @@ async function performProductAnalysis(
     renderFit();
     const verifiedRecommendation = getVerifiedRecommendation();
     if (verifiedRecommendation) {
+      state.progress = await sendMessage("GET_FIT_PROGRESS");
+      renderProgress();
       showToast(isReconsideration
         ? `Notunla yeniden düşünüldü: ${verifiedRecommendation.recommendedSize}.`
         : `Önerilen bedeniniz: ${verifiedRecommendation.recommendedSize}.`);
@@ -1858,6 +1918,7 @@ async function saveProfile(event) {
     state.apiHealthy = true;
     renderApiStatus();
     renderOrders();
+    hydrateProfileForm();
     navigate("fit");
     showToast("Beden profiliniz kaydedildi.");
   } catch (error) {

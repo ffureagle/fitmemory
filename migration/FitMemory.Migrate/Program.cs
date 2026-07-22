@@ -15,9 +15,7 @@ var sourceOptions = new DbContextOptionsBuilder<FitMemoryDbContext>()
     .UseSqlite($"Data Source={sqlitePath};Mode=ReadOnly")
     .Options;
 var destinationOptions = new DbContextOptionsBuilder<FitMemoryDbContext>()
-    .UseNpgsql(
-        options.PostgresConnectionString,
-        npgsql => npgsql.EnableRetryOnFailure(5))
+    .UseNpgsql(options.PostgresConnectionString)
     .Options;
 
 await using var source = new FitMemoryDbContext(sourceOptions);
@@ -29,7 +27,6 @@ if (!await source.Database.CanConnectAsync())
         "Kaynak SQLite veritabanına bağlanılamadı.");
 }
 
-await destination.Database.EnsureCreatedAsync();
 if (!await destination.Database.CanConnectAsync())
 {
     throw new InvalidOperationException(
@@ -117,11 +114,13 @@ foreach (var profile in sourceProfiles)
 }
 await destination.SaveChangesAsync();
 
-var activeSessions = await source.UserSessions
+var sourceSessions = await source.UserSessions
     .AsNoTracking()
-    .Where(session => session.ExpiresAt > DateTimeOffset.UtcNow)
     .OrderBy(session => session.Id)
     .ToListAsync();
+var activeSessions = sourceSessions
+    .Where(session => session.ExpiresAt > DateTimeOffset.UtcNow)
+    .ToList();
 foreach (var session in activeSessions)
 {
     if (!accountMap.TryGetValue(

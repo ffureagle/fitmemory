@@ -202,7 +202,6 @@ public sealed class StyleBoardAnalysisService(
             .ToLowerInvariant();
         var hasUpper = ContainsAny(text, "tişört", "tisort", "shirt", "gömlek", "gomlek", "bluz", "sweat", "kazak", "top");
         var hasBottom = ContainsAny(text, "pantolon", "jean", "etek", "skirt", "şort", "sort", "trouser");
-        var hasShoe = ContainsAny(text, "ayakkabı", "ayakkabi", "shoe", "sneaker", "bot", "boot", "loafer");
         var hasTrench = ContainsAny(text, "trenç", "trenc", "trench");
         var hasMini = ContainsAny(text, "mini etek", "mini skirt");
         var hasShortSleeve = ContainsAny(text, "kısa kollu", "kisa kollu", "short sleeve");
@@ -217,11 +216,6 @@ public sealed class StyleBoardAnalysisService(
         {
             score -= 20;
             notes.Add("Tam görünüm için bir üst ve bir alt parça seç.");
-        }
-        if (!hasShoe)
-        {
-            score -= 7;
-            notes.Add("Ayakkabı seçilmedi; görünümün ağırlık merkezi henüz tamamlanmadı.");
         }
         if (volumes >= 3)
         {
@@ -297,7 +291,7 @@ public sealed class StyleBoardAnalysisService(
             Renk uyumu, siluet hacmi, üst-alt boy oranı, katman mantığı, yaş/kullanım bağlamı ve Türkiye'deki mevcut ayı birlikte değerlendir.
             Bütün hacimli kesimleri aynı anda onaylama. Boxy, relaxed, baggy, straight ve slim kesimleri eş anlamlı sayma.
             Mini kot etek + kısa kollu tişört + trençkot evrensel olarak doğru değildir: yazın trenç genellikle mevsim dışıdır; ilkbahar/sonbaharda ancak trenç hafif ve açık, boy oranı bilinçli ise çalışabilir.
-            Üst, alt veya ayakkabı eksikse bunu açıkça belirt; eksik seti tamamlanmış kombin gibi sunma.
+            Üst ve alt parçanın birlikte çalışmasını değerlendir. Ayakkabı isteğe bağlıdır: seçilmişse kombine uyumunu yorumla; seçilmemişse ayakkabıdan, eksikliğinden veya görünümün tamamlanmadığından hiç söz etme ve puan düşürme.
             Sonuç kesin satış vaadi değildir. Türkçe, kısa ve somut yaz. Yalnız şemaya uyan JSON döndür.
             """;
     }

@@ -12,7 +12,7 @@
   }
 
   body {
-    @apply m-0 min-h-[600px] w-[400px] overflow-x-hidden bg-ink font-sans text-cream antialiased;
+    @apply m-0 min-h-[600px] w-full min-w-[340px] overflow-x-hidden bg-ink font-sans text-cream antialiased;
     font-size: 13.5px;
     line-height: 1.45;
   }
@@ -104,6 +104,18 @@
     @apply text-[#173a9b];
   }
 
+  .legal-consent {
+    @apply flex items-start gap-2 text-[9.5px] leading-[1.45] text-fog;
+  }
+
+  .legal-consent input {
+    @apply mt-0.5 h-4 w-4 shrink-0 accent-cobalt;
+  }
+
+  .legal-consent a {
+    @apply font-semibold text-cobalt underline underline-offset-2;
+  }
+
   .auth-security-note {
     @apply mt-5 flex items-center justify-center gap-2 text-[9.5px] font-medium text-fog;
   }
@@ -140,11 +152,12 @@
   }
 
   .page {
-    @apply hidden animate-rise px-5 pt-6;
+    @apply hidden px-5 pt-6;
   }
 
   .page.is-active {
     @apply block;
+    animation: premium-page-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   .panel {
@@ -211,7 +224,33 @@
   }
 
   .nav-icon {
-    @apply h-[17px] w-[17px];
+    @apply h-[19px] w-[19px] rounded-full p-[2px] transition duration-200;
+  }
+
+  .nav-button[data-target="fit"] .nav-icon { @apply text-cobalt; background: #eaf0ff; }
+  .nav-button[data-target="style"] .nav-icon { @apply text-[#a33c20]; background: #fff0e8; }
+  .nav-button[data-target="studio"] .nav-icon { @apply text-[#76520e]; background: #fff4cf; }
+  .nav-button[data-target="closet"] .nav-icon { @apply text-[#087267]; background: #e5f6f1; }
+  .nav-button[data-target="profile"] .nav-icon { @apply text-[#7046a6]; background: #f0e9fb; }
+
+  .nav-button.is-active .nav-icon {
+    @apply scale-110;
+  }
+
+  .fit-progress {
+    @apply mb-3 flex items-start gap-3 rounded-[12px] border border-[#b9d5cc] bg-gradient-to-br from-[#edf8f5] to-white p-3 shadow-[0_8px_22px_rgba(15,118,110,0.07)];
+  }
+
+  .fit-progress-icon {
+    @apply grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#0f766e] text-[12px] font-bold text-white;
+  }
+
+  .fit-progress strong {
+    @apply block text-[11.5px] font-semibold leading-4 text-mango;
+  }
+
+  .fit-progress p {
+    @apply mt-0.5 text-[9.5px] leading-[1.45] text-fog;
   }
 
   .fit-card {
@@ -475,7 +514,7 @@
   }
 
   .closet-tabs {
-    @apply -mx-4 mb-3 flex gap-1.5 overflow-x-auto border-y border-line bg-[#f5f5f2]/95 px-4 py-2 backdrop-blur-xl;
+    @apply -mx-2 mb-3 flex gap-1 overflow-x-auto rounded-[14px] border border-line bg-white/75 px-2 py-1.5 backdrop-blur-xl;
     scrollbar-width: none;
   }
 
@@ -484,7 +523,7 @@
   }
 
   .closet-tab {
-    @apply inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-transparent px-3 text-[10.5px] font-semibold text-[#555550] transition hover:bg-white hover:text-mango focus-visible:outline focus-visible:outline-2 focus-visible:outline-acid;
+    @apply inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-transparent px-2.5 text-[9.5px] font-semibold text-[#555550] transition hover:bg-white hover:text-mango focus-visible:outline focus-visible:outline-2 focus-visible:outline-acid;
   }
 
   .closet-tab.is-active {
@@ -504,11 +543,11 @@
   }
 
   .closet-product {
-    @apply overflow-hidden rounded-[6px] border border-line bg-white transition duration-200 open:border-[#8f8f89] open:shadow-[0_10px_24px_rgba(16,16,16,0.07)];
+    @apply overflow-hidden rounded-[14px] border border-line bg-white transition duration-200 open:border-[#8f8f89] open:shadow-[0_10px_24px_rgba(16,16,16,0.07)];
   }
 
   .closet-product-summary {
-    @apply grid cursor-pointer list-none grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 p-2.5 text-left transition hover:bg-[#f8f8f5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-acid;
+    @apply grid cursor-pointer list-none grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2.5 p-2 text-left transition hover:bg-[#f8f8f5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-acid;
   }
 
   .closet-product-summary::-webkit-details-marker {
@@ -516,7 +555,7 @@
   }
 
   .closet-thumbnail {
-    @apply relative grid h-[64px] w-[52px] shrink-0 place-items-center overflow-hidden rounded-[3px] bg-[#efeee9];
+    @apply relative grid h-[52px] w-[44px] shrink-0 place-items-center overflow-hidden rounded-[9px] bg-[#efeee9];
   }
 
   .closet-thumbnail-fallback {
@@ -560,7 +599,7 @@
   }
 
   .closet-size {
-    @apply grid h-8 min-w-8 place-items-center rounded-[3px] bg-mango px-1.5 text-[12px] font-bold uppercase text-white;
+    @apply grid h-9 w-9 place-items-center rounded-full bg-mango px-1 text-[11px] font-bold uppercase text-white;
   }
 
   .closet-score {
@@ -577,6 +616,11 @@
 
   .closet-product-body {
     @apply space-y-2.5 border-t border-line px-3 pb-3 pt-2.5;
+  }
+
+  .closet-fit-note {
+    min-height: 44px;
+    max-height: 110px;
   }
 
   .closet-assessment {
@@ -610,6 +654,44 @@
   .closet-product-actions {
     @apply flex items-center gap-1 border-t border-line pt-2;
   }
+
+  .profile-summary {
+    @apply mb-4 rounded-[14px] border border-line bg-white p-4 shadow-[0_8px_22px_rgba(16,42,67,0.05)];
+  }
+
+  .profile-summary-head {
+    @apply flex items-center justify-between gap-3;
+  }
+
+  .profile-summary-head strong {
+    @apply mt-1 block text-[13px] font-semibold text-mango;
+  }
+
+  .profile-summary-head button {
+    @apply rounded-full border border-cobalt/25 bg-[#edf3ff] px-3 py-1.5 text-[10px] font-semibold text-cobalt transition hover:bg-cobalt hover:text-white;
+  }
+
+  .profile-summary-values {
+    @apply mt-3 grid grid-cols-4 gap-1.5;
+  }
+
+  .profile-summary-values > span {
+    @apply min-w-0 rounded-[9px] bg-[#f4f7f6] px-2 py-2 text-center;
+  }
+
+  .profile-summary-values small,
+  .profile-summary-values strong {
+    @apply block truncate;
+  }
+
+  .profile-summary-values small { @apply text-[8px] uppercase tracking-wide text-fog; }
+  .profile-summary-values strong { @apply mt-0.5 text-[10px] text-mango; }
+
+  .legal-links {
+    @apply mt-5 flex flex-wrap justify-center gap-x-3 gap-y-1 border-t border-line py-4 text-[9px] font-semibold text-fog;
+  }
+
+  .legal-links a { @apply transition hover:text-cobalt hover:underline; }
 
   .closet-text-action {
     @apply inline-flex min-h-8 items-center justify-center rounded-[4px] px-2.5 text-[10.5px] font-semibold text-acid transition hover:bg-[#edf2ff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-acid;
@@ -771,5 +853,24 @@
 @keyframes fitmemory-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes premium-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.992);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page.is-active {
+    animation: none;
   }
 }

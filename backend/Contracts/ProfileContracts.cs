@@ -46,3 +46,11 @@ public sealed record ProfileResponse(
     FitPreference FitPreference,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
+
+public sealed record FitProgressResponse(
+    int AnalyzedProducts,
+    int WardrobePieces,
+    int PersonalFitSignals,
+    int EstimatedAvoidedReturns,
+    string Headline,
+    string Detail);

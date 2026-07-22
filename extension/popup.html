@@ -63,6 +63,10 @@
             <span aria-hidden="true">✓</span>
             <p><strong>Varsa mevcut dolabın korunacak.</strong> Bu Chrome’daki profilin ve parçaların ilk hesabına otomatik bağlanır.</p>
           </div>
+          <label class="legal-consent">
+            <input id="register-legal-consent" type="checkbox" required />
+            <span><a href="legal.html#privacy" target="_blank">Aydınlatma metnini</a> ve <a href="legal.html#terms" target="_blank">kullanım koşullarını</a> okudum; tarama başlattığımda görünür ürün/sipariş içeriğinin beden analizi için işleneceğini anladım.</span>
+          </label>
           <button id="register-button" class="btn-primary" type="submit">Hesabımı oluştur</button>
         </form>
 
@@ -129,6 +133,14 @@
             </svg>
           </button>
         </div>
+
+        <section id="fit-progress" class="fit-progress hidden" aria-live="polite">
+          <div class="fit-progress-icon" aria-hidden="true">✓</div>
+          <div class="min-w-0">
+            <strong id="fit-progress-headline"></strong>
+            <p id="fit-progress-detail"></p>
+          </div>
+        </section>
 
         <div id="fit-loading" class="space-y-3">
           <div class="skeleton h-48"></div>
@@ -356,6 +368,17 @@
           <button id="logout-button" class="account-logout" type="button">Çıkış</button>
         </section>
 
+        <section id="profile-summary" class="profile-summary hidden">
+          <div class="profile-summary-head">
+            <div>
+              <p class="eyebrow">Beden profilin</p>
+              <strong id="profile-summary-title">Ölçüler kaydedildi</strong>
+            </div>
+            <button id="edit-profile-button" type="button">Düzenle</button>
+          </div>
+          <div id="profile-summary-values" class="profile-summary-values"></div>
+        </section>
+
         <form id="profile-form" class="space-y-4" novalidate>
           <div class="panel">
             <div class="grid grid-cols-2 gap-3">
@@ -408,12 +431,18 @@
             <summary>Bağlantı ayarı</summary>
             <label class="mt-3 block">
               <span class="field-label">API adresi</span>
-              <input id="api-base-url" name="apiBaseUrl" class="field" type="url" spellcheck="false" value="http://localhost:5158" required />
+              <input id="api-base-url" name="apiBaseUrl" class="field" type="url" spellcheck="false" value="https://fitmemory-api.onrender.com" readonly required />
             </label>
           </details>
 
           <button id="save-profile-button" class="btn-primary" type="submit">Profili kaydet</button>
         </form>
+
+        <section class="legal-links" aria-label="Yasal ve güvenlik belgeleri">
+          <a href="legal.html#privacy" target="_blank">Gizlilik ve KVKK</a>
+          <a href="legal.html#terms" target="_blank">Kullanım koşulları</a>
+          <a href="legal.html#security" target="_blank">Veri güvenliği</a>
+        </section>
       </section>
 
     </main>

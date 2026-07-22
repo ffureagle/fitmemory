@@ -104,6 +104,23 @@ public sealed partial class LocalFitRecommendationEngine(
 
         if (scored.Length == 0)
         {
+            if (sameFamilyOrders.Any(HasConfirmedNegativeSizeBoundary))
+            {
+                return new RecommendationResult(
+                    "Bilinmiyor",
+                    32,
+                    "Bu kalıpta doğrulanmış olumsuz deneyiminle çelişmeyen bir beden bulunamadı.",
+                    "Aynı ürün/kalıp ailesinde daha önce bol veya dar kaldığını belirttiğin beden güçlü bir sınır olarak uygulandı. FitMemory bu sınırı yok sayıp daha büyük ya da daha küçük bir bedeni sırf tablo ortalamasına uyuyor diye önermedi.",
+                    [
+                        "Önceki kişisel uyum geri bildirimin, genel beden tablosundan daha güçlü kanıt sayıldı.",
+                        "Sayfada uygun yönde başka beden varsa ölçüler açıldığında yeniden karşılaştırılabilir.",
+                        "Kalıp etiketi değişirse sonuç aynı beden numarası üzerinden taşınmaz."
+                    ],
+                    [],
+                    BuildEvidenceSummary(relevantOrders),
+                    "local-personal-boundary");
+            }
+
             var historySize = FindConfirmedCategorySize(
                 relevantOrders,
                 availableSizes);
@@ -681,6 +698,8 @@ public sealed partial class LocalFitRecommendationEngine(
             candidate,
             profile,
             product);
+        var violatesPersonalBoundary = sameFamilyOrders.Any(order =>
+            ViolatesConfirmedSizeBoundary(candidate.Label, order));
         score += structuralFit.Penalty;
         score += ReturnBoundaryPenalty(
             candidate,
@@ -690,7 +709,7 @@ public sealed partial class LocalFitRecommendationEngine(
             candidate,
             score / Math.Max(matched, 1),
             matched,
-            structuralFit.IsPlausible,
+            structuralFit.IsPlausible && !violatesPersonalBoundary,
             index);
     }
 
@@ -731,16 +750,10 @@ public sealed partial class LocalFitRecommendationEngine(
             var bodyHalfChest =
                 (double)profile.ChestCircumferenceCm.Value / 2;
             var garmentEase = chest.Value - bodyHalfChest;
-            var chestBounds = fit switch
-            {
-                ProductFitKind.Slim => (1.0, 5.0),
-                ProductFitKind.Regular => (2.0, 7.0),
-                ProductFitKind.Relaxed => (3.5, 9.5),
-                ProductFitKind.Boxy => (3.5, 8.5),
-                ProductFitKind.Oversized => (5.0, 12.0),
-                _ => (1.5, 8.5)
-            };
-            var categoryAllowance = IsOuterwear(product) ? 2.5 : 0.0;
+            var chestBounds = PreferredChestEaseBounds(
+                profile.FitPreference,
+                fit);
+            var categoryAllowance = IsOuterwear(product) ? 1.5 : 0.0;
             if (garmentEase < chestBounds.Item1 ||
                 garmentEase > chestBounds.Item2 + categoryAllowance)
             {
@@ -977,28 +990,106 @@ public sealed partial class LocalFitRecommendationEngine(
         ProductDto product,
         FitPreference preference)
     {
-        var fit = ProductFit(product);
-        if (fit != ProductFitKind.Unknown)
+        var preferredEase = preference switch
         {
-            var officialFitEase = fit switch
-            {
-                ProductFitKind.Slim => 3.0,
-                ProductFitKind.Regular => 4.5,
-                ProductFitKind.Relaxed => 6.0,
-                ProductFitKind.Boxy => 6.0,
-                ProductFitKind.Oversized => 8.5,
-                _ => 5.0
-            };
-            return officialFitEase + (IsOuterwear(product) ? 2.5 : 0.0);
+            FitPreference.Slim => 1.5,
+            FitPreference.Relaxed => 4.0,
+            FitPreference.Oversized => 6.0,
+            _ => 2.5
+        };
+        var fitAdjustment = ProductFit(product) switch
+        {
+            ProductFitKind.Slim => -0.5,
+            ProductFitKind.Relaxed => 0.35,
+            ProductFitKind.Boxy => 0.5,
+            ProductFitKind.Oversized => 0.75,
+            _ => 0.0
+        };
+        var outerwearAllowance = IsOuterwear(product) ? 1.25 : 0.0;
+        return Math.Max(0.75, preferredEase + fitAdjustment + outerwearAllowance);
+    }
+
+    private static (double Min, double Max) PreferredChestEaseBounds(
+        FitPreference preference,
+        ProductFitKind fit)
+    {
+        var bounds = preference switch
+        {
+            FitPreference.Slim => (0.5, 2.75),
+            FitPreference.Relaxed => (2.0, 6.0),
+            FitPreference.Oversized => (3.5, 8.0),
+            _ => (1.0, 4.0)
+        };
+        var fitAllowance = fit switch
+        {
+            ProductFitKind.Relaxed or ProductFitKind.Boxy => 0.75,
+            ProductFitKind.Oversized => 1.5,
+            _ => 0.0
+        };
+        return (bounds.Item1, bounds.Item2 + fitAllowance);
+    }
+
+    private bool HasConfirmedNegativeSizeBoundary(OrderHistoryItem order)
+    {
+        return order.Outcome.IsNegativeFitFeedback() ||
+               regionalFeedback.HasNegativeSignal(order.UserFitNotes);
+    }
+
+    private bool ViolatesConfirmedSizeBoundary(
+        string candidateSize,
+        OrderHistoryItem order)
+    {
+        if (!TryGetComparableSizeRank(candidateSize, out var candidateRank) ||
+            !TryGetComparableSizeRank(order.PurchasedSize, out var orderRank))
+        {
+            return false;
         }
 
-        return preference switch
+        var hasLooseSignal = order.Outcome.IsBaggyFeedback() ||
+            regionalFeedback.Parse(order.UserFitNotes)
+                .Any(signal => signal.State == RegionalFitState.Loose);
+        if (hasLooseSignal && candidateRank >= orderRank)
         {
-            FitPreference.Slim => 3.0,
-            FitPreference.Relaxed => 6.0,
-            FitPreference.Oversized => 8.0,
-            _ => 5.0
+            return true;
+        }
+
+        var hasTightSignal = order.Outcome.IsTightFeedback() ||
+            regionalFeedback.Parse(order.UserFitNotes)
+                .Any(signal => signal.State == RegionalFitState.Tight);
+        return hasTightSignal && candidateRank <= orderRank;
+    }
+
+    private static bool TryGetComparableSizeRank(
+        string value,
+        out double rank)
+    {
+        var normalized = Regex.Replace(
+            value.Trim().ToUpperInvariant(),
+            @"\s+",
+            "");
+        var alphaRanks = new Dictionary<string, double>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["XXXS"] = 0,
+            ["XXS"] = 1,
+            ["XS"] = 2,
+            ["S"] = 3,
+            ["M"] = 4,
+            ["L"] = 5,
+            ["XL"] = 6,
+            ["XXL"] = 7,
+            ["XXXL"] = 8
         };
+        if (alphaRanks.TryGetValue(normalized, out rank))
+        {
+            return true;
+        }
+
+        return double.TryParse(
+            normalized.Replace(',', '.'),
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture,
+            out rank);
     }
 
     private static ProductFitKind ProductFit(ProductDto product)

@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = "1.17.0";
+  const CONTENT_SCRIPT_VERSION = "1.18.0";
   if (globalThis.__fitMemoryContentScriptVersion === CONTENT_SCRIPT_VERSION) {
     return;
   }
@@ -141,6 +141,7 @@
   }
 
   async function scrapePageAsync() {
+    await openProductDetailsForResearch();
     await openSizeGuideForResearch();
     return {
       product: scrapeProduct(),
@@ -207,7 +208,7 @@
 
     const roots = collectOpenRoots();
     const triggers = deepQuerySelectorAll(
-      'button, a, [role="button"], summary',
+      'button, a, [role="button"], summary, [data-testid*="measure" i], [data-qa*="measure" i], [aria-label*="ölç" i], [aria-label*="size guide" i], [class*="measure" i]',
       roots
     ).filter((element) => {
       if (!isVisible(element)) {
@@ -223,16 +224,30 @@
       return;
     }
 
+    trigger.scrollIntoView({ block: "center", inline: "nearest" });
     trigger.click();
-    await waitForCondition(
+    let opened = await waitForCondition(
       () => {
         const chart = scrapeSizeChart();
         return Boolean(findInteractiveMeasurePanel(collectOpenRoots())) ||
           chart.rows?.some((row) =>
             row.cells?.slice(1).some((cell) => /\d/.test(cell)));
       },
-      2_500
+      3_500
     );
+    if (!opened) {
+      for (const eventName of ["pointerdown", "mousedown", "mouseup", "click"]) {
+        trigger.dispatchEvent(new MouseEvent(eventName, {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        }));
+      }
+      opened = await waitForCondition(
+        () => Boolean(findInteractiveMeasurePanel(collectOpenRoots())),
+        2_500
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
