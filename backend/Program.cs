@@ -315,11 +315,7 @@ app.MapGet(
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FitMemoryDbContext>();
-    await db.Database.EnsureCreatedAsync();
-    if (db.Database.IsSqlite())
-    {
-        await DatabaseSchemaUpgrader.UpgradeAsync(db);
-    }
+    await DatabaseInitializer.InitializeAsync(db);
     await DatabaseSeeder.SeedAsync(db, builder.Configuration);
     var assessmentService =
         scope.ServiceProvider.GetRequiredService<ArchivedFitAssessmentService>();
