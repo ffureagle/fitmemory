@@ -8,7 +8,6 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Platform } from "react-native";
 import { ApiError, FitMemoryApi } from "./api";
 import type {
   Account,
@@ -20,13 +19,9 @@ import type {
 
 const SESSION_KEY = "fitmemory.session.v1";
 const API_URL_KEY = "fitmemory.api-url.v1";
-const localDefault = Platform.select({
-  android: "http://10.0.2.2:5158",
-  ios: "http://localhost:5158",
-  default: "http://localhost:5158",
-});
 const DEFAULT_API_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || localDefault || "";
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  "https://fitmemory-api.onrender.com";
 
 type SessionContextValue = {
   ready: boolean;
@@ -41,6 +36,7 @@ type SessionContextValue = {
   login(email: string, password: string): Promise<void>;
   register(name: string, email: string, password: string): Promise<void>;
   logout(): Promise<void>;
+  deleteAccount(): Promise<void>;
   setApiBaseUrl(value: string): Promise<void>;
   refresh(): Promise<void>;
   updateProfile(profile: Profile): void;
@@ -210,6 +206,17 @@ export function SessionProvider({ children }: PropsWithChildren) {
     }
   }, [api, clearSession, token]);
 
+  const deleteAccount = useCallback(async () => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      await api.deleteAccount(token);
+      await clearSession();
+    } finally {
+      setBusy(false);
+    }
+  }, [api, clearSession, token]);
+
   const setApiBaseUrl = useCallback(
     async (value: string) => {
       const normalized = normalizeApiUrl(value);
@@ -248,6 +255,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       login,
       register,
       logout,
+      deleteAccount,
       setApiBaseUrl,
       refresh,
       updateProfile: setProfile,
@@ -261,6 +269,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       busy,
       login,
       logout,
+      deleteAccount,
       orders,
       profile,
       ready,

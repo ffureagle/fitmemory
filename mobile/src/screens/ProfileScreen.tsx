@@ -153,6 +153,34 @@ export function ProfileScreen() {
     );
   };
 
+  const deleteAccount = () => {
+    Alert.alert(
+      "Hesabı kalıcı olarak sil",
+      "Profilin, dolabın, uyum notların, önerilerin ve oturumların geri alınamayacak şekilde silinir.",
+      [
+        { text: "Vazgeç", style: "cancel" },
+        {
+          text: "Hesabı sil",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Son onay",
+              "Bu işlem geri alınamaz. FitMemory hesabını silmek istiyor musun?",
+              [
+                { text: "Vazgeç", style: "cancel" },
+                {
+                  text: "Kalıcı olarak sil",
+                  style: "destructive",
+                  onPress: () => void session.deleteAccount(),
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   const initials = (session.account?.displayName ?? "FM")
     .split(/\s+/)
     .slice(0, 2)
@@ -337,7 +365,7 @@ export function ProfileScreen() {
         <Field
           autoCapitalize="none"
           autoCorrect={false}
-          hint="Üretimde https://api.mfurkangokbag.com.tr kullanılacak."
+          hint="Beta ve üretim sunucusu: https://fitmemory-api.onrender.com"
           keyboardType="url"
           label="Adres"
           onChangeText={setApiUrl}
@@ -364,6 +392,9 @@ export function ProfileScreen() {
       </Card>
       <Pressable onPress={logout} style={styles.logout}>
         <Text style={styles.logoutText}>Hesaptan çıkış yap</Text>
+      </Pressable>
+      <Pressable onPress={deleteAccount} style={styles.deleteAccount}>
+        <Text style={styles.deleteAccountText}>Hesabımı ve verilerimi sil</Text>
       </Pressable>
       <View style={styles.footerBrand}>
         <Brand compact />
@@ -574,6 +605,19 @@ const styles = StyleSheet.create({
   logoutText: {
     color: colors.red,
     fontSize: 11,
+    fontWeight: "800",
+  },
+  deleteAccount: {
+    alignItems: "center",
+    borderColor: "#E5B8B5",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  deleteAccountText: {
+    color: colors.red,
+    fontSize: 12,
     fontWeight: "800",
   },
   footerBrand: {

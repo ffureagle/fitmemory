@@ -3,12 +3,20 @@
     "name": "FitMemory",
     "slug": "fitmemory",
     "version": "1.0.0",
+    "scheme": "fitmemory",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F3F1EA"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fitmemory.mobile",
+      "bundleIdentifier": "com.mfurkangokbag.fitmemory",
+      "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -19,10 +27,13 @@
       }
     },
     "android": {
-      "package": "com.fitmemory.mobile",
+      "package": "com.mfurkangokbag.fitmemory",
+      "versionCode": 1,
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F3F1EA"
-      }
+      },
+      "permissions": []
     },
     "plugins": [
       [
@@ -34,7 +45,11 @@
       ]
     ],
     "extra": {
-      "apiBaseUrl": "https://api.mfurkangokbag.com.tr"
-    }
+      "apiBaseUrl": "https://fitmemory-api.onrender.com",
+      "eas": {
+        "projectId": "16246e6b-fc41-4ea3-88ed-d6fd8741c84b"
+      }
+    },
+    "owner": "fstudio"
   }
 }

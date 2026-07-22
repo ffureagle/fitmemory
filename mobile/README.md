@@ -17,12 +17,12 @@ Varsayılan geliştirme API adresleri:
 - iOS simülatörü: `http://localhost:5158`
 - Fiziksel cihaz: Profil ekranından bilgisayarın LAN adresini girin
   (`http://192.168.x.x:5158`)
-- Üretim: `EXPO_PUBLIC_API_BASE_URL=https://api.mfurkangokbag.com.tr`
+- Üretim: `EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com`
 
 Üretim adresiyle başlatma örneği:
 
 ```powershell
-$env:EXPO_PUBLIC_API_BASE_URL="https://api.mfurkangokbag.com.tr"
+$env:EXPO_PUBLIC_API_BASE_URL="https://fitmemory-api.onrender.com"
 pnpm start
 ```
 

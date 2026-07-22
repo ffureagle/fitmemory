@@ -100,6 +100,25 @@ public sealed class AuthController(
         return NoContent();
     }
 
+    [Authorize]
+    [HttpDelete("account")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> DeleteAccount(
+        CancellationToken cancellationToken)
+    {
+        var accountId = User.GetFitMemoryAccountId();
+        if (accountId is null)
+        {
+            return Unauthorized();
+        }
+
+        var deleted = await accountSessionService.DeleteAccountAsync(
+            accountId.Value,
+            cancellationToken);
+        return deleted ? NoContent() : Unauthorized();
+    }
+
     private string? ReadBearerToken()
     {
         var authorization = Request.Headers.Authorization.ToString();

@@ -167,6 +167,24 @@ public sealed class AccountSessionService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<bool> DeleteAccountAsync(
+        int accountId,
+        CancellationToken cancellationToken)
+    {
+        var account = await db.UserAccounts
+            .SingleOrDefaultAsync(
+                candidate => candidate.Id == accountId,
+                cancellationToken);
+        if (account is null)
+        {
+            return false;
+        }
+
+        db.UserAccounts.Remove(account);
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     private (UserSession Entity, string RawToken) AddSession(
         UserAccount account,
         DateTimeOffset now)

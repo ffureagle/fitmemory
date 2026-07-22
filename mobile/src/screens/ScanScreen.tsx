@@ -36,6 +36,29 @@ const shops = [
   { name: "Zara", url: "https://www.zara.com/tr/" },
 ];
 
+const allowedShopDomains = [
+  "pullandbear.com",
+  "bershka.com",
+  "zara.com",
+  "inditex.com",
+];
+
+function isAllowedShopUrl(value: string) {
+  if (value === "about:blank") return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      allowedShopDomains.some(
+        (domain) =>
+          url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 type ScanScreenProps = {
   openProfile(): void;
   openStudio(): void;
@@ -84,6 +107,13 @@ export function ScanScreen({
     const normalized = /^https?:\/\//i.test(value)
       ? value
       : `https://${value}`;
+    if (!isAllowedShopUrl(normalized)) {
+      setError(
+        "Mobil beta şu anda yalnızca Pull&Bear, Bershka ve Zara mağazalarını destekliyor.",
+      );
+      return;
+    }
+    setError("");
     setBrowserUrl(normalized);
     setAddress(normalized);
   };
@@ -359,6 +389,16 @@ export function ScanScreen({
             <WebView
               allowsBackForwardNavigationGestures
               javaScriptEnabled
+              onShouldStartLoadWithRequest={(request) => {
+                const allowed = isAllowedShopUrl(request.url);
+                if (!allowed) {
+                  setError(
+                    "Bu bağlantı desteklenen mağazaların dışına çıkıyor ve güvenlik için açılmadı.",
+                  );
+                }
+                return allowed;
+              }}
+              originWhitelist={["https://*"]}
               onLoadEnd={() => setPageLoading(false)}
               onLoadStart={(event) => {
                 setPageLoading(true);

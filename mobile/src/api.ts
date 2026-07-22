@@ -107,6 +107,13 @@ export class FitMemoryApi {
     });
   }
 
+  deleteAccount(token: string) {
+    return this.request<void>("/api/auth/account", {
+      method: "DELETE",
+      token,
+    });
+  }
+
   getProfile(userId: string, token: string) {
     return this.request<Profile | null>(
       `/api/profiles/${encodeURIComponent(userId)}`,
