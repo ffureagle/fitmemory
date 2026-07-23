@@ -40,12 +40,22 @@ public sealed class StyleBoardItem
     [MaxLength(1200)]
     public string Description { get; set; } = "";
 
+    [MaxLength(240)]
+    public string MaterialSummary { get; set; } = "";
+
+    [MaxLength(1600)]
+    public string MaterialEvidence { get; set; } = "";
+
     [MaxLength(30)]
     public string RecommendedSize { get; set; } = "";
 
     public int RecommendationConfidence { get; set; }
 
     public bool IsSelected { get; set; } = true;
+
+    public bool IsInStudio { get; set; } = true;
+
+    public bool IsSaved { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

@@ -54,6 +54,12 @@ public sealed class ProductDto
     [StringLength(1200)]
     public string Description { get; init; } = "";
 
+    [StringLength(240)]
+    public string MaterialSummary { get; init; } = "";
+
+    [StringLength(1600)]
+    public string MaterialEvidence { get; init; } = "";
+
     [Range(120, 230)]
     public int? ModelHeightCm { get; init; }
 

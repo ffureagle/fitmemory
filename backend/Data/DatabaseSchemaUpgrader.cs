@@ -20,6 +20,8 @@ public static class DatabaseSchemaUpgrader
             ["FitAssessmentConfidence"] = "INTEGER NOT NULL DEFAULT 0",
             ["UserFitNotes"] = "TEXT NULL",
             ["ReturnConfirmedByUser"] = "INTEGER NOT NULL DEFAULT 0"
+            , ["MaterialSummary"] = "TEXT NULL"
+            , ["MaterialEvidence"] = "TEXT NULL"
         };
 
     private static readonly IReadOnlyDictionary<string, string> ProfileColumns =
@@ -32,6 +34,14 @@ public static class DatabaseSchemaUpgrader
             ["UserAccountId"] = "INTEGER NULL"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> AccountColumns =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["PasswordResetCodeHash"] = "TEXT NULL",
+            ["PasswordResetExpiresAtUnix"] = "BIGINT NULL",
+            ["PasswordResetAttempts"] = "INTEGER NOT NULL DEFAULT 0"
+        };
+
     private static readonly IReadOnlyDictionary<string, string> RecommendationColumns =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -42,6 +52,10 @@ public static class DatabaseSchemaUpgrader
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["IsSelected"] = "INTEGER NOT NULL DEFAULT 1"
+            , ["MaterialSummary"] = "TEXT NOT NULL DEFAULT ''"
+            , ["MaterialEvidence"] = "TEXT NOT NULL DEFAULT ''"
+            , ["IsInStudio"] = "INTEGER NOT NULL DEFAULT 1"
+            , ["IsSaved"] = "INTEGER NOT NULL DEFAULT 0"
         };
 
     public static async Task UpgradeAsync(
@@ -70,6 +84,11 @@ public static class DatabaseSchemaUpgrader
                 cancellationToken);
             await UpgradeTableAsync(
                 connection,
+                "UserAccounts",
+                AccountColumns,
+                cancellationToken);
+            await UpgradeTableAsync(
+                connection,
                 "OrderHistoryItems",
                 OrderColumns,
                 cancellationToken);
@@ -89,6 +108,7 @@ public static class DatabaseSchemaUpgrader
             await CreateStyleBoardIndexesAsync(
                 connection,
                 cancellationToken);
+            await CreateFavoriteOutfitsTableAsync(connection, cancellationToken);
             await MigrateLegacyReturnsAsync(
                 connection,
                 cancellationToken);
@@ -100,6 +120,29 @@ public static class DatabaseSchemaUpgrader
                 await connection.CloseAsync();
             }
         }
+    }
+
+    private static async Task CreateFavoriteOutfitsTableAsync(
+        System.Data.Common.DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            CREATE TABLE IF NOT EXISTS "FavoriteOutfits" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_FavoriteOutfits" PRIMARY KEY AUTOINCREMENT,
+                "UserProfileId" INTEGER NOT NULL,
+                "Title" TEXT NOT NULL,
+                "AnalysisJson" TEXT NOT NULL,
+                "ItemsJson" TEXT NOT NULL,
+                "CreatedAt" INTEGER NOT NULL,
+                CONSTRAINT "FK_FavoriteOutfits_UserProfiles_UserProfileId"
+                    FOREIGN KEY ("UserProfileId") REFERENCES "UserProfiles" ("Id") ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS "IX_FavoriteOutfits_UserProfileId_CreatedAt"
+                ON "FavoriteOutfits" ("UserProfileId", "CreatedAt");
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task CreateStyleBoardTableAsync(
@@ -122,9 +165,13 @@ public static class DatabaseSchemaUpgrader
                 "FitLabel" TEXT NOT NULL DEFAULT '',
                 "FitEvidence" TEXT NOT NULL DEFAULT '',
                 "Description" TEXT NOT NULL DEFAULT '',
+                "MaterialSummary" TEXT NOT NULL DEFAULT '',
+                "MaterialEvidence" TEXT NOT NULL DEFAULT '',
                 "RecommendedSize" TEXT NOT NULL DEFAULT '',
                 "RecommendationConfidence" INTEGER NOT NULL DEFAULT 0,
                 "IsSelected" INTEGER NOT NULL DEFAULT 1,
+                "IsInStudio" INTEGER NOT NULL DEFAULT 1,
+                "IsSaved" INTEGER NOT NULL DEFAULT 0,
                 "CreatedAt" INTEGER NOT NULL,
                 "UpdatedAt" INTEGER NOT NULL,
                 CONSTRAINT "FK_StyleBoardItems_UserProfiles_UserProfileId"
@@ -165,6 +212,9 @@ public static class DatabaseSchemaUpgrader
                 "NormalizedEmail" TEXT NOT NULL,
                 "DisplayName" TEXT NOT NULL,
                 "PasswordHash" TEXT NOT NULL,
+                "PasswordResetCodeHash" TEXT NULL,
+                "PasswordResetExpiresAtUnix" BIGINT NULL,
+                "PasswordResetAttempts" INTEGER NOT NULL DEFAULT 0,
                 "CreatedAt" INTEGER NOT NULL,
                 "UpdatedAt" INTEGER NOT NULL
             );

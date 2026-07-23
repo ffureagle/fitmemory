@@ -3,6 +3,7 @@ using FitMemory.Api.Data;
 using FitMemory.Api.Models;
 using FitMemory.Api.Security;
 using FitMemory.Api.Services;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,8 @@ public sealed class StyleBoardController(
     ProductCategoryService categoryService) : ControllerBase
 {
     private const int MaxItems = 12;
+    private const int MaxFavorites = 30;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<StyleBoardItemResponse>>> GetAll(
@@ -66,8 +69,8 @@ public sealed class StyleBoardController(
             .ToListAsync(cancellationToken);
         var existing = profileItems.SingleOrDefault(
             item => item.ProductUrl == url);
-        if (existing is null &&
-            profileItems.Count >= MaxItems)
+        if (request.SaveToStudio && existing is null &&
+            profileItems.Count(item => item.IsInStudio) >= MaxItems)
         {
             return Problem(
                 statusCode: StatusCodes.Status409Conflict,
@@ -85,6 +88,8 @@ public sealed class StyleBoardController(
             ProductName = "",
             Category = "",
             IsSelected = false,
+            IsInStudio = false,
+            IsSaved = false,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -97,6 +102,8 @@ public sealed class StyleBoardController(
         item.FitLabel = Clean(request.Product.FitLabel, 80);
         item.FitEvidence = Clean(request.Product.FitEvidence, 300);
         item.Description = Clean(request.Product.Description, 1200);
+        item.MaterialSummary = Clean(request.Product.MaterialSummary, 240);
+        item.MaterialEvidence = Clean(request.Product.MaterialEvidence, 1600);
         item.RecommendedSize = Clean(
             request.RecommendedSize.ToUpperInvariant(),
             30);
@@ -104,6 +111,8 @@ public sealed class StyleBoardController(
             request.RecommendationConfidence,
             0,
             95);
+        item.IsInStudio |= request.SaveToStudio;
+        item.IsSaved |= request.SaveToCloset;
         item.UpdatedAt = now;
         if (existing is null)
         {
@@ -142,16 +151,50 @@ public sealed class StyleBoardController(
             ? await db.StyleBoardItems
                 .Where(candidate =>
                     candidate.UserProfileId == item.UserProfileId &&
-                    candidate.Id != item.Id)
+                    candidate.Id != item.Id &&
+                    candidate.IsInStudio)
                 .OrderByDescending(candidate => candidate.UpdatedAt)
                 .ToListAsync(cancellationToken)
             : [];
-        db.StyleBoardItems.Remove(item);
+        if (item.IsSaved)
+        {
+            item.IsInStudio = false;
+            item.IsSelected = false;
+            item.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            db.StyleBoardItems.Remove(item);
+        }
         var selectedReplacement = replacement.FirstOrDefault(candidate =>
             GetSlot(candidate) == deletedSlot);
         if (selectedReplacement is not null)
         {
             selectedReplacement.IsSelected = true;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("items/{id:int}/saved")]
+    public async Task<IActionResult> DeleteSaved(
+        int id,
+        [FromQuery] string userId,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(userId)) return Forbid();
+        var item = await db.StyleBoardItems
+            .Include(candidate => candidate.UserProfile)
+            .SingleOrDefaultAsync(candidate => candidate.Id == id && candidate.UserProfile.UserId == userId, cancellationToken);
+        if (item is null) return NotFound();
+        if (item.IsInStudio)
+        {
+            item.IsSaved = false;
+            item.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            db.StyleBoardItems.Remove(item);
         }
         await db.SaveChangesAsync(cancellationToken);
         return NoContent();
@@ -170,7 +213,7 @@ public sealed class StyleBoardController(
 
         var items = await db.StyleBoardItems
             .Include(item => item.UserProfile)
-            .Where(item => item.UserProfile.UserId == userId)
+            .Where(item => item.UserProfile.UserId == userId && item.IsInStudio)
             .ToListAsync(cancellationToken);
         var selected = items.SingleOrDefault(item => item.Id == id);
         if (selected is null)
@@ -200,9 +243,21 @@ public sealed class StyleBoardController(
         }
 
         var items = await db.StyleBoardItems
-            .Where(item => item.UserProfile.UserId == userId)
+            .Where(item => item.UserProfile.UserId == userId && item.IsInStudio)
             .ToListAsync(cancellationToken);
-        db.StyleBoardItems.RemoveRange(items);
+        foreach (var item in items)
+        {
+            if (item.IsSaved)
+            {
+                item.IsInStudio = false;
+                item.IsSelected = false;
+                item.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            else
+            {
+                db.StyleBoardItems.Remove(item);
+            }
+        }
         await db.SaveChangesAsync(cancellationToken);
         return NoContent();
     }
@@ -228,7 +283,7 @@ public sealed class StyleBoardController(
         }
         var items = await db.StyleBoardItems
             .AsNoTracking()
-            .Where(item => item.UserProfileId == profile.Id)
+            .Where(item => item.UserProfileId == profile.Id && item.IsInStudio)
             .OrderBy(item => item.CreatedAt)
             .ToListAsync(cancellationToken);
         var selectedItems = items
@@ -249,7 +304,133 @@ public sealed class StyleBoardController(
             profile,
             selectedItems,
             request.Language,
+            "",
             cancellationToken));
+    }
+
+    [HttpGet("favorites")]
+    public async Task<ActionResult<IReadOnlyList<FavoriteOutfitResponse>>> GetFavorites(
+        [FromQuery] string userId,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(userId)) return Forbid();
+        var favorites = await db.FavoriteOutfits
+            .AsNoTracking()
+            .Include(item => item.UserProfile)
+            .Where(item => item.UserProfile.UserId == userId)
+            .OrderByDescending(item => item.CreatedAt)
+            .ToListAsync(cancellationToken);
+        return Ok(favorites.Select(ToFavoriteResponse).ToArray());
+    }
+
+    [HttpPost("favorites")]
+    public async Task<ActionResult<FavoriteOutfitResponse>> SaveFavorite(
+        SaveFavoriteOutfitRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(request.UserId)) return Forbid();
+        var profile = await db.UserProfiles.SingleOrDefaultAsync(item => item.UserId == request.UserId, cancellationToken);
+        if (profile is null) return NotFound();
+        var count = await db.FavoriteOutfits.CountAsync(item => item.UserProfileId == profile.Id, cancellationToken);
+        if (count >= MaxFavorites)
+        {
+            return Problem(statusCode: 409, title: "Favoriler dolu", detail: $"En fazla {MaxFavorites} favori kombin saklanabilir.");
+        }
+        var distinctIds = request.ItemIds.Distinct().ToArray();
+        var items = await db.StyleBoardItems
+            .Include(item => item.UserProfile)
+            .Where(item => item.UserProfileId == profile.Id && distinctIds.Contains(item.Id))
+            .ToListAsync(cancellationToken);
+        if (items.Count < 2 || items.Count != distinctIds.Length)
+        {
+            return Problem(statusCode: 422, title: "Kombin bulunamadı", detail: "Favoriye eklemek için en az iki geçerli parça seç.");
+        }
+        var favorite = new FavoriteOutfit
+        {
+            UserProfileId = profile.Id,
+            UserProfile = profile,
+            Title = Clean(request.Title, 160, "Favori kombin"),
+            AnalysisJson = JsonSerializer.Serialize(request.Analysis, JsonOptions),
+            ItemsJson = JsonSerializer.Serialize(items.Select(item => item.ToResponse()).ToArray(), JsonOptions),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.FavoriteOutfits.Add(favorite);
+        await db.SaveChangesAsync(cancellationToken);
+        return Created($"/api/style-board/favorites/{favorite.Id}", ToFavoriteResponse(favorite));
+    }
+
+    [HttpDelete("favorites/{id:int}")]
+    public async Task<IActionResult> DeleteFavorite(
+        int id,
+        [FromQuery] string userId,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(userId)) return Forbid();
+        var favorite = await db.FavoriteOutfits
+            .Include(item => item.UserProfile)
+            .SingleOrDefaultAsync(item => item.Id == id && item.UserProfile.UserId == userId, cancellationToken);
+        if (favorite is null) return NotFound();
+        db.FavoriteOutfits.Remove(favorite);
+        await db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    [HttpPost("wardrobe-outfit")]
+    public async Task<ActionResult<WardrobeOutfitResponse>> WardrobeOutfit(
+        WardrobeOutfitRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(request.UserId)) return Forbid();
+        var profile = await db.UserProfiles
+            .AsNoTracking()
+            .SingleOrDefaultAsync(candidate => candidate.UserId == request.UserId, cancellationToken);
+        if (profile is null) return NotFound();
+        var wardrobe = await db.OrderHistoryItems
+            .AsNoTracking()
+            .Where(item => item.UserProfileId == profile.Id && !item.ReturnConfirmedByUser)
+            .OrderByDescending(item => item.FitScore)
+            .ThenByDescending(item => item.UpdatedAt)
+            .ToListAsync(cancellationToken);
+        var chosen = wardrobe
+            .GroupBy(item => GetSlot(new ProductDto
+            {
+                Url = item.ProductUrl ?? "https://fitmemory.local/wardrobe",
+                Brand = item.Brand,
+                Name = item.ProductName,
+                Category = item.Category
+            }))
+            .Where(group => group.Key != "other")
+            .Select(group => group.First())
+            .Take(5)
+            .ToArray();
+        if (chosen.Length < 2)
+        {
+            return Problem(statusCode: 422, title: "Dolapta yeterli parça yok", detail: "Kombin için en az iki farklı kategoride tutulmuş ürün gerekli.");
+        }
+        var now = DateTimeOffset.UtcNow;
+        var items = chosen.Select(order => new StyleBoardItem
+        {
+            UserProfileId = profile.Id,
+            UserProfile = profile,
+            ProductUrl = order.ProductUrl ?? $"https://fitmemory.local/wardrobe/{order.Id}",
+            Brand = order.Brand,
+            ProductName = order.ProductName,
+            Category = order.Category,
+            ImageUrl = order.ImageUrl ?? "",
+            FitLabel = order.FitLabel ?? "",
+            FitEvidence = order.SizeEvidence ?? "",
+            MaterialSummary = order.MaterialSummary ?? "",
+            MaterialEvidence = order.MaterialEvidence ?? "",
+            RecommendedSize = order.PurchasedSize,
+            RecommendationConfidence = order.FitAssessmentConfidence,
+            IsSelected = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        }).ToArray();
+        var analysis = await analysisService.AnalyzeAsync(profile, items, request.Language, request.Prompt, cancellationToken);
+        return Ok(new WardrobeOutfitResponse(
+            analysis,
+            chosen.Select(order => new WardrobeOutfitPieceResponse(order.Id, order.Brand, order.ProductName, order.Category, order.PurchasedSize, order.ImageUrl)).ToArray()));
     }
 
     private string GetSlot(StyleBoardItem item)
@@ -293,5 +474,13 @@ public sealed class StyleBoardController(
         return cleaned.Length <= maxLength
             ? cleaned
             : cleaned[..maxLength];
+    }
+
+    private static FavoriteOutfitResponse ToFavoriteResponse(FavoriteOutfit favorite)
+    {
+        var analysis = JsonSerializer.Deserialize<StyleBoardAnalysisResponse>(favorite.AnalysisJson, JsonOptions)
+            ?? throw new InvalidOperationException("Favori kombin analizi okunamadı.");
+        var items = JsonSerializer.Deserialize<IReadOnlyList<StyleBoardItemResponse>>(favorite.ItemsJson, JsonOptions) ?? [];
+        return new FavoriteOutfitResponse(favorite.Id, favorite.UserProfile.UserId, favorite.Title, analysis, items, favorite.CreatedAt);
     }
 }

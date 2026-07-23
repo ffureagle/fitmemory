@@ -21,6 +21,7 @@ public sealed class StyleBoardAnalysisService(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
         string language,
+        string userRequest,
         CancellationToken cancellationToken)
     {
         var local = BuildLocal(items);
@@ -40,6 +41,7 @@ public sealed class StyleBoardAnalysisService(
                     items,
                     local,
                     language,
+                    userRequest,
                     cancellationToken);
             }
             else if (providerOptions.Value.IsOpenAi &&
@@ -50,6 +52,7 @@ public sealed class StyleBoardAnalysisService(
                     items,
                     local,
                     language,
+                    userRequest,
                     cancellationToken);
             }
 
@@ -75,6 +78,7 @@ public sealed class StyleBoardAnalysisService(
         IReadOnlyList<StyleBoardItem> items,
         StyleBoardAnalysisResponse local,
         string language,
+        string userRequest,
         CancellationToken cancellationToken)
     {
         var settings = geminiOptions.Value;
@@ -94,7 +98,7 @@ public sealed class StyleBoardAnalysisService(
                     role = "user",
                     parts = new[]
                     {
-                        new { text = BuildEvidence(profile, items, local) }
+                        new { text = BuildEvidence(profile, items, local, userRequest) }
                     }
                 }
             },
@@ -131,6 +135,7 @@ public sealed class StyleBoardAnalysisService(
         IReadOnlyList<StyleBoardItem> items,
         StyleBoardAnalysisResponse local,
         string language,
+        string userRequest,
         CancellationToken cancellationToken)
     {
         var settings = openAiOptions.Value;
@@ -148,7 +153,7 @@ public sealed class StyleBoardAnalysisService(
                 new
                 {
                     role = "user",
-                    content = BuildEvidence(profile, items, local)
+                    content = BuildEvidence(profile, items, local, userRequest)
                 }
             },
             text = new
@@ -310,7 +315,8 @@ public sealed class StyleBoardAnalysisService(
     private static string BuildEvidence(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
-        StyleBoardAnalysisResponse local)
+        StyleBoardAnalysisResponse local,
+        string userRequest)
     {
         var evidence = new
         {
@@ -322,6 +328,7 @@ public sealed class StyleBoardAnalysisService(
             currentLocalTime = DateTimeOffset.UtcNow.ToOffset(
                 TimeSpan.FromHours(3)),
             localGuard = local,
+            userRequest = userRequest.Trim(),
             selectedProducts = items.Select(item => new
             {
                 item.Brand,
@@ -333,6 +340,8 @@ public sealed class StyleBoardAnalysisService(
                 item.FitLabel,
                 item.FitEvidence,
                 item.Description,
+                item.MaterialSummary,
+                item.MaterialEvidence,
                 item.RecommendedSize,
                 item.RecommendationConfidence
             })

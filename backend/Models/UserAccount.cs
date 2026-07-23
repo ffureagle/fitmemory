@@ -21,6 +21,13 @@ public sealed class UserAccount
     [MaxLength(1000)]
     public required string PasswordHash { get; set; }
 
+    [MaxLength(128)]
+    public string? PasswordResetCodeHash { get; set; }
+
+    public long? PasswordResetExpiresAtUnix { get; set; }
+
+    public int PasswordResetAttempts { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }

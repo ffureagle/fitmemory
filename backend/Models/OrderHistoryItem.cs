@@ -62,6 +62,12 @@ public sealed class OrderHistoryItem
     [MaxLength(500)]
     public string? SizeEvidence { get; set; }
 
+    [MaxLength(240)]
+    public string? MaterialSummary { get; set; }
+
+    [MaxLength(1600)]
+    public string? MaterialEvidence { get; set; }
+
     public int ResearchConfidence { get; set; }
 
     public int? FitScore { get; set; }

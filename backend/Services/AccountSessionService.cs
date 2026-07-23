@@ -4,12 +4,15 @@ using FitMemory.Api.Models;
 using FitMemory.Api.Security;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace FitMemory.Api.Services;
 
 public sealed class AccountSessionService(
     FitMemoryDbContext db,
-    IPasswordHasher<UserAccount> passwordHasher)
+    IPasswordHasher<UserAccount> passwordHasher,
+    PasswordResetEmailService resetEmailService)
 {
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromDays(30);
 
@@ -132,6 +135,74 @@ public sealed class AccountSessionService(
             false);
     }
 
+    public async Task<ForgotPasswordResponse> SendPasswordResetCodeAsync(
+        ForgotPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var account = await db.UserAccounts.SingleOrDefaultAsync(
+            candidate => candidate.NormalizedEmail == NormalizeEmail(request.Email),
+            cancellationToken);
+        if (account is null)
+        {
+            await Task.Delay(250, cancellationToken);
+            return new ForgotPasswordResponse(
+                "Bu adres kayıtlıysa yenileme kodu e-posta ile gönderildi.",
+                15);
+        }
+
+        var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        account.PasswordResetCodeHash = HashResetCode(account.NormalizedEmail, code);
+        account.PasswordResetExpiresAtUnix = DateTimeOffset.UtcNow.AddMinutes(15).ToUnixTimeSeconds();
+        account.PasswordResetAttempts = 0;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        await resetEmailService.SendCodeAsync(account.Email, code, cancellationToken);
+        return new ForgotPasswordResponse(
+            "Bu adres kayıtlıysa yenileme kodu e-posta ile gönderildi.",
+            15);
+    }
+
+    public async Task ResetPasswordAsync(
+        ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        ValidatePassword(request.NewPassword);
+        var account = await db.UserAccounts
+            .Include(candidate => candidate.Sessions)
+            .SingleOrDefaultAsync(
+                candidate => candidate.NormalizedEmail == NormalizeEmail(request.Email),
+                cancellationToken);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var suppliedHash = HashResetCode(NormalizeEmail(request.Email), request.Code);
+        var valid = account is not null &&
+            account.PasswordResetAttempts < 5 &&
+            account.PasswordResetExpiresAtUnix >= now &&
+            !string.IsNullOrWhiteSpace(account.PasswordResetCodeHash) &&
+            CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(account.PasswordResetCodeHash),
+                Convert.FromHexString(suppliedHash));
+        if (!valid)
+        {
+            if (account is not null)
+            {
+                account.PasswordResetAttempts++;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            throw new AccountFlowException(
+                StatusCodes.Status400BadRequest,
+                "Kod geçersiz",
+                "Kod hatalı veya süresi dolmuş. Yeni bir kod isteyin.");
+        }
+
+        account!.PasswordHash = passwordHasher.HashPassword(account, request.NewPassword);
+        account.PasswordResetCodeHash = null;
+        account.PasswordResetExpiresAtUnix = null;
+        account.PasswordResetAttempts = 0;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        db.UserSessions.RemoveRange(account.Sessions);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<AccountResponse?> GetAccountAsync(
         int accountId,
         CancellationToken cancellationToken)
@@ -222,6 +293,12 @@ public sealed class AccountSessionService(
     private static string NormalizeEmail(string email)
     {
         return email.Trim().ToUpperInvariant();
+    }
+
+    private static string HashResetCode(string normalizedEmail, string code)
+    {
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{normalizedEmail}:{code}")));
     }
 
     private static string? NormalizeLegacyUserId(string? value)

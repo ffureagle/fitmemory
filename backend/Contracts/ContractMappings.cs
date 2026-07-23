@@ -40,9 +40,13 @@ public static class ContractMappings
             item.FitLabel,
             item.FitEvidence,
             item.Description,
+            item.MaterialSummary,
+            item.MaterialEvidence,
             item.RecommendedSize,
             item.RecommendationConfidence,
             item.IsSelected,
+            item.IsInStudio,
+            item.IsSaved,
             item.CreatedAt,
             item.UpdatedAt);
     }
@@ -72,6 +76,8 @@ public static class ContractMappings
             order.ResearchSourceUrl,
             order.FitLabel,
             order.SizeEvidence,
+            order.MaterialSummary,
+            order.MaterialEvidence,
             order.ResearchConfidence,
             order.FitScore,
             order.FitAssessment,

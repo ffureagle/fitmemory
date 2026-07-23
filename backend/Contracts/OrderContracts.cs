@@ -102,6 +102,8 @@ public sealed record OrderResponse(
     string? ResearchSourceUrl,
     string? FitLabel,
     string? SizeEvidence,
+    string? MaterialSummary,
+    string? MaterialEvidence,
     int ResearchConfidence,
     int? FitScore,
     string? FitAssessment,

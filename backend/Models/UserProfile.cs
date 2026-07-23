@@ -41,4 +41,7 @@ public sealed class UserProfile
 
     public ICollection<StyleBoardItem> StyleBoardItems { get; set; } =
         new List<StyleBoardItem>();
+
+    public ICollection<FavoriteOutfit> FavoriteOutfits { get; set; } =
+        new List<FavoriteOutfit>();
 }

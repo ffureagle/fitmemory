@@ -18,6 +18,8 @@ public sealed class FitMemoryDbContext(DbContextOptions<FitMemoryDbContext> opti
 
     public DbSet<StyleBoardItem> StyleBoardItems => Set<StyleBoardItem>();
 
+    public DbSet<FavoriteOutfit> FavoriteOutfits => Set<FavoriteOutfit>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<UserAccount>(entity =>
@@ -89,6 +91,19 @@ public sealed class FitMemoryDbContext(DbContextOptions<FitMemoryDbContext> opti
             entity
                 .HasOne(item => item.UserProfile)
                 .WithMany(profile => profile.StyleBoardItems)
+                .HasForeignKey(item => item.UserProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FavoriteOutfit>(entity =>
+        {
+            entity.HasIndex(item => new { item.UserProfileId, item.CreatedAt });
+            entity.Property(item => item.CreatedAt).HasConversion(
+                value => value.UtcTicks,
+                value => new DateTimeOffset(value, TimeSpan.Zero));
+            entity
+                .HasOne(item => item.UserProfile)
+                .WithMany(profile => profile.FavoriteOutfits)
                 .HasForeignKey(item => item.UserProfileId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

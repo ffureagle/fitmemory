@@ -222,6 +222,19 @@ builder.Services.AddSingleton<WardrobeStylistService>();
 builder.Services.AddSingleton<LocalFitRecommendationEngine>();
 builder.Services.AddSingleton<ArchivedFitAssessmentService>();
 builder.Services.AddScoped<AccountSessionService>();
+builder.Services.AddScoped<PasswordResetEmailService>();
+builder.Services
+    .AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        options.Host = builder.Configuration["SMTP_HOST"] ?? options.Host;
+        options.Port = int.TryParse(builder.Configuration["SMTP_PORT"], out var port) ? port : options.Port;
+        options.Username = builder.Configuration["SMTP_USERNAME"] ?? options.Username;
+        options.Password = builder.Configuration["SMTP_PASSWORD"] ?? options.Password;
+        options.FromAddress = builder.Configuration["SMTP_FROM_ADDRESS"] ?? options.FromAddress;
+        options.FromName = builder.Configuration["SMTP_FROM_NAME"] ?? options.FromName;
+    });
 builder.Services.AddScoped<
     IPasswordHasher<UserAccount>,
     PasswordHasher<UserAccount>>();

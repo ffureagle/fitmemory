@@ -60,6 +60,40 @@ public sealed class AuthController(
         }
     }
 
+    [AllowAnonymous]
+    [HttpPost("password/forgot")]
+    public async Task<ActionResult<ForgotPasswordResponse>> ForgotPassword(
+        ForgotPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await accountSessionService.SendPasswordResetCodeAsync(request, cancellationToken));
+        }
+        catch (AccountFlowException exception)
+        {
+            return Problem(statusCode: exception.StatusCode, title: exception.Title, detail: exception.Detail);
+        }
+    }
+
+    [AllowAnonymous]
+    [HttpPost("password/reset")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> ResetPassword(
+        ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await accountSessionService.ResetPasswordAsync(request, cancellationToken);
+            return NoContent();
+        }
+        catch (AccountFlowException exception)
+        {
+            return Problem(statusCode: exception.StatusCode, title: exception.Title, detail: exception.Detail);
+        }
+    }
+
     [Authorize]
     [HttpGet("me")]
     [ProducesResponseType<AccountResponse>(StatusCodes.Status200OK)]
