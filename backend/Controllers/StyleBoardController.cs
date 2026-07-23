@@ -84,6 +84,7 @@ public sealed class StyleBoardController(
             Brand = "",
             ProductName = "",
             Category = "",
+            IsSelected = false,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -103,14 +104,6 @@ public sealed class StyleBoardController(
             request.RecommendationConfidence,
             0,
             95);
-        var selectedSlot = GetSlot(request.Product);
-        foreach (var candidate in profileItems.Where(candidate =>
-                     candidate.Id != item.Id &&
-                     GetSlot(candidate) == selectedSlot))
-        {
-            candidate.IsSelected = false;
-        }
-        item.IsSelected = true;
         item.UpdatedAt = now;
         if (existing is null)
         {
