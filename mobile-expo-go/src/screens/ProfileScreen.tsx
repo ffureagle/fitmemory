@@ -449,15 +449,22 @@ export function ProfileScreen() {
               <LanguageSwitch compact />
             </View>
             <View style={styles.settingsDivider} />
+            <Pressable onPress={logout} style={styles.logout}>
+              <View style={styles.logoutCopy}>
+                <Text style={styles.settingLabel}>Oturumu kapat</Text>
+                <Text style={styles.settingHint}>
+                  Dolabın ve profilin hesabında saklanmaya devam eder
+                </Text>
+              </View>
+              <Text style={styles.logoutText}>Çıkış yap</Text>
+            </Pressable>
+            <View style={styles.settingsDivider} />
             <Pressable onPress={deleteAccount} style={styles.deleteAccount}>
               <Text style={styles.deleteAccountText}>Hesabımı ve verilerimi sil</Text>
             </Pressable>
           </View>
         ) : null}
       </Card>
-      <Pressable onPress={logout} style={styles.logout}>
-        <Text style={styles.logoutText}>Hesaptan çıkış yap</Text>
-      </Pressable>
       <View style={styles.footerBrand}>
         <Brand compact />
         <Text style={styles.version}>Mobil beta · 1.0.0</Text>
@@ -697,9 +704,12 @@ const styles = StyleSheet.create({
   },
   logout: {
     alignItems: "center",
-    minHeight: 44,
-    justifyContent: "center",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    minHeight: 48,
   },
+  logoutCopy: { flex: 1 },
   logoutText: {
     color: colors.red,
     fontSize: 11,

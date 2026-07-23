@@ -39,7 +39,12 @@ const tabs: {
 function NavIcon({ active, type }: { active: boolean; type: Tab }) {
   const color = active ? colors.card : "#77756E";
   if (type === "profile") {
-    return <View style={[styles.profileIcon, { borderColor: color }]}><View style={[styles.profileBody, { borderColor: color }]} /></View>;
+    return (
+      <View style={styles.profileIcon}>
+        <View style={[styles.profileHead, { borderColor: color }]} />
+        <View style={[styles.profileBody, { borderColor: color }]} />
+      </View>
+    );
   }
   if (type === "studio") {
     return <View style={styles.studioIcon}><View style={[styles.hangerHook, { borderColor: color }]} /><View style={[styles.hangerBar, { borderColor: color }]} /></View>;
@@ -370,11 +375,18 @@ const styles = StyleSheet.create({
     width: 20,
   },
   profileIcon: {
+    height: 22,
+    position: "relative",
+    width: 22,
+  },
+  profileHead: {
     borderRadius: 6,
     borderWidth: 1.7,
-    height: 11,
-    position: "relative",
-    width: 11,
+    height: 10,
+    left: 6,
+    position: "absolute",
+    top: 0,
+    width: 10,
   },
   profileBody: {
     borderBottomWidth: 0,
@@ -383,7 +395,7 @@ const styles = StyleSheet.create({
     borderRightWidth: 1.7,
     borderTopWidth: 1.7,
     height: 9,
-    left: -5,
+    left: 2,
     position: "absolute",
     top: 12,
     width: 18,

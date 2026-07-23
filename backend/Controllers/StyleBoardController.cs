@@ -16,7 +16,8 @@ namespace FitMemory.Api.Controllers;
 public sealed class StyleBoardController(
     FitMemoryDbContext db,
     StyleBoardAnalysisService analysisService,
-    ProductCategoryService categoryService) : ControllerBase
+    ProductCategoryService categoryService,
+    WardrobeStylistService wardrobeStylistService) : ControllerBase
 {
     private const int MaxItems = 12;
     private const int MaxFavorites = 30;
@@ -391,17 +392,8 @@ public sealed class StyleBoardController(
             .OrderByDescending(item => item.FitScore)
             .ThenByDescending(item => item.UpdatedAt)
             .ToListAsync(cancellationToken);
-        var chosen = wardrobe
-            .GroupBy(item => GetSlot(new ProductDto
-            {
-                Url = item.ProductUrl ?? "https://fitmemory.local/wardrobe",
-                Brand = item.Brand,
-                Name = item.ProductName,
-                Category = item.Category
-            }))
-            .Where(group => group.Key != "other")
-            .Select(group => group.First())
-            .Take(5)
+        var chosen = wardrobeStylistService
+            .SelectRequestedOutfit(profile, wardrobe, request.Prompt)
             .ToArray();
         if (chosen.Length < 2)
         {

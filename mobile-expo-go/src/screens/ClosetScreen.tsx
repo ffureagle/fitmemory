@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
   Alert,
   Image,
@@ -75,18 +76,35 @@ function isReturned(outcome: Order["outcome"]) {
     outcome === "ReturnedTooTight";
 }
 
-const categoryMarks: Record<string, string> = {
-  Tops: "T",
-  Shirts: "▤",
-  Outerwear: "⌂",
-  Knitwear: "≈",
-  Bottoms: "Ⅱ",
-  Denim: "Ⅲ",
-  Dresses: "◇",
-  Shoes: "⌣",
-  Returns: "↩",
-  Other: "·",
+const categoryIcons: Record<string, React.ComponentProps<typeof MaterialCommunityIcons>["name"]> = {
+  Tops: "tshirt-crew-outline",
+  Shirts: "hanger",
+  Outerwear: "coat-rack",
+  Knitwear: "layers-outline",
+  Dresses: "human-female",
+  Footwear: "shoe-sneaker",
+  Returns: "archive-arrow-down-outline",
+  Other: "dots-horizontal-circle-outline",
 };
+
+function CategoryGlyph({ category }: { category: string }) {
+  if (category === "Bottoms" || category === "Denim") {
+    return (
+      <View style={styles.trouserIcon}>
+        <View style={styles.trouserWaist} />
+        <View style={styles.trouserLeftLeg} />
+        <View style={styles.trouserRightLeg} />
+      </View>
+    );
+  }
+  return (
+    <MaterialCommunityIcons
+      color={colors.blue}
+      name={categoryIcons[category] ?? categoryIcons.Other}
+      size={21}
+    />
+  );
+}
 
 export function ClosetScreen() {
   const { translate } = useI18n();
@@ -285,9 +303,7 @@ export function ClosetScreen() {
                     style={styles.groupHead}
                   >
                     <View style={styles.groupIndex}>
-                      <Text style={styles.groupIndexText}>
-                        {categoryMarks[key] ?? categoryMarks.Other}
-                      </Text>
+                      <CategoryGlyph category={key} />
                     </View>
                     <View style={styles.groupCopy}>
                       <Text style={styles.groupTitle}>
@@ -565,6 +581,45 @@ const styles = StyleSheet.create({
     color: colors.blue,
     fontSize: 11,
     fontWeight: "900",
+  },
+  trouserIcon: {
+    height: 22,
+    position: "relative",
+    width: 18,
+  },
+  trouserWaist: {
+    borderColor: colors.blue,
+    borderRadius: 2,
+    borderWidth: 1.7,
+    height: 5,
+    left: 1,
+    position: "absolute",
+    top: 0,
+    width: 16,
+  },
+  trouserLeftLeg: {
+    borderBottomLeftRadius: 3,
+    borderColor: colors.blue,
+    borderTopWidth: 0,
+    borderWidth: 1.7,
+    height: 17,
+    left: 2,
+    position: "absolute",
+    top: 4,
+    transform: [{ rotate: "4deg" }],
+    width: 7,
+  },
+  trouserRightLeg: {
+    borderBottomRightRadius: 3,
+    borderColor: colors.blue,
+    borderTopWidth: 0,
+    borderWidth: 1.7,
+    height: 17,
+    position: "absolute",
+    right: 2,
+    top: 4,
+    transform: [{ rotate: "-4deg" }],
+    width: 7,
   },
   groupCopy: {
     flex: 1,

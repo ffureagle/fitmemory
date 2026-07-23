@@ -13,6 +13,7 @@
     "submit:ios": "pnpm dlx eas-cli@latest submit --platform ios --profile production"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "expo": "~57.0.7",
     "expo-haptics": "~57.0.1",
     "expo-secure-store": "~57.0.1",

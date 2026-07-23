@@ -56,7 +56,7 @@ public sealed class StyleBoardAnalysisService(
                     cancellationToken);
             }
 
-            return result is null ? local : Normalize(result);
+            return result is null ? local : Normalize(result, local);
         }
         catch (Exception exception)
         {
@@ -212,7 +212,11 @@ public sealed class StyleBoardAnalysisService(
             .ToLowerInvariant();
         var hasUpper = ContainsAny(text, "tişört", "tisort", "shirt", "gömlek", "gomlek", "bluz", "sweat", "kazak", "top");
         var hasBottom = ContainsAny(text, "pantolon", "jean", "etek", "skirt", "şort", "sort", "trouser");
+        var hasOnePiece = ContainsAny(text, "elbise", "dress", "tulum", "jumpsuit");
+        var hasOuterwear = ContainsAny(text, "ceket", "jacket", "mont", "coat", "kaban", "parka", "trenç", "trenc", "trench", "outerwear");
         var hasTrench = ContainsAny(text, "trenç", "trenc", "trench");
+        var hasHeavyLayer = ContainsAny(text, "kaban", "puffer", "parka", "yün", "yun", "wool", "kalın", "thick", "termal", "thermal");
+        var hasKnitwear = ContainsAny(text, "kazak", "triko", "knit", "sweater", "hırka", "hirka", "cardigan");
         var hasMini = ContainsAny(text, "mini etek", "mini skirt");
         var hasShortSleeve = ContainsAny(text, "kısa kollu", "kisa kollu", "short sleeve");
         var volumes = items.Count(item =>
@@ -222,7 +226,7 @@ public sealed class StyleBoardAnalysisService(
 
         var notes = new List<string>();
         var score = 68;
-        if (!hasUpper || !hasBottom)
+        if (!hasOnePiece && (!hasUpper || !hasBottom))
         {
             score -= 20;
             notes.Add("Tam görünüm için bir üst ve bir alt parça seç.");
@@ -249,6 +253,18 @@ public sealed class StyleBoardAnalysisService(
             score -= 10;
             notes.Add("Kısa kollu üst ile trençkot katmanı bu ay için hava koşuluna bağlı; gündüz görünümü olarak zorlamayın.");
         }
+        if (season.Kind == "Yaz" && hasOuterwear)
+        {
+            score -= hasHeavyLayer ? 30 : 18;
+            notes.Add(hasHeavyLayer
+                ? "Kalın dış giyim yaz koşullarına uygun değil; kombinden çıkar."
+                : "Dış katman yaz gündüzü için gereksiz olabilir; yalnız serin akşam ve hafif kumaş kanıtı varsa koru.");
+        }
+        if (season.Kind == "Yaz" && hasKnitwear)
+        {
+            score -= 18;
+            notes.Add("Triko katmanı yaz mevsiminde ancak ince ve nefes alan kumaş açıkça doğrulanıyorsa kullanılmalı.");
+        }
 
         var verdict = score switch
         {
@@ -271,28 +287,33 @@ public sealed class StyleBoardAnalysisService(
     }
 
     private static StyleBoardAnalysisResponse Normalize(
-        AiStyleBoardResult result)
+        AiStyleBoardResult result,
+        StyleBoardAnalysisResponse local)
     {
-        var verdict = result.Verdict.Trim() switch
+        var guardedScore = local.Score < 60
+            ? Math.Min(result.Score, local.Score + 10)
+            : result.Score;
+        guardedScore = Math.Clamp(guardedScore, 15, 95);
+        var verdict = guardedScore switch
         {
-            "Güçlü" => "Güçlü",
-            "Zayıf" => "Zayıf",
-            "Strong" => "Strong",
-            "Weak" => "Weak",
-            "Adjust" => "Adjust",
-            _ => "Düzenle"
+            >= 75 => result.Verdict.Trim() == "Strong" ? "Strong" : "Güçlü",
+            >= 52 => result.Verdict.Trim() == "Adjust" ? "Adjust" : "Düzenle",
+            _ => result.Verdict.Trim() == "Weak" ? "Weak" : "Zayıf"
         };
+        var notes = local.Notes
+            .Concat(result.Notes)
+            .Where(note => !string.IsNullOrWhiteSpace(note))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(note => Limit(note, 220))
+            .Take(4)
+            .ToArray();
         return new StyleBoardAnalysisResponse(
             verdict,
-            Math.Clamp(result.Score, 15, 95),
+            guardedScore,
             Limit(result.Headline, 160),
             Limit(result.Explanation, 900),
-            result.Notes
-                .Where(note => !string.IsNullOrWhiteSpace(note))
-                .Select(note => Limit(note, 220))
-                .Take(4)
-                .ToArray(),
-            Limit(result.SeasonContext, 80),
+            notes,
+            local.SeasonContext,
             DateTimeOffset.UtcNow);
     }
 
@@ -305,6 +326,10 @@ public sealed class StyleBoardAnalysisService(
             Sen FitMemory Kombin Stüdyosu'nun eleştirel kıdemli stilistisin. Kullanıcı henüz satın almadığı gerçek ürünleri seçti.
             Her seti otomatik olarak övme. Yalnız verilen ürün kanıtını kullan; renk, kumaş veya kalıp uydurma.
             Renk uyumu, siluet hacmi, üst-alt boy oranı, katman mantığı, yaş/kullanım bağlamı ve Türkiye'deki mevcut ayı birlikte değerlendir.
+            currentLocalTime ve localGuard mevsim konusunda bağlayıcıdır. Yazın kalın dış giyim, kaban, yoğun triko ve gereksiz çok katman; kışın korumasız ince yaz parçaları önerme. Kullanıcı açıkça farklı bir şehir, seyahat veya hava koşulu yazmadıkça Türkiye'nin mevcut mevsimini esas al.
+            Mevsimsel renkleri katı moda kuralı gibi dayatma; yazın açık/nötr/doğal veya kontrollü canlı tonları, sonbaharda toprak ve derin nötrleri, kışın doygun koyu/nötrleri, ilkbaharda daha ferah ve yumuşak kontrastları önceliklendir. Yalnız ürün adında ya da kanıtta gerçekten görülen renkler hakkında konuş.
+            Kumaş ağırlığını ve nefes alabilirliği MaterialSummary/MaterialEvidence ile kontrol et. Materyal kanıtı yoksa uygunmuş gibi varsayma.
+            localGuard mevsim veya katman sorunu bulduysa bunu görmezden gelme; sorun çözülmedikçe puanı localGuard.score değerinin en fazla 10 puan üzerine çıkar ve somut değişikliği yaz.
             Bütün hacimli kesimleri aynı anda onaylama. Boxy, relaxed, baggy, straight ve slim kesimleri eş anlamlı sayma.
             Mini kot etek + kısa kollu tişört + trençkot evrensel olarak doğru değildir: yazın trenç genellikle mevsim dışıdır; ilkbahar/sonbaharda ancak trenç hafif ve açık, boy oranı bilinçli ise çalışabilir.
             Üst ve alt parçanın birlikte çalışmasını değerlendir. Ayakkabı isteğe bağlıdır: seçilmişse kombine uyumunu yorumla; seçilmemişse ayakkabıdan, eksikliğinden veya görünümün tamamlanmadığından hiç söz etme ve puan düşürme.

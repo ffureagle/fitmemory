@@ -14,6 +14,127 @@ public sealed class WardrobeStylistService(
 {
     private const int MaxOutfits = 48;
 
+    public IReadOnlyList<OrderHistoryItem> SelectRequestedOutfit(
+        UserProfile profile,
+        IReadOnlyList<OrderHistoryItem> wardrobe,
+        string userRequest)
+    {
+        var season = CurrentSeason();
+        var request = userRequest.Trim().ToLowerInvariant();
+        var ranked = wardrobe
+            .Where(order => order.Outcome.IsInCloset())
+            .Where(IsReliableStylePiece)
+            .Select(order => new RankedItem(
+                order,
+                EvidenceWeight(order) +
+                SeasonWeight(order, season) +
+                RequestWeight(order, request)))
+            .Where(candidate => candidate.Score > 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.Order.UpdatedAt)
+            .ToArray();
+
+        var uppers = ranked
+            .Where(candidate => StyleSlot(categoryService.GetGroup(candidate.Order)) == "upper")
+            .Take(8)
+            .ToArray();
+        var bottoms = ranked
+            .Where(candidate => StyleSlot(categoryService.GetGroup(candidate.Order)) == "bottom")
+            .Take(8)
+            .ToArray();
+        var dresses = ranked
+            .Where(candidate => StyleSlot(categoryService.GetGroup(candidate.Order)) == "dress")
+            .Take(6)
+            .ToArray();
+        var footwear = ranked
+            .Where(candidate => StyleSlot(categoryService.GetGroup(candidate.Order)) == "footwear")
+            .Take(6)
+            .ToArray();
+        var outerwear = ranked
+            .Where(candidate => StyleSlot(categoryService.GetGroup(candidate.Order)) == "outerwear")
+            .Where(candidate => SeasonWeight(candidate.Order, season) > -20)
+            .Take(6)
+            .ToArray();
+
+        var bases = new List<RankedOutfit>();
+        foreach (var upper in uppers)
+        {
+            foreach (var bottom in bottoms)
+            {
+                bases.Add(new RankedOutfit(
+                    [upper.Order, bottom.Order],
+                    upper.Score + bottom.Score +
+                    PairCompatibilityScore(upper.Order, bottom.Order)));
+            }
+        }
+        foreach (var dress in dresses)
+        {
+            bases.Add(new RankedOutfit([dress.Order], dress.Score + 8));
+        }
+
+        var bestBase = bases
+            .OrderByDescending(candidate => candidate.Score)
+            .FirstOrDefault();
+        if (bestBase is null)
+        {
+            return [];
+        }
+
+        var selected = bestBase.Orders.ToList();
+        var asksForOuterwear = ContainsAny(
+            request,
+            "ceket", "mont", "kaban", "trenç", "trenc", "jacket",
+            "coat", "outerwear", "katman", "layer");
+        var wantsSeasonalLayer = season.Kind switch
+        {
+            StyleSeason.Winter => true,
+            StyleSeason.Spring or StyleSeason.Autumn => asksForOuterwear,
+            _ => false
+        };
+        if (wantsSeasonalLayer && outerwear.Length > 0)
+        {
+            var layer = outerwear
+                .OrderByDescending(candidate =>
+                    candidate.Score + selected.Sum(item =>
+                        PairCompatibilityScore(item, candidate.Order)))
+                .First();
+            selected.Add(layer.Order);
+        }
+
+        var asksForFootwear = ContainsAny(
+            request,
+            "ayakkabı", "ayakkabi", "sneaker", "loafer", "bot", "çizme",
+            "cizme", "shoe", "boot", "footwear");
+        if (asksForFootwear && footwear.Length > 0)
+        {
+            var shoe = footwear
+                .OrderByDescending(candidate =>
+                    candidate.Score + selected.Sum(item =>
+                        PairCompatibilityScore(item, candidate.Order)))
+                .First();
+            selected.Add(shoe.Order);
+        }
+
+        if (selected.Count == 1)
+        {
+            var companion = footwear
+                .Concat(outerwear)
+                .OrderByDescending(candidate =>
+                    candidate.Score + PairCompatibilityScore(
+                        selected[0], candidate.Order))
+                .FirstOrDefault();
+            if (companion is not null)
+            {
+                selected.Add(companion.Order);
+            }
+        }
+
+        return selected
+            .DistinctBy(order => order.Id)
+            .Take(4)
+            .ToArray();
+    }
+
     public WardrobeStyleDto BuildLocal(
         UserProfile profile,
         IReadOnlyList<OrderHistoryItem> wardrobe,
@@ -502,6 +623,44 @@ public sealed class WardrobeStylistService(
             : 0;
         var media = string.IsNullOrWhiteSpace(order.ImageUrl) ? 0 : 4;
         return outcome + research + fit + media;
+    }
+
+    private static int RequestWeight(
+        OrderHistoryItem order,
+        string request)
+    {
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            return 0;
+        }
+
+        var product = $"{order.ProductName} {order.Category} {order.FitLabel} {order.MaterialSummary}"
+            .ToLowerInvariant();
+        var meaningfulTerms = request
+            .Split(
+                [' ', ',', '.', ';', ':', '/', '\\', '-', '_'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(term => term.Length >= 4)
+            .Distinct(StringComparer.Ordinal)
+            .Take(16);
+        return meaningfulTerms.Sum(term =>
+            product.Contains(term, StringComparison.Ordinal) ? 8 : 0);
+    }
+
+    private static int PairCompatibilityScore(
+        OrderHistoryItem first,
+        OrderHistoryItem second)
+    {
+        var firstColor = DetectColor(
+            $"{first.ProductName} {first.FitNotes} {first.MaterialSummary}");
+        var secondColor = DetectColor(
+            $"{second.ProductName} {second.FitNotes} {second.MaterialSummary}");
+        var firstVolume = SilhouetteVolume(
+            $"{first.FitLabel} {first.ProductName} {first.FitAssessment}");
+        var secondVolume = SilhouetteVolume(
+            $"{second.FitLabel} {second.ProductName} {second.FitAssessment}");
+        return ColorPairScore(firstColor, secondColor) +
+               SilhouettePairScore(firstVolume, secondVolume);
     }
 
     private static int CompatibilityWeight(
