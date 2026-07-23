@@ -63,6 +63,9 @@ public sealed class OpenAiOrderImportClient(
         OpenAiOptions settings,
         AnalyzeOrderHistoryRequest request)
     {
+        var responseLanguage = request.Language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
         var pageEvidence = new
         {
             request.PageUrl,
@@ -126,11 +129,12 @@ public sealed class OpenAiOrderImportClient(
         return new
         {
             model = settings.Model,
-            instructions = """
-                Sen FitMemory'nin Türkçe konuşan sipariş geçmişi araştırmacısısın. Görseli ve temizlenmiş
+            instructions = $"""
+                You are FitMemory's order-history researcher. Write every user-facing field in {responseLanguage}.
+                Görseli ve temizlenmiş
                 DOM kanıtını birlikte incele; ardından web aramasıyla ürünleri tek tek doğrula. Kullanıcının
                 kimliğini, adresini, ödeme bilgisini veya başka hassas özelliğini çıkarmaya çalışma.
-                Sonuç metinlerinin tamamı Türkçe olsun. Kanıt yoksa belirsizliği açıkça koru.
+                Kanıt yoksa belirsizliği açıkça koru.
                 """,
             input = new[]
             {

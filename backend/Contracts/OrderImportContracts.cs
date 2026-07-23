@@ -29,6 +29,9 @@ public sealed class AnalyzeOrderHistoryRequest : IValidatableObject
     [MaxLength(6)]
     public IReadOnlyList<ProductPageResearchDto> ProductPageResearch { get; init; } = [];
 
+    [RegularExpression("^(tr|en)$")]
+    public string Language { get; init; } = "tr";
+
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         if (OrderCards.Count == 0)

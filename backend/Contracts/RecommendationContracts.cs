@@ -17,6 +17,9 @@ public sealed class AnalyzeRecommendationRequest
     public string UserAdjustmentNote { get; init; } = "";
 
     public bool IsReconsideration { get; init; }
+
+    [RegularExpression("^(tr|en)$")]
+    public string Language { get; init; } = "tr";
 }
 
 public sealed class ProductDto

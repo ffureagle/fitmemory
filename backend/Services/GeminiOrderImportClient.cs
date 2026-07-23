@@ -83,7 +83,8 @@ public sealed class GeminiOrderImportClient(
         var formattingPayload = CreateFormattingPayload(
             researchText,
             googleSearchUsed,
-            urlContextUsed);
+            urlContextUsed,
+            request.Language);
         var formattingBody = await SendAsync(
             settings,
             formattingPayload,
@@ -258,6 +259,10 @@ public sealed class GeminiOrderImportClient(
                   bilgisini veya başka hassas özelliğini çıkarmaya çalışma. Tüm sonuçlar Türkçe
                   olsun ve kanıt yoksa belirsizliği koru.
                   """;
+        var responseLanguage = request.Language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
+        systemText += $"\nWrite every user-facing field in {responseLanguage}.";
 
         return new
         {
@@ -302,7 +307,8 @@ public sealed class GeminiOrderImportClient(
     private static object CreateFormattingPayload(
         string researchText,
         bool googleSearchUsed,
-        bool urlContextUsed)
+        bool urlContextUsed,
+        string language)
     {
         var boundedResearch = researchText.Length <= 60_000
             ? researchText
@@ -322,10 +328,13 @@ public sealed class GeminiOrderImportClient(
                   Web aracı kullanılmadı. researchSourceUrl alanını boş bırak, görünmeyen tüm
                   ölçüleri null yap ve researchConfidence değerini en fazla 60 tut.
                   """;
+        var responseLanguage = language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
         var prompt = $"""
             Aşağıdaki Gemini görsel ve sayfa analizi bulgularını verilen JSON şemasına dönüştür.
             Bulgularda bulunmayan ürün, beden, iade nedeni, ölçü veya URL ekleme. Kaynakla
-            doğrulanmayan ölçüleri null bırak. Tüm açıklamalar Türkçe olsun.
+            doğrulanmayan ölçüleri null bırak. Write every user-facing field in {responseLanguage}.
 
             KANIT MODU:
             {evidenceMode}

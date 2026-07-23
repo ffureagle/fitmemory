@@ -216,6 +216,9 @@ public sealed class OpenAiRecommendationClient(
             }
         };
 
+        var responseLanguage = request.Language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
         var input = $"""
             Aşağıdaki beden kanıtını ve dolap envanterini analiz et. Beden kararını ve stil önerisini
             birbirinden bağımsız kanıt alanları olarak değerlendir.
@@ -292,7 +295,7 @@ public sealed class OpenAiRecommendationClient(
                 uzunluğu tablosu ve doğrulanmış aynı ayakkabı kategorisi geçmişini kullan. Boy, kilo, göğüs,
                 omuz veya kıyafet bedeni ayakkabı numarası kanıtı değildir. Marka tablosu olmadan santimetreden
                 kesin EU dönüşümü uydurma; alışılan EU numarasını yalnız düşük güvenli başlangıç kabul et.
-            10. Tüm kullanıcıya dönük metinleri Türkçe yaz.
+            10. Write every user-facing field in {responseLanguage}.
             11. Güven puanı kesinlik değildir. Asla 100 verme; ölçülü ve doğrulanmış kategori kanıtı
                 sınırlıysa 50-70 aralığını kullan.
             """;
@@ -300,8 +303,9 @@ public sealed class OpenAiRecommendationClient(
         return new
         {
             model = settings.Model,
-            instructions = """
-                Sen FitMemory'nin Türkçe konuşan beden analisti ve kişisel dolap stilistisin. Perakendecinin aktif beden tablosunu
+            instructions = $"""
+                You are FitMemory's evidence-led sizing analyst and personal wardrobe stylist. Write every user-facing field in {responseLanguage}.
+                Perakendecinin aktif beden tablosunu
                 kullanıcının açık vücut ölçüleri, doğrulanmış giysi ölçüleri, iade nedenleri ve kalıp tercihiyle
                 karşılaştır. Yalnız sağlanan kanıta dayalı, kısa ve kararlı bir öneri üret. Asla ölçü uydurma.
                 Aynı beden etiketini farklı kalıplarda eşit sayma: Straight ile Super Baggy, Slim ile

@@ -20,6 +20,7 @@ public sealed class StyleBoardAnalysisService(
     public async Task<StyleBoardAnalysisResponse> AnalyzeAsync(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
+        string language,
         CancellationToken cancellationToken)
     {
         var local = BuildLocal(items);
@@ -38,6 +39,7 @@ public sealed class StyleBoardAnalysisService(
                     profile,
                     items,
                     local,
+                    language,
                     cancellationToken);
             }
             else if (providerOptions.Value.IsOpenAi &&
@@ -47,6 +49,7 @@ public sealed class StyleBoardAnalysisService(
                     profile,
                     items,
                     local,
+                    language,
                     cancellationToken);
             }
 
@@ -71,6 +74,7 @@ public sealed class StyleBoardAnalysisService(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
         StyleBoardAnalysisResponse local,
+        string language,
         CancellationToken cancellationToken)
     {
         var settings = geminiOptions.Value;
@@ -80,7 +84,7 @@ public sealed class StyleBoardAnalysisService(
             {
                 parts = new[]
                 {
-                    new { text = SystemPrompt() }
+                    new { text = SystemPrompt(language) }
                 }
             },
             contents = new[]
@@ -126,6 +130,7 @@ public sealed class StyleBoardAnalysisService(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
         StyleBoardAnalysisResponse local,
+        string language,
         CancellationToken cancellationToken)
     {
         var settings = openAiOptions.Value;
@@ -138,7 +143,7 @@ public sealed class StyleBoardAnalysisService(
                 new
                 {
                     role = "system",
-                    content = SystemPrompt()
+                    content = SystemPrompt(language)
                 },
                 new
                 {
@@ -267,6 +272,9 @@ public sealed class StyleBoardAnalysisService(
         {
             "Güçlü" => "Güçlü",
             "Zayıf" => "Zayıf",
+            "Strong" => "Strong",
+            "Weak" => "Weak",
+            "Adjust" => "Adjust",
             _ => "Düzenle"
         };
         return new StyleBoardAnalysisResponse(
@@ -283,16 +291,19 @@ public sealed class StyleBoardAnalysisService(
             DateTimeOffset.UtcNow);
     }
 
-    private static string SystemPrompt()
+    private static string SystemPrompt(string language)
     {
-        return """
+        var responseLanguage = language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
+        return $"""
             Sen FitMemory Kombin Stüdyosu'nun eleştirel kıdemli stilistisin. Kullanıcı henüz satın almadığı gerçek ürünleri seçti.
             Her seti otomatik olarak övme. Yalnız verilen ürün kanıtını kullan; renk, kumaş veya kalıp uydurma.
             Renk uyumu, siluet hacmi, üst-alt boy oranı, katman mantığı, yaş/kullanım bağlamı ve Türkiye'deki mevcut ayı birlikte değerlendir.
             Bütün hacimli kesimleri aynı anda onaylama. Boxy, relaxed, baggy, straight ve slim kesimleri eş anlamlı sayma.
             Mini kot etek + kısa kollu tişört + trençkot evrensel olarak doğru değildir: yazın trenç genellikle mevsim dışıdır; ilkbahar/sonbaharda ancak trenç hafif ve açık, boy oranı bilinçli ise çalışabilir.
             Üst ve alt parçanın birlikte çalışmasını değerlendir. Ayakkabı isteğe bağlıdır: seçilmişse kombine uyumunu yorumla; seçilmemişse ayakkabıdan, eksikliğinden veya görünümün tamamlanmadığından hiç söz etme ve puan düşürme.
-            Sonuç kesin satış vaadi değildir. Türkçe, kısa ve somut yaz. Yalnız şemaya uyan JSON döndür.
+            Sonuç kesin satış vaadi değildir. Write every user-facing field in {responseLanguage}; keep it concise and concrete. Yalnız şemaya uyan JSON döndür.
             """;
     }
 
@@ -336,11 +347,7 @@ public sealed class StyleBoardAnalysisService(
             type = "object",
             properties = new
             {
-                verdict = new
-                {
-                    type = "string",
-                    @enum = new[] { "Güçlü", "Düzenle", "Zayıf" }
-                },
+                verdict = new { type = "string" },
                 score = new { type = "integer", minimum = 0, maximum = 95 },
                 headline = new { type = "string" },
                 explanation = new { type = "string" },

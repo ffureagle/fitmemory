@@ -21,6 +21,9 @@ public sealed class AnalyzeStyleBoardRequest
 {
     [Required, StringLength(128, MinimumLength = 8)]
     public required string UserId { get; init; }
+
+    [RegularExpression("^(tr|en)$")]
+    public string Language { get; init; } = "tr";
 }
 
 public sealed record StyleBoardItemResponse(

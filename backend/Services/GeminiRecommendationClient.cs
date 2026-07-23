@@ -244,6 +244,9 @@ public sealed class GeminiRecommendationClient(
             }
         };
 
+        var responseLanguage = request.Language.Equals("en", StringComparison.OrdinalIgnoreCase)
+            ? "English"
+            : "Turkish";
         var input = $"""
             Aşağıdaki beden kanıtını ve dolap envanterini analiz et. Beden kararını ve stil önerisini
             birbirinden bağımsız kanıt alanları olarak değerlendir.
@@ -329,7 +332,7 @@ public sealed class GeminiRecommendationClient(
                 uzunluğu tablosu ve doğrulanmış aynı ayakkabı kategorisi geçmişini kullan. Boy, kilo, göğüs,
                 omuz veya kıyafet bedeni ayakkabı numarası kanıtı değildir. Marka tablosu olmadan santimetreden
                 kesin EU dönüşümü uydurma; alışılan EU numarasını yalnız düşük güvenli başlangıç kabul et.
-            10. Tüm kullanıcıya dönük metinleri Türkçe yaz.
+            10. Write every user-facing field in {responseLanguage}.
             11. Güven puanı kesinlik değildir. Kanıt sınırlıysa 50-70 aralığını kullan; birden fazla
                 resmi ölçü ve kullanıcı geri bildirimi yoksa 90 üzerine çıkma. Asla 100 verme.
             """;
@@ -342,8 +345,9 @@ public sealed class GeminiRecommendationClient(
                 {
                     new
                     {
-                        text = """
-                            Sen FitMemory'nin Türkçe konuşan beden analisti ve kişisel dolap stilistisin. Perakendecinin
+                        text = $"""
+                            You are FitMemory's evidence-led sizing analyst and personal wardrobe stylist. Write every user-facing field in {responseLanguage}.
+                            Perakendecinin
                             aktif beden tablosunu kullanıcının açık vücut ölçüleri, doğrulanmış giysi
                             ölçüleri, iade nedenleri, bölgesel kullanıcı notları ve kalıp tercihiyle
                             karşılaştır. Resmi ürün sayfasındaki FitLabel/FitEvidence alanlarını

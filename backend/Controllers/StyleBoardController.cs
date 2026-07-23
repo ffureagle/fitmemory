@@ -255,6 +255,7 @@ public sealed class StyleBoardController(
         return Ok(await analysisService.AnalyzeAsync(
             profile,
             selectedItems,
+            request.Language,
             cancellationToken));
     }
 
