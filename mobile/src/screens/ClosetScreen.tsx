@@ -21,7 +21,7 @@ import {
 import { useSession } from "../session";
 import { colors } from "../theme";
 import { Text, useI18n } from "../i18n";
-import type { Order, StyleBoardItem } from "../types";
+import type { FavoriteOutfit, Order } from "../types";
 
 const categoryNames: Record<string, string> = {
   Tops: "Tişört & Üst",
@@ -117,7 +117,7 @@ export function ClosetScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"closet" | "saved">("closet");
-  const savedItems = session.styleBoard.filter((item) => item.isSaved);
+  const savedItems = session.favoriteOutfits.filter((item) => item.title.startsWith("Dolap · "));
 
   const groups = useMemo(() => {
     const map = new Map<string, Order[]>();
@@ -178,6 +178,38 @@ export function ClosetScreen() {
     }
   };
 
+  const confirmReturn = () => {
+    if (!editing || !session.account || !session.token) return;
+    const returnOutcome: Order["outcome"] = selectedOutcome === "KeptTooBaggy" || selectedOutcome === "ReturnedTooBaggy" ? "ReturnedTooBaggy" : "ReturnedTooTight";
+    const reason = returnOutcome === "ReturnedTooBaggy" ? "bol geldi" : "dar geldi";
+    Alert.alert("İadeyi onayla", `${editing.productName} “${reason}” bilgisiyle iadeler bölümüne taşınsın mı?`, [
+      { text: "Vazgeç", style: "cancel" },
+      { text: "Evet, iade ettim", style: "destructive", onPress: () => {
+        setSaving(true);
+        void session.api.updateOrderFeedback(editing.id, session.account!.userId, session.token!, {
+          outcome: returnOutcome, returnConfirmedByUser: true, userFitNotes: note.trim() || null,
+        }).then((updated) => {
+          session.updateOrders(session.orders.map((order) => order.id === updated.id ? updated : order));
+          setEditing(null);
+        }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "İade kaydedilemedi."))
+          .finally(() => setSaving(false));
+      } },
+    ]);
+  };
+
+  const restoreToCloset = (order: Order) => {
+    if (!session.account || !session.token) return;
+    Alert.alert("Dolaba geri gönder", `${order.productName} iade listesinden çıkarılıp dolaba geri alınsın mı?`, [
+      { text: "Vazgeç", style: "cancel" },
+      { text: "Dolaba geri al", onPress: () => void session.api.updateOrderFeedback(order.id, session.account!.userId, session.token!, {
+        outcome: order.outcome === "ReturnedTooBaggy" ? "KeptTooBaggy" : "KeptTooTight",
+        returnConfirmedByUser: false,
+        userFitNotes: order.userFitNotes,
+      }).then((updated) => session.updateOrders(session.orders.map((item) => item.id === updated.id ? updated : item)))
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Ürün dolaba alınamadı.")) },
+    ]);
+  };
+
   const deleteOrder = (order: Order) => {
     if (!session.account || !session.token) return;
     Alert.alert(
@@ -213,19 +245,17 @@ export function ClosetScreen() {
     );
   };
 
-  const deleteSaved = (item: StyleBoardItem) => {
+  const deleteSaved = (item: FavoriteOutfit) => {
     if (!session.account || !session.token) return;
-    Alert.alert("Kaydı kaldır", `${item.productName} kaydedilenlerden kaldırılsın mı?`, [
+    Alert.alert("Kaydı kaldır", `${item.title.replace("Dolap · ", "")} kaydedilenlerden kaldırılsın mı?`, [
       { text: "Vazgeç", style: "cancel" },
       {
         text: "Kaldır",
         style: "destructive",
         onPress: () => void session.api
-          .deleteSavedItem(item.id, session.account!.userId, session.token!)
-          .then(() => session.updateStyleBoard(
-            item.isInStudio
-              ? session.styleBoard.map((candidate) => candidate.id === item.id ? { ...candidate, isSaved: false } : candidate)
-              : session.styleBoard.filter((candidate) => candidate.id !== item.id),
+          .deleteFavoriteOutfit(item.id, session.account!.userId, session.token!)
+          .then(() => session.updateFavoriteOutfits(
+            session.favoriteOutfits.filter((candidate) => candidate.id !== item.id),
           ))
           .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Kayıt kaldırılamadı.")),
       },
@@ -240,7 +270,7 @@ export function ClosetScreen() {
       >
         <SectionTitle
           eyebrow="Kişisel kalıp hafızan"
-          title="Dolabım."
+          title="Dolabım"
         />
         <View accessibilityRole="tablist" style={styles.tabs}>
           {([
@@ -259,24 +289,27 @@ export function ClosetScreen() {
           ))}
         </View>
         <Text style={styles.intro}>
-          Satın aldığın parçalar burada yaşar. “Dar” ve “bol” notları yalnızca
-          aynı kategori, ürün ailesi ve benzer kesimlerde kullanılır.
+          {tab === "saved"
+            ? "AI Kombin Asistanı'nın yalnızca dolabındaki parçalarla hazırladığı ve kaydettiğin kombinler burada görünür."
+            : "Satın aldığın parçalar burada yaşar. Dar ve bol notları yalnız aynı kategori, ürün ailesi ve benzer kesimlerde kullanılır."}
         </Text>
         {error ? (
           <ErrorNotice message={error} onDismiss={() => setError("")} />
         ) : null}
         {tab === "saved" ? (
           !savedItems.length ? (
-            <EmptyState copy="Beğendiğin bir ürünü tarayıp ‘Ürünü kaydet’ seçeneğine dokun." symbol="♡" title="Henüz kayıt yok" />
+            <EmptyState copy="AI Kombin Asistanı ile dolabından bir kombin oluşturup ‘Kombini kaydet’ seçeneğine dokun." symbol="♡" title="Henüz kayıt yok" />
           ) : (
             <View style={styles.savedGrid}>
               {savedItems.map((item) => (
                 <Card key={item.id} style={styles.savedCard}>
-                  {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.savedImage} /> : <View style={styles.savedFallback}><Text>FM</Text></View>}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {item.items.map((piece) => piece.imageUrl ? <Image key={piece.id} source={{ uri: piece.imageUrl }} style={styles.savedImage} /> : <View key={piece.id} style={styles.savedFallback}><Text>FM</Text></View>)}
+                  </ScrollView>
                   <View style={styles.savedCopy}>
-                    <Text style={styles.brand}>{item.brand}</Text>
-                    <Text numberOfLines={2} style={styles.productName}>{item.productName}</Text>
-                    <Text numberOfLines={1} style={styles.savedMeta}>{item.fitLabel || item.category}</Text>
+                    <Text style={styles.brand}>DOLABIMDAN KOMBİN</Text>
+                    <Text numberOfLines={2} style={styles.productName}>{item.title.replace("Dolap · ", "")}</Text>
+                    <Text numberOfLines={2} style={styles.savedMeta}>{item.analysis.explanation}</Text>
                   </View>
                   <Pressable onPress={() => deleteSaved(item)} style={styles.savedRemove}>
                     <Text style={styles.deleteText}>Kaldır</Text>
@@ -380,6 +413,11 @@ export function ClosetScreen() {
                             >
                               <Text style={styles.deleteText}>Sil</Text>
                             </Pressable>
+                            {key === "Returns" ? (
+                              <Pressable onPress={() => restoreToCloset(order)} style={styles.textAction}>
+                                <Text style={styles.textActionText}>Dolaba geri gönder</Text>
+                              </Pressable>
+                            ) : null}
                           </View>
                         </View>
                       ))}
@@ -457,25 +495,13 @@ export function ClosetScreen() {
               tone="blue"
             />
             <Pressable
-              onPress={() => {
-                const returned =
-                  selectedOutcome === "KeptTooBaggy"
-                    ? "ReturnedTooBaggy"
-                    : "ReturnedTooTight";
-                setSelectedOutcome(returned);
-              }}
+              onPress={confirmReturn}
               style={styles.returnAction}
             >
               <Text style={styles.returnActionText}>
                 Bu ürünü iade ettim
               </Text>
             </Pressable>
-            {isReturned(selectedOutcome) ? (
-              <Text style={styles.returnWarning}>
-                Kaydettiğinde parça dolaptan çıkar, ancak kalıp kanıtı olarak
-                hafızada kalır.
-              </Text>
-            ) : null}
           </Pressable>
         </Pressable>
       </Modal>

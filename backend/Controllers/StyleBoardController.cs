@@ -96,7 +96,7 @@ public sealed class StyleBoardController(
         };
         item.Brand = Clean(request.Product.Brand, 120);
         item.ProductName = Clean(request.Product.Name, 240, "Adsız ürün");
-        item.Category = Clean(request.Product.Category, 120, "Diğer");
+        item.Category = categoryService.GetTurkishLabel(request.Product);
         item.Price = Clean(request.Product.Price, 80);
         item.ImageUrl = Clean(request.Product.ImageUrl, 2000);
         item.ProductReference = Clean(request.Product.ProductReference, 120);
@@ -223,12 +223,12 @@ public sealed class StyleBoardController(
         }
 
         var slot = GetSlot(selected);
+        var shouldSelect = !selected.IsSelected;
         foreach (var item in items.Where(item =>
                      GetSlot(item) == slot))
         {
-            item.IsSelected = item.Id == selected.Id;
+            item.IsSelected = shouldSelect && item.Id == selected.Id;
         }
-        selected.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         return Ok(selected.ToResponse());
     }
@@ -360,6 +360,87 @@ public sealed class StyleBoardController(
         return Created($"/api/style-board/favorites/{favorite.Id}", ToFavoriteResponse(favorite));
     }
 
+    [HttpPost("favorites/wardrobe")]
+    public async Task<ActionResult<FavoriteOutfitResponse>> SaveWardrobeFavorite(
+        SaveWardrobeFavoriteRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.Owns(request.UserId)) return Forbid();
+
+        var profile = await db.UserProfiles.SingleOrDefaultAsync(
+            item => item.UserId == request.UserId,
+            cancellationToken);
+        if (profile is null) return NotFound();
+
+        var favoriteCount = await db.FavoriteOutfits.CountAsync(
+            item => item.UserProfileId == profile.Id,
+            cancellationToken);
+        if (favoriteCount >= MaxFavorites)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Favoriler dolu",
+                detail: $"En fazla {MaxFavorites} favori kombin saklanabilir.");
+        }
+
+        var orderIds = request.OrderIds.Distinct().ToArray();
+        var orders = await db.OrderHistoryItems
+            .AsNoTracking()
+            .Where(item => item.UserProfileId == profile.Id &&
+                           !item.ReturnConfirmedByUser &&
+                           orderIds.Contains(item.Id))
+            .ToListAsync(cancellationToken);
+        if (orders.Count < 2 || orders.Count != orderIds.Length)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Kombin kaydedilemedi",
+                detail: "Kombin, dolabında bulunan en az iki geçerli parçadan oluşmalı.");
+        }
+
+        var items = orders.Select(order => new StyleBoardItemResponse(
+            -order.Id,
+            request.UserId,
+            order.ProductUrl ?? order.ResearchSourceUrl ?? "",
+            order.Brand,
+            order.ProductName,
+            categoryService.GetTurkishLabel(new ProductDto
+            {
+                Url = order.ProductUrl ?? "",
+                Brand = order.Brand,
+                Name = order.ProductName,
+                Category = order.Category
+            }),
+            "",
+            order.ImageUrl ?? "",
+            order.ProductFamilyKey ?? "",
+            order.FitLabel ?? "",
+            order.SizeEvidence ?? "",
+            order.FitAssessment ?? "",
+            order.MaterialSummary ?? "",
+            order.MaterialEvidence ?? "",
+            order.PurchasedSize,
+            Math.Clamp(order.FitAssessmentConfidence, 0, 95),
+            false,
+            false,
+            false,
+            order.CreatedAt,
+            order.UpdatedAt)).ToArray();
+
+        var favorite = new FavoriteOutfit
+        {
+            UserProfileId = profile.Id,
+            UserProfile = profile,
+            Title = $"Dolap · {Clean(request.Title, 152, "Favori kombin")}",
+            AnalysisJson = JsonSerializer.Serialize(request.Analysis, JsonOptions),
+            ItemsJson = JsonSerializer.Serialize(items, JsonOptions),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.FavoriteOutfits.Add(favorite);
+        await db.SaveChangesAsync(cancellationToken);
+        return Created($"/api/style-board/favorites/{favorite.Id}", ToFavoriteResponse(favorite));
+    }
+
     [HttpDelete("favorites/{id:int}")]
     public async Task<IActionResult> DeleteFavorite(
         int id,
@@ -420,6 +501,15 @@ public sealed class StyleBoardController(
             UpdatedAt = now
         }).ToArray();
         var analysis = await analysisService.AnalyzeAsync(profile, items, request.Language, request.Prompt, cancellationToken);
+        var strongVerdict = analysis.Verdict.Equals("Güçlü", StringComparison.OrdinalIgnoreCase) ||
+                            analysis.Verdict.Equals("Strong", StringComparison.OrdinalIgnoreCase);
+        if (analysis.Score < 72 || !strongVerdict)
+        {
+            return Problem(
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Bu istek için güçlü kombin bulunamadı",
+                detail: "Dolabındaki parçalar bu kullanım ve mevsim isteğini yeterince iyi karşılamıyor. Daha uygun parçalar eklediğinde yeniden deneyebilirsin.");
+        }
         return Ok(new WardrobeOutfitResponse(
             analysis,
             chosen.Select(order => new WardrobeOutfitPieceResponse(order.Id, order.Brand, order.ProductName, order.Category, order.PurchasedSize, order.ImageUrl)).ToArray()));

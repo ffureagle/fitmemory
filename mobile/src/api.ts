@@ -27,6 +27,7 @@ type ApiOptions = {
   body?: unknown;
   token?: string | null;
   allowNotFound?: boolean;
+  timeoutMs?: number;
 };
 
 export class FitMemoryApi {
@@ -36,7 +37,11 @@ export class FitMemoryApi {
   ) {}
 
   async request<T>(path: string, options: ApiOptions = {}): Promise<T> {
-    const response = await fetch(
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
+    let response: Response;
+    try {
+      response = await fetch(
       `${this.baseUrl.replace(/\/+$/, "")}${path}`,
       {
         method: options.method ?? "GET",
@@ -49,8 +54,17 @@ export class FitMemoryApi {
             : {}),
         },
         body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
       },
-    );
+      );
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === "AbortError") {
+        throw new Error("Sunucu zamanında yanıt vermedi. Lütfen tekrar deneyin.");
+      }
+      throw reason;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (options.allowNotFound && response.status === 404) {
       return null as T;
@@ -105,7 +119,7 @@ export class FitMemoryApi {
   forgotPassword(email: string) {
     return this.request<{ message: string; expiresInMinutes: number }>(
       "/api/auth/password/forgot",
-      { method: "POST", body: { email } },
+      { method: "POST", body: { email }, timeoutMs: 25_000 },
     );
   }
 
@@ -282,6 +296,20 @@ export class FitMemoryApi {
       method: "POST",
       token,
       body: { userId, title, analysis, itemIds },
+    });
+  }
+
+  saveWardrobeFavorite(
+    userId: string,
+    token: string,
+    title: string,
+    analysis: StyleBoardAnalysis,
+    orderIds: number[],
+  ) {
+    return this.request<FavoriteOutfit>("/api/style-board/favorites/wardrobe", {
+      method: "POST",
+      token,
+      body: { userId, title, analysis, orderIds },
     });
   }
 

@@ -82,6 +82,8 @@ export function ProfileScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const savedForm = initialForm(session.profile);
+  const formChanged = JSON.stringify(form) !== JSON.stringify(savedForm);
 
   useEffect(() => {
     setForm(initialForm(session.profile));
@@ -146,6 +148,45 @@ export function ProfileScreen() {
     }
   };
 
+  const confirmApiChange = () => {
+    if (apiUrl.trim().replace(/\/+$/, "") === session.apiBaseUrl.trim().replace(/\/+$/, "")) {
+      setSuccess("API adresinde değişiklik yok.");
+      return;
+    }
+    Alert.alert(
+      "API sunucusunu değiştir",
+      "Yeni sunucu hesabındaki verilere erişecek. Adresi doğrulayıp kaydetmek istediğine emin misin?",
+      [
+        { text: "Vazgeç", style: "cancel" },
+        { text: "Doğrula ve kaydet", onPress: () => void changeApi() },
+      ],
+    );
+  };
+
+  const closeMeasurementEditor = () => {
+    if (!formChanged) {
+      setEditingMeasurements(false);
+      return;
+    }
+    Alert.alert(
+      "Değişiklikler kaydedilsin mi?",
+      "Ölçülerinde yaptığın değişiklikleri kaydetmeden çıkabilirsin.",
+      [
+        {
+          text: "Kaydetmeden çık",
+          style: "destructive",
+          onPress: () => {
+            setForm(initialForm(session.profile));
+            setEditingMeasurements(false);
+            setError("");
+          },
+        },
+        { text: "Düzenlemeye devam", style: "cancel" },
+        { text: "Kaydet", onPress: () => void save() },
+      ],
+    );
+  };
+
   const logout = () => {
     Alert.alert(
       "Hesaptan çık",
@@ -202,7 +243,7 @@ export function ProfileScreen() {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <SectionTitle eyebrow="Hesap & ölçüler" title="Profilim." />
+      <SectionTitle eyebrow="Hesap & ölçüler" title="Profilim" />
       <Card style={styles.account}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
@@ -387,31 +428,11 @@ export function ProfileScreen() {
           onPress={() => void save()}
           tone="blue"
         />
+        {session.profile ? (
+          <Button label="Düzenlemeden çık" onPress={closeMeasurementEditor} tone="light" />
+        ) : null}
       </Card>
       )}
-
-      <Card style={styles.serverCard}>
-        <View style={styles.serverHead}>
-          <Text style={styles.formTitle}>API SUNUCUSU</Text>
-          <Text style={styles.serverTag}>GELİŞTİRİCİ</Text>
-        </View>
-        <Field
-          autoCapitalize="none"
-          autoCorrect={false}
-          hint="Beta ve üretim sunucusu: https://fitmemory-api.onrender.com"
-          keyboardType="url"
-          label="Adres"
-          onChangeText={setApiUrl}
-          value={apiUrl}
-        />
-        <Button
-          busy={testingApi}
-          label="Bağlantıyı doğrula"
-          onPress={() => void changeApi()}
-          small
-          tone="light"
-        />
-      </Card>
 
       <Card style={styles.security}>
         <Text style={styles.securityMark}>✓</Text>
@@ -449,6 +470,23 @@ export function ProfileScreen() {
               <LanguageSwitch compact />
             </View>
             <View style={styles.settingsDivider} />
+            <View style={styles.serverCard}>
+              <View style={styles.serverHead}>
+                <Text style={styles.formTitle}>API SUNUCUSU</Text>
+                <Text style={styles.serverTag}>GELİŞTİRİCİ</Text>
+              </View>
+              <Field
+                autoCapitalize="none"
+                autoCorrect={false}
+                hint="Beta ve üretim sunucusu: https://fitmemory-api.onrender.com"
+                keyboardType="url"
+                label="Adres"
+                onChangeText={setApiUrl}
+                value={apiUrl}
+              />
+              <Button busy={testingApi} label="Değişikliği doğrula" onPress={confirmApiChange} small tone="light" />
+            </View>
+            <View style={styles.settingsDivider} />
             <Pressable onPress={logout} style={styles.logout}>
               <View style={styles.logoutCopy}>
                 <Text style={styles.settingLabel}>Oturumu kapat</Text>
@@ -464,6 +502,15 @@ export function ProfileScreen() {
             </Pressable>
           </View>
         ) : null}
+      </Card>
+      <Card style={styles.security}>
+        <Text style={styles.securityMark}>i</Text>
+        <View style={styles.securityCopy}>
+          <Text style={styles.securityTitle}>Bağımsız platform bildirimi</Text>
+          <Text style={styles.securityText}>
+            FitMemory bağımsız bir platformdur. Uygulama içerisinde yer alan 3. taraf markalar ve logolar ilgili şirketlerin kendi tescilli mülkiyetindedir ve yalnızca yönlendirme (navigasyon) amacıyla kullanılmıştır. FitMemory'nin bu markalarla resmi bir bağı bulunmamaktadır.
+          </Text>
+        </View>
       </Card>
       <View style={styles.footerBrand}>
         <Brand compact />

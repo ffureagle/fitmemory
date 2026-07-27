@@ -21,7 +21,9 @@ const scannerBootstrap = String.raw`
       rect.width > 2 &&
       rect.height > 2;
   };
-  const roots = () => {
+  let rootCache = null;
+  const roots = (refresh = false) => {
+    if (!refresh && rootCache) return rootCache;
     const result = [document];
     const queue = [document];
     while (queue.length && result.length < 100) {
@@ -31,8 +33,18 @@ const scannerBootstrap = String.raw`
           result.push(element.shadowRoot);
           queue.push(element.shadowRoot);
         }
+        if (element.tagName === "IFRAME") {
+          try {
+            const frameDocument = element.contentDocument;
+            if (frameDocument && !result.includes(frameDocument)) {
+              result.push(frameDocument);
+              queue.push(frameDocument);
+            }
+          } catch {}
+        }
       }
     }
+    rootCache = result;
     return result;
   };
   const all = (selector) => {
@@ -215,16 +227,41 @@ const scannerBootstrap = String.raw`
   };
   const sleep = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const progress = (message) => {
+    try {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: "fitmemory-progress",
+        message
+      }));
+    } catch {}
+  };
+  let guideStage = "Beden paneli aranıyor";
+  const waitFor = async (predicate, timeout = 4000, interval = 80) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeout) {
+      try {
+        const value = predicate();
+        if (value) return value;
+      } catch {}
+      await sleep(interval);
+    }
+    return null;
+  };
   const controlText = (element) => clean(
     element.getAttribute?.("aria-label") ||
     element.innerText ||
     element.textContent
   );
   const clickable = (element) =>
-    element?.closest?.("button, a, [role='button'], summary") || element;
+    element?.closest?.("button, a, [role='button'], [role='radio'], [role='option'], summary") || element;
   const clickElement = async (element) => {
     const target = clickable(element);
     if (!target) return false;
+    if (target.tagName === "A") {
+      const href = clean(target.getAttribute("href"));
+      if (href && !href.startsWith("#") &&
+          !href.toLowerCase().startsWith("javascript:")) return false;
+    }
     target.scrollIntoView?.({ block: "center", inline: "center" });
     await sleep(100);
     try { target.focus?.({ preventScroll: true }); } catch {}
@@ -238,10 +275,12 @@ const scannerBootstrap = String.raw`
       } catch {}
     }
     try { target.click?.(); } catch {}
+    roots(true);
     return true;
   };
   const findShortTextControl = (pattern) => all(
-    "button, a, [role='button'], summary, [data-testid], [data-qa], span, div"
+    "button, a, [role='button'], [role='radio'], [role='option'], summary, " +
+    "[data-testid], [data-qa], [aria-label], span, div"
   ).filter(visible).map((element) => ({
     element,
     text: controlText(element)
@@ -250,42 +289,160 @@ const scannerBootstrap = String.raw`
       left.text.length - right.text.length ||
       left.element.childElementCount - right.element.childElementCount
     )[0]?.element || null;
+  const findExactControl = (pattern) => all(
+    "button, [role='button'], input[type='button'], input[type='submit'], a"
+  ).filter(visible).map((element) => ({
+    element,
+    text: clean(element.value || controlText(element))
+  })).filter(({ text }) => text && text.length <= 80 && pattern.test(fold(text)))
+    .sort((left, right) => left.text.length - right.text.length)[0]?.element || null;
+  const findExactVisibleTextControl = (pattern) =>
+    findExactControl(pattern) || findShortTextControl(pattern);
   const measurementPattern =
     /^(?:urun\s+)?olculeri(?:ni)?\s+goruntule$|^olculer$|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
   const findMeasurementTrigger = () =>
-    findShortTextControl(measurementPattern);
-  const openSizeGuide = async () => {
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const measurement = findMeasurementTrigger();
-      if (measurement) {
-        await clickElement(measurement);
-        await sleep(1200);
-        return true;
-      }
-      if (attempt <= 2) {
-        const sizeControl = findShortTextControl(
-          /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$/i
-        );
-        if (sizeControl) {
-          await clickElement(sizeControl);
-          await sleep(700);
-          continue;
+    all(
+      "button, a, [role='button'], summary, [data-testid*='measure' i], " +
+      "[data-qa*='measure' i], [aria-label*='ölç' i], " +
+      "[aria-label*='size guide' i], [class*='measure' i], span, div"
+    ).filter(visible).map((element) => ({
+      element,
+      text: controlText(element),
+      folded: fold(controlText(element))
+    })).filter(({ text, folded }) => text.length <= 120 &&
+      measurementPattern.test(folded) &&
+      !/(sepete|satin al|checkout|odeme)/i.test(folded)
+    ).sort((left, right) =>
+      left.text.length - right.text.length ||
+      left.element.childElementCount - right.element.childElementCount
+    )[0]?.element || null;
+  const sizePattern = /^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)$/i;
+  const measurementNamePattern =
+    /gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
+  const panelText = (panel) => clean(panel?.innerText || panel?.textContent || "");
+  const ownText = (element) => clean([...element.childNodes]
+    .filter((node) => node.nodeType === Node.TEXT_NODE)
+    .map((node) => node.textContent || "").join(" "));
+  const findMeasurePanel = () => {
+    const candidates = all(
+      "[role='dialog'], aside, table, [role='table'], " +
+      "[class*='measure' i], [class*='size-guide' i], " +
+      "[class*='sizeguide' i], [class*='size-chart' i], " +
+      "[class*='drawer' i], [class*='sheet' i], [class*='modal' i], " +
+      "[class*='product-size' i]"
+    ).filter(visible);
+    const metricLabels = all("th, td, dt, dd, p, span, li, div")
+      .filter(visible)
+      .filter((element) => {
+        const text = fold(ownText(element));
+        return text.length > 0 && text.length <= 42 && measurementNamePattern.test(text);
+      });
+    for (const label of metricLabels.slice(0, 80)) {
+      let ancestor = label.parentElement;
+      for (let depth = 0; ancestor && depth < 7; depth += 1) {
+        const text = fold(panelText(ancestor));
+        if (text.length >= 15 && text.length <= 4500 &&
+            (text.match(/\d{1,3}(?:[.,]\d+)?/g) || []).length >= 2) {
+          candidates.push(ancestor);
         }
-        if (/pullandbear\.com$/i.test(location.hostname) ||
-            /\.pullandbear\.com$/i.test(location.hostname)) {
-          const addControl = findShortTextControl(
-            /^(ekle|sepete ekle|add|add to bag)$/i
-          );
-          if (addControl) {
-            await clickElement(addControl);
-            await sleep(900);
-            continue;
-          }
-        }
+        ancestor = ancestor.parentElement;
       }
-      await sleep(600);
     }
-    return false;
+    const unique = [...new Set(candidates)];
+    return unique.map((panel) => {
+      const text = fold(panelText(panel));
+      const metricCount = (text.match(/gogus|chest|bust|omuz|shoulder|bel|waist|kalca|hip|uzunluk|length|kol|sleeve|inseam/g) || []).length;
+      const numericCount = (text.match(/\d{1,3}(?:[.,]\d+)?/g) || []).length;
+      const sizeCount = findSizeButtons(panel).length;
+      return {
+        panel,
+        metricCount,
+        numericCount,
+        sizeCount,
+        isTable: panel.matches("table, [role='table']"),
+        score: Math.min(metricCount, 8) * 8 + Math.min(numericCount, 14) + Math.min(sizeCount, 10) * 4 - Math.min(text.length / 3000, 5)
+      };
+    }).filter((candidate) =>
+      candidate.metricCount >= 1 &&
+      candidate.numericCount >= 2 &&
+      (candidate.sizeCount >= 1 || candidate.isTable) &&
+      candidate.score >= 13
+    )
+      .sort((left, right) => right.score - left.score)[0]?.panel || null;
+  };
+  function findSizeButtons(panel) {
+    if (!panel) return [];
+    const result = [];
+    const seen = new Set();
+    const candidates = [panel, ...panel.querySelectorAll(
+      "button, [role='radio'], [role='option'], [role='button'], li, label, span"
+    )];
+    for (const element of candidates) {
+      if (!visible(element)) continue;
+      const label = clean(element.innerText || element.textContent).toUpperCase();
+      if (!sizePattern.test(label)) continue;
+      const target = clickable(element);
+      if (!target || !panel.contains(target) || seen.has(target)) continue;
+      seen.add(target);
+      result.push(target);
+    }
+    return result.slice(0, 24);
+  }
+  const selectedSizeButton = (button) => {
+    if (!button) return false;
+    if (button.getAttribute("aria-checked") === "true" ||
+        button.getAttribute("aria-selected") === "true" ||
+        button.getAttribute("aria-pressed") === "true") return true;
+    return /(?:^|[\s_-])(active|checked|selected)(?:$|[\s_-])/i.test(clean([
+      button.getAttribute("data-state"),
+      button.getAttribute("data-selected"),
+      button.className
+    ].join(" ")));
+  };
+  const openSizeGuide = async () => {
+    if (findMeasurePanel()) {
+      guideStage = "Ölçü paneli açık";
+      return true;
+    }
+    let measurement = findMeasurementTrigger();
+    if (measurement && await clickElement(measurement)) {
+      guideStage = "Ölçüleri görüntüle tıklandı";
+      progress(guideStage);
+      const panel = await waitFor(() => findMeasurePanel(), 4500, 160);
+      if (panel) return true;
+    }
+    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
+    const addControl = isPullAndBear
+      ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+      : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
+        ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+        : null;
+    const sizeControl = findExactVisibleTextControl(
+      /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^beden$|^size$/i
+    );
+    const opener = isPullAndBear ? addControl : (sizeControl || addControl);
+    if (opener) {
+      guideStage = isPullAndBear ? "Ekle düğmesi bulundu" : "Beden seçici bulundu";
+      progress(guideStage);
+      await clickElement(opener);
+      guideStage = isPullAndBear ? "Ekle tıklandı, ölçü bağlantısı bekleniyor" : "Beden paneli açılıyor";
+      progress(guideStage);
+      measurement = await waitFor(() => findMeasurementTrigger(), 6000, 180);
+      if (measurement && await clickElement(measurement)) {
+        guideStage = "Ölçüleri görüntüle tıklandı";
+        progress(guideStage);
+        const panel = await waitFor(() => findMeasurePanel(), 6500, 180);
+        if (panel) return true;
+      }
+      guideStage = measurement
+        ? "Ölçü bağlantısı tıklandı ancak tablo oluşmadı"
+        : "Ekle açıldı ancak Ölçüleri görüntüle bulunamadı";
+    } else {
+      guideStage = isPullAndBear
+        ? "Sayfadaki Ekle düğmesi bulunamadı"
+        : "Beden seçici bulunamadı";
+    }
+    return Boolean(findMeasurePanel());
   };
   const tableChart = () => {
     const candidates = all("table, [role='table']")
@@ -327,114 +484,111 @@ const scannerBootstrap = String.raw`
       rawText: candidates[0].text.slice(0, 8000)
     };
   };
-  const panelChart = async () => {
-    const panelElements = all(
-      "[role='dialog'], aside, [class*='measure' i], " +
-      "[class*='size-guide' i], [class*='sizeguide' i], " +
-      "[class*='size-chart' i], [class*='drawer' i]"
-    ).filter(visible);
-    const measurementLabels = all("span, p, dt, th, [role='rowheader']")
-      .filter(visible)
-      .filter((element) => {
-        const text = fold(element.innerText || element.textContent);
-        return text.length <= 45 &&
-          /^(gogus|chest|on uzunluk|front length|kol uzunlugu|sleeve length)$/i
-            .test(text);
-      });
-    for (const label of measurementLabels) {
-      let element = label.parentElement;
-      for (let depth = 0; element && depth < 9; depth += 1) {
-        const text = fold(element.innerText || element.textContent);
-        if (text.length > 80 && text.length < 14000 &&
-            /(?:bir beden sec|choose a size)/i.test(text) &&
-            /(?:XXS|XS|\bS\b|\bM\b|\bL\b|XL|\b3[02468]\b|\b4[02468]\b)/.test(text)) {
-          if (!panelElements.some((panel) => panel.contains(element))) {
-            panelElements.push(element);
-          }
-          break;
-        }
-        element = element.parentElement;
-      }
+  const normalizeMeasurementLabel = (value) => {
+    const text = fold(value);
+    if (/gogus|chest|bust/.test(text)) return "Göğüs eni";
+    if (/on uzunluk|front length/.test(text)) return "Ön uzunluk";
+    if (/kol|sleeve/.test(text)) return "Kol uzunluğu";
+    if (/bel|waist/.test(text)) return "Bel eni";
+    if (/kalca|basen|hip/.test(text)) return "Kalça eni";
+    if (/omuz|shoulder/.test(text)) return "Omuz";
+    if (/ic bacak|inseam/.test(text)) return "İç bacak";
+    if (/uyluk|thigh/.test(text)) return "Uyluk eni";
+    if (/paca|leg opening/.test(text)) return "Paça eni";
+    if (/yukseklik|rise/.test(text)) return "Ağ yüksekliği";
+    if (/uzunluk|length/.test(text)) return "Uzunluk";
+    return clean(value).slice(0, 80);
+  };
+  const extractMeasurements = (panel) => {
+    const measurements = [];
+    const seen = new Set();
+    const add = (label, value) => {
+      const normalized = normalizeMeasurementLabel(label);
+      const numeric = clean(value).replace(",", ".").match(/\d{1,3}(?:\.\d+)?/)?.[0] || "";
+      if (!normalized || !numeric || seen.has(normalized)) return;
+      seen.add(normalized);
+      measurements.push({ label: normalized, value: numeric });
+    };
+    for (const row of panel.querySelectorAll("tr, [role='row']")) {
+      const cells = [...row.querySelectorAll("th, td, [role='cell'], [role='rowheader']")]
+        .map((cell) => clean(cell.innerText || cell.textContent)).filter(Boolean);
+      if (cells.length < 2 || !measurementNamePattern.test(fold(cells[0]))) continue;
+      const cmValue = cells.find((cell, index) => index > 0 && /\d/.test(cell));
+      if (cmValue) add(cells[0], cmValue);
     }
-    const panels = panelElements.map((panel) => {
-      const text = fold(panel.innerText || panel.textContent);
-      const score =
-        (/(gogus|chest|omuz|shoulder|bel|waist|uzunluk|length|inseam)/i.test(text) ? 20 : 0) +
-        (/(XXS|XS|\bS\b|\bM\b|\bL\b|XL|\b3[02468]\b|\b4[02468]\b)/.test(text) ? 10 : 0) +
-        (text.match(/\d+(?:[.,]\d+)?/g) || []).length;
-      return { panel, text, score };
-    }).filter((candidate) => candidate.score >= 32)
-      .sort((left, right) => right.score - left.score);
-    if (!panels[0]) return null;
-    const panel = panels[0].panel;
-    const sizePattern = /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{2,3})$/i;
-    const buttons = [];
-    for (const element of all("button, [role='button'], li, span, div")) {
-      if (!panel.contains(element) || !visible(element) ||
-          !sizePattern.test(clean(element.innerText || element.textContent))) continue;
-      const target = clickable(element);
-      if (target && panel.contains(target) && !buttons.includes(target)) {
-        buttons.push(target);
-      }
-      if (buttons.length >= 15) break;
-    }
-    const labels = [
-      ["Göğüs", /(?:gogus|chest)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i],
-      ["Omuz", /(?:omuz|shoulder)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i],
-      ["Bel", /(?:bel|waist)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i],
-      ["Ön uzunluk", /(?:on uzunluk|front length|uzunluk|length)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i],
-      ["Kol", /(?:kol uzunlugu|sleeve length|kol|sleeve)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i],
-      ["İç bacak", /(?:ic bacak|inseam)\s*[:.-]?\s*(\d+(?:[.,]\d+)?)/i]
-    ];
-    const selectedBefore = buttons.find((button) =>
-      button.getAttribute("aria-pressed") === "true" ||
-      button.getAttribute("aria-selected") === "true" ||
-      button.classList.toString().match(/selected|active/i)
-    );
-    const rows = [];
-    for (const button of buttons) {
-      button.click();
-      await clickElement(button);
-      await sleep(420);
-      const text = fold(panel.innerText || panel.textContent);
-      const values = labels.map(([, pattern]) => {
-        const match = pattern.exec(text);
-        return match ? String(match[1]).replace(",", ".") : "";
-      });
-      if (values.some(Boolean)) {
-        rows.push({
-          cells: [
-            clean(button.innerText || button.textContent).toUpperCase(),
-            ...values
-          ]
+    const text = fold(panelText(panel));
+    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
+    for (const match of text.matchAll(pattern)) add(match[1], match[2]);
+    if (measurements.length < 2) {
+      const labels = [...panel.querySelectorAll("th, td, dt, dd, p, span, div")]
+        .filter(visible).filter((element) => {
+          const value = fold(element.innerText || element.textContent);
+          return value.length > 0 && value.length <= 45 && measurementNamePattern.test(value);
         });
+      for (const labelElement of labels) {
+        let row = labelElement.parentElement;
+        for (let depth = 0; row && depth < 4; depth += 1) {
+          const label = clean(labelElement.innerText || labelElement.textContent);
+          const values = (clean(row.innerText || row.textContent).match(/\d{1,3}(?:[.,]\d+)?/g) || []);
+          if (values.length) { add(label, values[0]); break; }
+          row = row.parentElement;
+        }
       }
     }
-    if (!rows.length) {
-      const text = fold(panel.innerText || panel.textContent);
-      const values = labels.map(([, pattern]) => {
-        const match = pattern.exec(text);
-        return match ? String(match[1]).replace(",", ".") : "";
+    return measurements;
+  };
+  const measureSignature = () => {
+    const panel = findMeasurePanel();
+    if (!panel) return "";
+    return extractMeasurements(panel).map((item) => item.label + ":" + item.value).join("|") || panelText(panel).slice(0, 1000);
+  };
+  const panelChart = async () => {
+    let panel = findMeasurePanel();
+    if (!panel) return null;
+    const initial = findSizeButtons(panel).find(selectedSizeButton);
+    const initialLabel = clean(initial?.innerText || initial?.textContent).toUpperCase();
+    const labels = findSizeButtons(panel)
+      .map((button) => clean(button.innerText || button.textContent).toUpperCase())
+      .filter(size => sizePattern.test(size))
+      .filter((size, index, values) => values.indexOf(size) === index);
+    const records = [];
+    let headers = null;
+    const targets = labels.length ? labels : [initialLabel || "Bilinmiyor"];
+    for (const size of targets.slice(0, 10)) {
+      panel = findMeasurePanel() || panel;
+      const button = findSizeButtons(panel).find((candidate) =>
+        clean(candidate.innerText || candidate.textContent).toUpperCase() === size);
+      if (button && !selectedSizeButton(button)) {
+        const before = measureSignature();
+        await clickElement(button);
+        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 700, 70);
+        await sleep(80);
+      }
+      panel = findMeasurePanel() || panel;
+      const measurements = extractMeasurements(panel);
+      if (!measurements.length) continue;
+      headers ||= ["Beden", ...measurements.map((item) => item.label)];
+      const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
+      records.push({
+        cells: [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")]
       });
-      const selectedSize = clean(
-        selectedBefore?.innerText ||
-        selectedBefore?.textContent ||
-        buttons[0]?.innerText ||
-        buttons[0]?.textContent ||
-        "Bilinmiyor"
-      ).toUpperCase();
-      if (values.some(Boolean)) rows.push({ cells: [selectedSize, ...values] });
     }
-    selectedBefore?.click();
-    const finalText = clean(panel.innerText || panel.textContent);
+    if (initialLabel) {
+      panel = findMeasurePanel() || panel;
+      const restore = findSizeButtons(panel).find((button) =>
+        clean(button.innerText || button.textContent).toUpperCase() === initialLabel);
+      if (restore && !selectedSizeButton(restore)) await clickElement(restore);
+    }
+    const finalText = panelText(findMeasurePanel() || panel);
+    if (!records.length || !headers) return null;
     return {
-      found: rows.length > 0 || /\d+(?:[.,]\d+)?/.test(finalText),
+      found: true,
       title: "Ürün ölçüleri",
       unit: /\bcm\b/i.test(finalText) ? "Centimeters" :
-        /\b(inch|inç)\b/i.test(finalText) ? "Inches" : "Unknown",
-      headers: ["Beden", ...labels.map(([label]) => label)],
-      rows: rows.slice(0, 30),
-      rawText: finalText.slice(0, 8000)
+        /\b(inch|inç)\b/i.test(finalText) ? "Inches" : "Centimeters",
+      headers,
+      rows: records.slice(0, 30),
+      rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
     };
   };
   const scrapeProduct = async () => {
@@ -467,15 +621,15 @@ const scannerBootstrap = String.raw`
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
     let chart = null;
-    for (let attempt = 0; attempt < 6 && !chart?.found; attempt += 1) {
+    for (let attempt = 0; attempt < 2 && !chart?.found; attempt += 1) {
       chart = tableChart() || await panelChart();
       if (chart?.found) break;
       await openSizeGuide();
-      await sleep(500);
+      await sleep(250);
     }
     if (!chart?.found) {
       throw new Error(
-        "Beden tablosu okunamadı. Ürün sayfasında beden rehberini açıp tekrar deneyin."
+        "Beden tablosu okunamadı: " + guideStage + "."
       );
     }
     return {
@@ -590,6 +744,18 @@ const scannerBootstrap = String.raw`
     return start.closest("article, li, [role='listitem']") || start.parentElement;
   };
   const scrapeOrders = async () => {
+    const orderImageUrl = (image) => {
+      const candidates = [
+        image.currentSrc,
+        image.src,
+        image.getAttribute("data-src"),
+        image.getAttribute("data-original"),
+        image.getAttribute("data-lazy-src"),
+        image.getAttribute("data-image-url"),
+        clean(image.getAttribute("srcset")).split(",").map((part) => part.trim().split(/\s+/)[0]).pop()
+      ].map(absoluteUrl).filter(Boolean);
+      return candidates.find((value) => /^https?:\/\//i.test(value)) || candidates[0] || "";
+    };
     const controls = all("button, [role='button']")
       .filter(visible)
       .filter((button) =>
@@ -635,12 +801,7 @@ const scannerBootstrap = String.raw`
         .map((image) => {
           const link = image.closest("a[href]");
           return {
-            url: absoluteUrl(
-              image.currentSrc ||
-              image.src ||
-              image.getAttribute("data-src") ||
-              ""
-            ),
+            url: orderImageUrl(image),
             alt: clean(image.alt).slice(0, 500),
             productUrl: absoluteUrl(link?.href || "")
           };

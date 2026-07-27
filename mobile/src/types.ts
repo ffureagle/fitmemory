@@ -250,4 +250,5 @@ export type OrderImportResponse = {
 export type ScannerMessage =
   | { type: "fitmemory-product"; snapshot: ProductSnapshot }
   | { type: "fitmemory-orders"; snapshot: OrderSnapshot }
+  | { type: "fitmemory-progress"; message: string }
   | { type: "fitmemory-error"; message: string };

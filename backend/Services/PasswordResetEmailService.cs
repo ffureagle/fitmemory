@@ -47,11 +47,25 @@ public sealed class PasswordResetEmailService(
         using var client = new SmtpClient(settings.Host, settings.Port)
         {
             EnableSsl = settings.EnableSsl,
+            Timeout = 20_000,
             UseDefaultCredentials = false,
             Credentials = string.IsNullOrWhiteSpace(settings.Username)
                 ? CredentialCache.DefaultNetworkCredentials
                 : new NetworkCredential(settings.Username, settings.Password)
         };
-        await client.SendMailAsync(message).WaitAsync(cancellationToken);
+        try
+        {
+            await client.SendMailAsync(message).WaitAsync(
+                TimeSpan.FromSeconds(25),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is SmtpException or TimeoutException)
+        {
+            logger.LogError(exception, "Password reset email could not be delivered.");
+            throw new AccountFlowException(
+                StatusCodes.Status503ServiceUnavailable,
+                "E-posta gönderilemedi",
+                "Şifre yenileme e-postası gönderilemedi. SMTP ayarlarını kontrol edip tekrar deneyin.");
+        }
     }
 }

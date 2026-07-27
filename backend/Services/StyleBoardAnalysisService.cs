@@ -219,23 +219,15 @@ public sealed class StyleBoardAnalysisService(
         var hasKnitwear = ContainsAny(text, "kazak", "triko", "knit", "sweater", "hırka", "hirka", "cardigan");
         var hasMini = ContainsAny(text, "mini etek", "mini skirt");
         var hasShortSleeve = ContainsAny(text, "kısa kollu", "kisa kollu", "short sleeve");
-        var volumes = items.Count(item =>
-            ContainsAny(
-                $"{item.FitLabel} {item.ProductName}".ToLowerInvariant(),
-                "baggy", "oversize", "oversized", "boxy", "relaxed", "wide"));
-
         var notes = new List<string>();
-        var score = 68;
+        var score = 78;
         if (!hasOnePiece && (!hasUpper || !hasBottom))
         {
             score -= 20;
             notes.Add("Tam görünüm için bir üst ve bir alt parça seç.");
         }
-        if (volumes >= 3)
-        {
-            score -= 16;
-            notes.Add("Birden fazla hacimli kesim silueti ağırlaştırıyor; bir parçayı daha kontrollü kesimle değiştir.");
-        }
+        // Hacimli kesim sayısı tek başına kusur değildir. AI; boy, kumaş,
+        // oran ve kullanım bağlamını birlikte değerlendirmeden puan düşüremez.
         if (hasMini && hasTrench)
         {
             if (season.Kind == "Yaz")
@@ -282,7 +274,7 @@ public sealed class StyleBoardAnalysisService(
                     : "Bu parçalar şu haliyle aynı hikâyeyi anlatmıyor.",
             "Değerlendirme; seçilen gerçek ürünlerin kategorisi, belirtilen kalıbı, katman oranı ve İstanbul mevsim bağlamı üzerinden yapıldı. Renk kanıtı ürün adında veya görselinde yoksa renk uyumu kesin kabul edilmedi.",
             notes.Take(4).ToArray(),
-            $"{now:MMMM} · {season.Kind}",
+            $"{TurkishMonth(now.Month)} · {season.Kind}",
             DateTimeOffset.UtcNow);
     }
 
@@ -293,6 +285,10 @@ public sealed class StyleBoardAnalysisService(
         var guardedScore = local.Score < 60
             ? Math.Min(result.Score, local.Score + 10)
             : result.Score;
+        if (local.Notes.Count == 0)
+        {
+            guardedScore = Math.Max(guardedScore, 72);
+        }
         guardedScore = Math.Clamp(guardedScore, 15, 95);
         var verdict = guardedScore switch
         {
@@ -331,11 +327,20 @@ public sealed class StyleBoardAnalysisService(
             Kumaş ağırlığını ve nefes alabilirliği MaterialSummary/MaterialEvidence ile kontrol et. Materyal kanıtı yoksa uygunmuş gibi varsayma.
             localGuard mevsim veya katman sorunu bulduysa bunu görmezden gelme; sorun çözülmedikçe puanı localGuard.score değerinin en fazla 10 puan üzerine çıkar ve somut değişikliği yaz.
             Bütün hacimli kesimleri aynı anda onaylama. Boxy, relaxed, baggy, straight ve slim kesimleri eş anlamlı sayma.
+            Baggy, wide-leg ve relaxed kesimler güncel modada başlı başına kusur değildir. Bunlara otomatik olarak hantal, ağır veya orantısız deme. Hacmi ancak ürün boyu, üst-alt oranı, kumaş dökümü, ayakkabı ölçeği ve kullanıcının istediği görünümle birlikte değerlendir. Geniş altı daha kısa/düzenli üstle dengelemek güvenli bir seçenektir; fakat bilinçli baştan ayağa hacimli streetwear silueti de uygun bağlam ve iyi boy oranıyla geçerli olabilir.
+            Kullanıcının istediği ortam/mevsim için seçilen parçaları sonradan eleştireceksen o kombini hiç üretme; uygun kombin bulunamadığını açıkça söyle. Kombin yapmak zorunlu değildir.
             Mini kot etek + kısa kollu tişört + trençkot evrensel olarak doğru değildir: yazın trenç genellikle mevsim dışıdır; ilkbahar/sonbaharda ancak trenç hafif ve açık, boy oranı bilinçli ise çalışabilir.
             Üst ve alt parçanın birlikte çalışmasını değerlendir. Ayakkabı isteğe bağlıdır: seçilmişse kombine uyumunu yorumla; seçilmemişse ayakkabıdan, eksikliğinden veya görünümün tamamlanmadığından hiç söz etme ve puan düşürme.
             Sonuç kesin satış vaadi değildir. Write every user-facing field in {responseLanguage}; keep it concise and concrete. Yalnız şemaya uyan JSON döndür.
             """;
     }
+
+    private static string TurkishMonth(int month) => month switch
+    {
+        1 => "Ocak", 2 => "Şubat", 3 => "Mart", 4 => "Nisan",
+        5 => "Mayıs", 6 => "Haziran", 7 => "Temmuz", 8 => "Ağustos",
+        9 => "Eylül", 10 => "Ekim", 11 => "Kasım", _ => "Aralık"
+    };
 
     private static string BuildEvidence(
         UserProfile profile,

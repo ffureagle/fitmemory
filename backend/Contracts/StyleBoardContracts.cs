@@ -36,6 +36,21 @@ public sealed class SaveFavoriteOutfitRequest
     public required IReadOnlyList<int> ItemIds { get; init; }
 }
 
+public sealed class SaveWardrobeFavoriteRequest
+{
+    [Required, StringLength(128, MinimumLength = 8)]
+    public required string UserId { get; init; }
+
+    [Required, StringLength(160, MinimumLength = 2)]
+    public required string Title { get; init; }
+
+    [Required]
+    public required StyleBoardAnalysisResponse Analysis { get; init; }
+
+    [Required, MinLength(2), MaxLength(8)]
+    public required IReadOnlyList<int> OrderIds { get; init; }
+}
+
 public sealed class AnalyzeStyleBoardRequest
 {
     [Required, StringLength(128, MinimumLength = 8)]

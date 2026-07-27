@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -71,18 +72,26 @@ export function StudioScreen() {
 
   const selected = session.styleBoard.filter((item) => item.isInStudio && item.isSelected);
   const studioItems = session.styleBoard.filter((item) => item.isInStudio);
+  const studioFavorites = session.favoriteOutfits.filter((item) => !item.title.startsWith("Dolap · "));
 
   const selectItem = async (item: StyleBoardItem) => {
-    if (!session.token || !session.account || item.isSelected) return;
+    if (!session.token || !session.account) return;
     setError("");
     try {
-      await session.api.selectStyleBoardItem(
+      const updated = await session.api.selectStyleBoardItem(
         item.id,
         session.account.userId,
         session.token,
       );
       setAnalysis(null);
-      await session.refresh();
+      const itemSlot = slot(item);
+      session.updateStyleBoard(session.styleBoard.map((candidate) =>
+        candidate.id === item.id
+          ? { ...candidate, isSelected: updated.isSelected }
+          : slot(candidate) === itemSlot
+            ? { ...candidate, isSelected: false }
+            : candidate,
+      ));
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Parça seçilemedi.",
@@ -125,7 +134,6 @@ export function StudioScreen() {
         selected.map((item) => item.id),
       );
       session.updateFavoriteOutfits([favorite, ...session.favoriteOutfits]);
-      setTab("favorites");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Kombin favorilere eklenemedi.");
     } finally {
@@ -210,12 +218,12 @@ export function StudioScreen() {
           ) : null
         }
         eyebrow="Almadan önce dene"
-        title="Kombin Stüdyosu."
+        title="Kombin Stüdyosu"
       />
       <View accessibilityRole="tablist" style={styles.tabs}>
         {([
           ["studio", "Stüdyo"],
-          ["favorites", `Favoriler · ${session.favoriteOutfits.length}`],
+          ["favorites", `Favoriler · ${studioFavorites.length}`],
         ] as const).map(([key, label]) => (
           <Pressable
             accessibilityRole="tab"
@@ -229,22 +237,25 @@ export function StudioScreen() {
         ))}
       </View>
       <Text style={styles.intro}>
-        Taradığın ama henüz almadığın parçaları ayır. Her kategori içinden bir
-        aktif parça seç; AI kesim, renk, mevsim ve yaş uyumunu birlikte yorumlar.
+        {tab === "studio"
+          ? "Taradığın aday parçaları kategori kategori seç; AI kesim, renk, mevsim ve yaş uyumunu birlikte yorumlar."
+          : "Beğendiğin stüdyo kombinleri burada saklanır. Ürün görseline dokunarak resmi ürün sayfasını açabilirsin."}
       </Text>
       {error ? (
         <ErrorNotice message={error} onDismiss={() => setError("")} />
       ) : null}
       {tab === "favorites" ? (
-        !session.favoriteOutfits.length ? (
+        !studioFavorites.length ? (
           <EmptyState copy="Stilist yorumunu aldıktan sonra kombini favorilerine ekleyebilirsin." symbol="♡" title="Favori kombin yok" />
         ) : (
           <View style={styles.favoriteList}>
-            {session.favoriteOutfits.map((favorite) => (
+            {studioFavorites.map((favorite) => (
               <Card key={favorite.id} style={styles.favoriteCard}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.favoriteImages}>
                   {favorite.items.map((item) => item.imageUrl ? (
-                    <Image key={item.id} source={{ uri: item.imageUrl }} style={styles.favoriteImage} />
+                    <Pressable key={item.id} onPress={() => item.productUrl ? void Linking.openURL(item.productUrl) : undefined}>
+                      <Image source={{ uri: item.imageUrl }} style={styles.favoriteImage} />
+                    </Pressable>
                   ) : <View key={item.id} style={styles.selectedFallback}><Text style={styles.selectedFallbackText}>FM</Text></View>)}
                 </ScrollView>
                 <Text style={styles.favoriteTitle}>{favorite.title}</Text>
@@ -373,7 +384,7 @@ export function StudioScreen() {
         </>
       )}
 
-      {analysis ? (
+      {tab === "studio" && analysis ? (
         <Card style={styles.analysis}>
           <View style={styles.analysisHead}>
             <View>

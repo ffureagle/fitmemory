@@ -76,6 +76,8 @@ export function ScanScreen({
   const { translate } = useI18n();
   const webViewRef = useRef<WebView>(null);
   const captureViewRef = useRef<View>(null);
+  const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanOriginRef = useRef<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -94,6 +96,7 @@ export function ScanScreen({
   const [status, setStatus] = useState("");
   const [outfitPrompt, setOutfitPrompt] = useState("");
   const [outfitBusy, setOutfitBusy] = useState(false);
+  const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
   const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
 
   const createWardrobeOutfit = async () => {
@@ -110,8 +113,49 @@ export function ScanScreen({
     }
   };
 
+  const saveWardrobeFavorite = async () => {
+    if (!wardrobeOutfit || !session.token || !session.account) return;
+    setWardrobeFavoriteBusy(true);
+    setError("");
+    try {
+      const favorite = await session.api.saveWardrobeFavorite(
+        session.account.userId,
+        session.token,
+        wardrobeOutfit.analysis.headline || "Dolabımdan kombin",
+        wardrobeOutfit.analysis,
+        wardrobeOutfit.pieces.map((piece) => piece.orderId),
+      );
+      session.updateFavoriteOutfits([favorite, ...session.favoriteOutfits]);
+      feedback.success();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kombin kaydedilemedi.");
+    } finally {
+      setWardrobeFavoriteBusy(false);
+    }
+  };
+
   const canScan = Boolean(session.profile?.age && session.token);
   const currentProductUrl = snapshot?.product.url ?? "";
+
+  const stopScan = () => {
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+    scanOriginRef.current = null;
+    setScanMode(null);
+    setStatus("");
+  };
+
+  const closeBrowser = () => {
+    stopScan();
+    setSnapshot(null);
+    setRecommendation(null);
+    setNote("");
+    setError("");
+    setPageLoading(false);
+    setBrowserOpen(false);
+  };
 
   const openBrowser = (url = shops[0]?.url ?? "") => {
     if (!canScan) {
@@ -127,6 +171,10 @@ export function ScanScreen({
   };
 
   const goBackInBrowser = () => {
+    stopScan();
+    setSnapshot(null);
+    setRecommendation(null);
+    setNote("");
     if (canGoBack) {
       webViewRef.current?.goBack();
     }
@@ -174,6 +222,17 @@ export function ScanScreen({
         : "Görünür siparişler hazırlanıyor",
     );
     setScanMode(mode);
+    scanOriginRef.current = address.split("#")[0] ?? address;
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    scanTimeoutRef.current = setTimeout(() => {
+      scanTimeoutRef.current = null;
+      setScanMode(null);
+      scanOriginRef.current = null;
+      setStatus("");
+      setError(
+        "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
+      );
+    }, 35_000);
     webViewRef.current?.injectJavaScript(createScanScript(mode));
   };
 
@@ -235,6 +294,14 @@ export function ScanScreen({
       setError("Sayfa tarama sonucunu okunamayan biçimde döndürdü.");
       return;
     }
+    if (message.type === "fitmemory-progress") {
+      setStatus(message.message);
+      return;
+    }
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
     if (message.type === "fitmemory-error") {
       setScanMode(null);
       setStatus("");
@@ -254,8 +321,13 @@ export function ScanScreen({
       setStatus("");
     } finally {
       setScanMode(null);
+      scanOriginRef.current = null;
     }
   };
+
+  useEffect(() => () => {
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+  }, []);
 
   const reconsider = async () => {
     if (
@@ -305,7 +377,11 @@ export function ScanScreen({
         recommendation,
       );
       await session.refresh();
-      openStudio();
+      setSnapshot(null);
+      setRecommendation(null);
+      setNote("");
+      setStatus("");
+      feedback.success();
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Parça stüdyoya eklenemedi.",
@@ -329,6 +405,10 @@ export function ScanScreen({
       );
       await session.refresh();
       feedback.success();
+      setSnapshot(null);
+      setRecommendation(null);
+      setNote("");
+      setStatus("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ürün kaydedilemedi.");
     } finally {
@@ -386,13 +466,8 @@ export function ScanScreen({
             </Pressable>
           ))}
         </View>
-        <Button
-          label={canScan ? "Mağaza tarayıcısını aç" : "Önce profilini tamamla"}
-          onPress={() => openBrowser()}
-          tone="dark"
-        />
         <Card style={styles.outfitMaker}>
-          <Text style={styles.outfitMakerEyebrow}>AI KOMBİN YAPICI</Text>
+          <Text style={styles.outfitMakerEyebrow}>AI KOMBİN ASİSTANI</Text>
           <Text style={styles.outfitMakerTitle}>Bugün nasıl görünmek istiyorsun?</Text>
           <TextInput
             maxLength={500}
@@ -416,6 +491,12 @@ export function ScanScreen({
               <Text style={styles.outfitHeadline}>{wardrobeOutfit.analysis.headline}</Text>
               <Text style={styles.outfitExplanation}>{wardrobeOutfit.analysis.explanation}</Text>
               {wardrobeOutfit.analysis.notes.slice(0, 3).map((item) => <Text key={item} style={styles.outfitNote}>• {item}</Text>)}
+              <Button
+                busy={wardrobeFavoriteBusy}
+                label="Kombini kaydet"
+                onPress={() => void saveWardrobeFavorite()}
+                small
+              />
             </View>
           ) : null}
         </Card>
@@ -423,14 +504,14 @@ export function ScanScreen({
 
       <Modal
         animationType="slide"
-        onRequestClose={goBackInBrowser}
+        onRequestClose={closeBrowser}
         visible={browserOpen}
       >
         <View style={styles.browser}>
           <View style={styles.browserTop}>
             <Pressable
               accessibilityLabel="Tarayıcıyı kapat"
-              onPress={() => setBrowserOpen(false)}
+              onPress={closeBrowser}
               style={styles.roundAction}
             >
               <Text style={styles.roundActionText}>×</Text>
@@ -466,11 +547,14 @@ export function ScanScreen({
               allowsBackForwardNavigationGestures
               javaScriptEnabled
               onShouldStartLoadWithRequest={(request) => {
+                if (request.isTopFrame === false) return true;
                 const allowed = isAllowedShopUrl(request.url);
                 if (!allowed) {
-                  setError(
-                    "Bu bağlantı desteklenen mağazaların dışına çıkıyor ve güvenlik için açılmadı.",
-                  );
+                  if (/^https?:/i.test(request.url)) {
+                    setError(
+                      "Bu bağlantı desteklenen mağazaların dışına çıkıyor ve güvenlik için açılmadı.",
+                    );
+                  }
                 }
                 return allowed;
               }}
@@ -488,6 +572,13 @@ export function ScanScreen({
               }}
               onMessage={(event) => void handleMessage(event)}
               onNavigationStateChange={(state) => {
+                const nextUrl = state.url.split("#")[0] ?? state.url;
+                if (scanOriginRef.current && nextUrl !== scanOriginRef.current) {
+                  stopScan();
+                  setSnapshot(null);
+                  setRecommendation(null);
+                  setNote("");
+                }
                 setAddress(state.url);
                 setCanGoBack(state.canGoBack);
               }}
@@ -1171,6 +1262,7 @@ const styles = StyleSheet.create({
   resultActions: {
     flexDirection: "row",
     gap: 9,
+    marginBottom: 12,
     marginTop: 10,
   },
 });

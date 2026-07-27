@@ -197,10 +197,8 @@ export function ErrorNotice({
     }),
   ).current;
   return (
-    <AnimatedPressable
+    <Animated.View
       {...panResponder.panHandlers}
-      accessibilityRole={onDismiss ? "button" : undefined}
-      onPress={onDismiss}
       style={[
         styles.error,
         {
@@ -214,8 +212,7 @@ export function ErrorNotice({
     >
       <Text style={styles.errorTitle}>İşlem tamamlanamadı</Text>
       <Text style={styles.errorCopy}>{message}</Text>
-      {onDismiss ? <Text style={styles.errorHint}>Yukarı kaydırarak kapat</Text> : null}
-    </AnimatedPressable>
+    </Animated.View>
   );
 }
 
