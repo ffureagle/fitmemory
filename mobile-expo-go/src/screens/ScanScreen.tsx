@@ -256,7 +256,7 @@ export function ScanScreen({
       setError(
         "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
       );
-    }, 35_000);
+    }, 65_000);
     webViewRef.current?.injectJavaScript(createScanScript(mode));
   };
 

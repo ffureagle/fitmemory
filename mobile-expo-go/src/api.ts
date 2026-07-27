@@ -28,6 +28,7 @@ type ApiOptions = {
   token?: string | null;
   allowNotFound?: boolean;
   timeoutMs?: number;
+  retries?: number;
 };
 
 export class FitMemoryApi {
@@ -58,6 +59,13 @@ export class FitMemoryApi {
       },
       );
     } catch (reason) {
+      if ((options.retries ?? 0) > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+        return this.request<T>(path, {
+          ...options,
+          retries: (options.retries ?? 0) - 1,
+        });
+      }
       if (reason instanceof Error && reason.name === "AbortError") {
         throw new Error("Sunucu zamanında yanıt vermedi. Lütfen tekrar deneyin.");
       }
@@ -68,6 +76,13 @@ export class FitMemoryApi {
 
     if (options.allowNotFound && response.status === 404) {
       return null as T;
+    }
+    if ([502, 503, 504].includes(response.status) && (options.retries ?? 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      return this.request<T>(path, {
+        ...options,
+        retries: (options.retries ?? 0) - 1,
+      });
     }
     if (response.status === 204) {
       return undefined as T;
@@ -221,6 +236,8 @@ export class FitMemoryApi {
         isReconsideration,
         language: this.language,
       },
+      retries: 1,
+      timeoutMs: 90_000,
     });
   }
 
@@ -235,6 +252,7 @@ export class FitMemoryApi {
       method: "POST",
       token,
       timeoutMs: 100_000,
+      retries: 1,
       body: { userId, product, pageText, screenshotDataUrl, language: this.language },
     });
   }

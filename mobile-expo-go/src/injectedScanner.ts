@@ -22,6 +22,15 @@ const scannerBootstrap = String.raw`
       rect.height > 2;
   };
   let rootCache = null;
+  const observedRoots = new WeakSet();
+  const observeRoot = (root) => {
+    if (!root || observedRoots.has(root) || typeof MutationObserver === "undefined") return;
+    try {
+      const observer = new MutationObserver(() => { rootCache = null; });
+      observer.observe(root, { subtree: true, childList: true, attributes: true });
+      observedRoots.add(root);
+    } catch {}
+  };
   const roots = (refresh = false) => {
     if (!refresh && rootCache) return rootCache;
     const result = [document];
@@ -44,6 +53,7 @@ const scannerBootstrap = String.raw`
         }
       }
     }
+    for (const root of result) observeRoot(root);
     rootCache = result;
     return result;
   };
@@ -259,9 +269,33 @@ const scannerBootstrap = String.raw`
     }
     return null;
   };
+  const waitForStable = async (predicate, timeout = 10000, stableFor = 450) => {
+    const startedAt = Date.now();
+    let lastSignature = "";
+    let stableSince = 0;
+    while (Date.now() - startedAt < timeout) {
+      rootCache = null;
+      try {
+        const value = predicate();
+        if (value) {
+          const signature = typeof value === "string"
+            ? value
+            : clean(value.rawText || value.innerText || value.textContent || JSON.stringify(value));
+          if (signature && signature === lastSignature) {
+            if (Date.now() - stableSince >= stableFor) return value;
+          } else {
+            lastSignature = signature;
+            stableSince = Date.now();
+          }
+        }
+      } catch {}
+      await sleep(120);
+    }
+    return null;
+  };
   const controlText = (element) => clean(
-    element.innerText || element.textContent || element.value ||
     element.getAttribute?.("aria-label") || element.getAttribute?.("title") ||
+    element.value || element.innerText || element.textContent ||
     element.getAttribute?.("data-testid") || ""
   );
   const clickable = (element) =>
@@ -302,16 +336,16 @@ const scannerBootstrap = String.raw`
       left.element.childElementCount - right.element.childElementCount
     )[0]?.element || null;
   const findExactControl = (pattern) => all(
-    "button, [role='button'], input[type='button'], input[type='submit'], a"
+    "button, [role='button'], input[type='button'], input[type='submit'], a, [data-testid], [data-qa]"
   ).filter(visible).map((element) => ({
     element,
-    text: clean(element.value || controlText(element))
-  })).filter(({ text }) => text && text.length <= 80 && pattern.test(fold(text)))
+    text: clean(element.value || element.getAttribute?.("aria-label") || ownText(element) || controlText(element))
+  })).filter(({ text }) => text && text.length <= 120 && pattern.test(fold(text)))
     .sort((left, right) => left.text.length - right.text.length)[0]?.element || null;
   const findExactVisibleTextControl = (pattern) =>
     findExactControl(pattern) || findShortTextControl(pattern);
   const measurementPattern =
-    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
+    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
   const findMeasurementTrigger = () =>
     all(
       "button, a, [role='button'], summary, [data-testid*='measure' i], " +
@@ -376,7 +410,7 @@ const scannerBootstrap = String.raw`
       const text = fold(panelText(panel));
       const metricCount = (text.match(/gogus|chest|bust|omuz|shoulder|bel|waist|kalca|hip|uzunluk|length|kol|sleeve|inseam/g) || []).length;
       const numericCount = (text.match(/\d{1,3}(?:[.,]\d+)?/g) || []).length;
-      const sizeCount = findSizeButtons(panel).length;
+      const sizeCount = findSizeButtons(panel).length || findSizeButtons(document).length;
       return {
         panel,
         metricCount,
@@ -388,7 +422,7 @@ const scannerBootstrap = String.raw`
     }).filter((candidate) =>
       candidate.metricCount >= 1 &&
       candidate.numericCount >= 2 &&
-      (candidate.sizeCount >= 1 || candidate.isTable) &&
+       (candidate.sizeCount >= 1 || candidate.isTable || candidate.numericCount >= 2) &&
       candidate.score >= 13
     )
       .sort((left, right) => right.score - left.score)[0]?.panel || null;
@@ -405,7 +439,7 @@ const scannerBootstrap = String.raw`
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
       const target = clickable(element);
-      if (!target || !panel.contains(target) || seen.has(target)) continue;
+       if (!target || (panel !== document && !panel.contains(target)) || seen.has(target)) continue;
       seen.add(target);
       result.push(target);
     }
@@ -423,7 +457,7 @@ const scannerBootstrap = String.raw`
     ].join(" ")));
   };
   const openSizeGuide = async () => {
-    if (tableChart() || geometryChart() || (() => {
+    if (tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
       return panel && extractMeasurements(panel).length > 0;
     })()) {
@@ -434,17 +468,17 @@ const scannerBootstrap = String.raw`
     if (measurement && await clickElement(measurement)) {
       guideStage = "Ölçüleri görüntüle tıklandı";
       progress(guideStage);
-      const panel = await waitFor(() => tableChart() || geometryChart() || (() => {
+       const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
         const found = findMeasurePanel();
         return found && extractMeasurements(found).length > 0;
-      })(), 7000, 160);
+       })(), 10000, 500);
       if (panel) return true;
     }
     const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
     const addControl = isPullAndBear
-      ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+      ? findExactVisibleTextControl(/^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i)
       : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
-        ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+        ? findExactVisibleTextControl(/^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i)
         : null;
     const sizeControl = findExactVisibleTextControl(
       /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^beden$|^size$/i
@@ -460,10 +494,10 @@ const scannerBootstrap = String.raw`
       if (measurement && await clickElement(measurement)) {
         guideStage = "Ölçüleri görüntüle tıklandı";
         progress(guideStage);
-        const panel = await waitFor(() => tableChart() || geometryChart() || (() => {
+         const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
           const found = findMeasurePanel();
           return found && extractMeasurements(found).length > 0;
-        })(), 9000, 180);
+         })(), 14000, 600);
         if (panel) return true;
       }
       guideStage = measurement
@@ -474,7 +508,7 @@ const scannerBootstrap = String.raw`
         ? "Sayfadaki Ekle düğmesi bulunamadı"
         : "Beden seçici bulunamadı";
     }
-    return Boolean(tableChart() || geometryChart() || (() => {
+    return Boolean(tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
       return panel && extractMeasurements(panel).length > 0;
     })());
@@ -588,7 +622,7 @@ const scannerBootstrap = String.raw`
       if (cmValue) add(cells[0], cmValue);
     }
     const text = fold(panelText(panel));
-    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
+    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
     for (const match of text.matchAll(pattern)) add(match[1], match[2]);
     if (measurements.length < 2) {
       const labels = [...panel.querySelectorAll("th, td, dt, dd, p, span, div")]
@@ -608,6 +642,26 @@ const scannerBootstrap = String.raw`
     }
     return measurements;
   };
+  const visiblePanelChart = () => {
+    const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
+    const panel = findMeasurePanel();
+    const scope = panel;
+    if (!scope) return null;
+    const measurements = extractMeasurements(scope);
+    if (!measurements.length) return null;
+    const selectedButton = findSizeButtons(document).find(selectedSizeButton);
+    const size = sizeLabelFromText(controlText(selectedButton)) || sizeLabelFromText(selected) || "Bilinmiyor";
+    const headers = ["Beden", ...measurements.map((item) => item.label)];
+    const row = { cells: [size, ...measurements.map((item) => item.value)] };
+    return {
+      found: true,
+      title: "Urun olculeri",
+      unit: /\b(inch|inc)\b/i.test(fold(panelText(scope))) ? "Inches" : "Centimeters",
+      headers,
+      rows: [row],
+      rawText: [headers.join(" | "), row.cells.join(" | ")].join("\n")
+    };
+  };
   const measureSignature = () => {
     const panel = findMeasurePanel();
     if (!panel) return "";
@@ -616,9 +670,13 @@ const scannerBootstrap = String.raw`
   const panelChart = async () => {
     let panel = findMeasurePanel();
     if (!panel) return null;
-    const initial = findSizeButtons(panel).find(selectedSizeButton);
+    const availableButtons = () => {
+      const local = findSizeButtons(panel);
+      return local.length ? local : findSizeButtons(document);
+    };
+    const initial = availableButtons().find(selectedSizeButton);
     const initialLabel = clean(initial?.innerText || initial?.textContent).toUpperCase();
-    const labels = findSizeButtons(panel)
+    const labels = availableButtons()
       .map((button) => clean(button.innerText || button.textContent).toUpperCase())
       .filter(size => sizePattern.test(size))
       .filter((size, index, values) => values.indexOf(size) === index);
@@ -627,13 +685,14 @@ const scannerBootstrap = String.raw`
     const targets = labels.length ? labels : [initialLabel || "Bilinmiyor"];
     for (const size of targets.slice(0, 10)) {
       panel = findMeasurePanel() || panel;
-      const button = findSizeButtons(panel).find((candidate) =>
+      const localButtons = findSizeButtons(panel);
+      const button = (localButtons.length ? localButtons : findSizeButtons(document)).find((candidate) =>
         clean(candidate.innerText || candidate.textContent).toUpperCase() === size);
       if (button && !selectedSizeButton(button)) {
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 700, 70);
-        await sleep(80);
+        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 2400, 120);
+        await waitForStable(() => measureSignature(), 3200, 500);
       }
       panel = findMeasurePanel() || panel;
       const measurements = extractMeasurements(panel);
@@ -646,7 +705,8 @@ const scannerBootstrap = String.raw`
     }
     if (initialLabel) {
       panel = findMeasurePanel() || panel;
-      const restore = findSizeButtons(panel).find((button) =>
+       const restoreButtons = findSizeButtons(panel);
+       const restore = (restoreButtons.length ? restoreButtons : findSizeButtons(document)).find((button) =>
         clean(button.innerText || button.textContent).toUpperCase() === initialLabel);
       if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
@@ -663,7 +723,6 @@ const scannerBootstrap = String.raw`
     };
   };
   const scrapeProduct = async () => {
-    const material = await materialDetails();
     await openSizeGuide();
     const structured = productJson();
     const title = clean(
@@ -693,11 +752,12 @@ const scannerBootstrap = String.raw`
     ).slice(0, 120);
     let chart = null;
     for (let attempt = 0; attempt < 2 && !chart?.found; attempt += 1) {
-      chart = tableChart() || geometryChart() || await panelChart();
+      chart = tableChart() || geometryChart() || await panelChart() || visiblePanelChart();
       if (chart?.found) break;
       await openSizeGuide();
       await sleep(250);
     }
+    const material = await materialDetails();
     if (!chart?.found) {
       return {
         fallback: true,
