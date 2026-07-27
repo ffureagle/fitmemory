@@ -31,18 +31,20 @@ const slotNames: Record<string, string> = {
 };
 
 function slot(item: StyleBoardItem) {
-  const value = `${item.category} ${item.productName}`.toLocaleLowerCase(
-    "tr-TR",
-  );
-  if (/(ayakkabı|shoe|sneaker|bot|loafer)/i.test(value)) return "shoe";
-  if (/(ceket|jacket|mont|coat|kaban|trenç|outer)/i.test(value)) {
+  const value = `${item.category} ${item.productName} ${item.description} ${item.fitLabel}`
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i");
+  if (/(ayakkabi|shoe|sneaker|trainer|bot|loafer|sandal|terlik)/i.test(value)) return "shoe";
+  if (/(ceket|jacket|mont|coat|kaban|parka|trenc|outer|blazer)/i.test(value)) {
     return "outer";
   }
-  if (/(pantolon|jean|denim|trouser|bottom|etek|şort|short)/i.test(value)) {
+  if (/(pantolon|jean|denim|trouser|pants|bottom|etek|sort|short|bermuda)/i.test(value)) {
     return "bottom";
   }
   if (/(elbise|dress|tulum|jumpsuit)/i.test(value)) return "one";
-  if (/(tişört|t-shirt|tee|top|shirt|gömlek|sweat|hoodie|kazak|triko|polo)/i.test(value)) {
+  if (/(tisort|t.?shirt|tee|polo(?: yaka)?|top|shirt|gomlek|bluz|sweat|hoodie|kazak|triko|hirka|jersey)/i.test(value)) {
     return "upper";
   }
   return "other";

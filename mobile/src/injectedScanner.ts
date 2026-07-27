@@ -198,6 +198,18 @@ const scannerBootstrap = String.raw`
       evidence: height || size ? clean(segment).slice(0, 300) : ""
     };
   };
+  const inferCategory = (...values) => {
+    const value = fold(values.filter(Boolean).join(" "));
+    if (/ayakkabi|shoe|sneaker|trainer|loafer|sandal|terlik|bot\b/.test(value)) return "Footwear";
+    if (/ceket|jacket|mont|coat|kaban|parka|trenc|outerwear|blazer/.test(value)) return "Outerwear";
+    if (/pantolon|jean|denim|trouser|pants|sort|short|bermuda|etek|skirt/.test(value)) return "Bottoms";
+    if (/elbise|dress|tulum|jumpsuit/.test(value)) return "Dresses";
+    if (/tisort|t.?shirt|tee\b|polo(?: yaka)?|jersey/.test(value)) return "Tees";
+    if (/gomlek|shirt|overshirt|bluz|blouse/.test(value)) return "Shirts";
+    if (/sweat|hoodie|kazak|triko|hirka|cardigan|knit/.test(value)) return "Knitwear";
+    if (/ust giyim|tops?|camisole|atlet/.test(value)) return "Tops";
+    return "Other";
+  };
   const materialDetails = async () => {
     const trigger = findShortTextControl(
       /^(icerik ve bakim|icerik & bakim|composition|materials?|fabric and care|details)$/i
@@ -322,6 +334,12 @@ const scannerBootstrap = String.raw`
     return text.match(/^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)?.[1]?.toUpperCase() ||
       text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3})\)/i)?.[1]?.toUpperCase() || "";
   };
+  const selectedSizeEvidence = () => all(
+    "[aria-selected='true'], [aria-checked='true'], [aria-pressed='true'], " +
+    "[data-state='selected'], [data-state='checked'], [data-selected='true'], .selected, .active"
+  ).filter(visible).map((element) => sizeLabelFromText(controlText(element)))
+    .filter(Boolean).filter((value, index, values) => values.indexOf(value) === index)
+    .map((value) => "[selected] " + value).join("\n");
   const measurementNamePattern =
     /gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
   const panelText = (panel) => clean(panel?.innerText || panel?.textContent || "");
@@ -684,10 +702,10 @@ const scannerBootstrap = String.raw`
       return {
         fallback: true,
         reason: "Beden tablosu DOM üzerinden okunamadı: " + guideStage + ".",
-        pageText: pageText.slice(0, 20000),
+        pageText: (selectedSizeEvidence() + "\n" + pageText).slice(0, 20000),
         product: {
           url: location.href.slice(0, 1000), brand, name: title,
-          category: clean(structured?.category || "Diğer").slice(0, 120),
+          category: inferCategory(structured?.category, title, structured?.description, fit.label),
           price: clean([offers?.price || meta("product:price:amount"), offers?.priceCurrency || meta("product:price:currency")].filter(Boolean).join(" ")).slice(0, 80),
           imageUrl: chooseProductImage(structured, title).slice(0, 1000),
           productReference: reference, fitLabel: fit.label, fitEvidence: fit.evidence,
@@ -702,13 +720,16 @@ const scannerBootstrap = String.raw`
         url: location.href.slice(0, 1000),
         brand,
         name: title,
-        category: clean(
-          structured?.category ||
+        category: inferCategory(
+          structured?.category,
+          title,
+          structured?.description,
           meta("product:category") ||
           all("[aria-label*='breadcrumb' i] li, nav ol li")
             .filter(visible).slice(-2)[0]?.textContent ||
-          "Diğer"
-        ).slice(0, 120),
+          "",
+          fit.label
+        ),
         price: clean([
           offers?.price || meta("product:price:amount"),
           offers?.priceCurrency || meta("product:price:currency")

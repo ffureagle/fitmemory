@@ -26,7 +26,9 @@ public sealed class GeminiProductScanClient(
             throw new InvalidOperationException("Gemini API anahtarı yapılandırılmamış.");
         var image = GeminiResponseReader.ParseImageDataUrl(request.ScreenshotDataUrl);
         var prompt = $"""
-            FitMemory mobil tarayıcısındaki resmi ürün sayfasının ekran görüntüsünü ve DOM metnini incele.
+            FitMemory mobil tarayıcısındaki resmi ürün sayfasının ekran görüntüsünü, Android erişilebilirlik
+            ağacını, cihaz içi OCR metnini ve DOM metnini birlikte incele. Kanıt önceliği cihaz içi OCR ve
+            erişilebilirlik metni, ekranda görünen tablo, son olarak DOM metnidir. Aynı değeri tek kez yaz.
             Görevin yalnızca ekranda gerçekten görünen ÜRÜN ÖLÇÜ TABLOSUNU çıkarmaktır. Beden etiketi,
             göğüs eni, ön uzunluk, kol, omuz, bel, kalça, iç bacak gibi satırları aynen eşleştir.
             Vücut beden rehberini ürünün düz zeminde ölçülen parça ölçüleriyle karıştırma. Hiçbir sayıyı
@@ -34,6 +36,8 @@ public sealed class GeminiProductScanClient(
             HTML table etiketi bulunması gerekmez. Sütunlar ekranda kısmen görünüyorsa yalnız görünenleri yaz.
 
             Mevcut ürün verisi: {JsonSerializer.Serialize(request.Product, JsonOptions)}
+            Erişilebilirlik ağacı: {request.AccessibilityText}
+            Cihaz içi OCR: {request.OcrText}
             Sayfa metni: {request.PageText}
 
             sizeChart.found yalnız en az bir bedenle en az bir gerçek sayısal ölçü eşleştiyse true olsun.

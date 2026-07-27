@@ -13,6 +13,12 @@ public sealed class VisionProductScanRequest
     [StringLength(20000)]
     public string PageText { get; init; } = "";
 
+    [StringLength(24000)]
+    public string AccessibilityText { get; init; } = "";
+
+    [StringLength(24000)]
+    public string OcrText { get; init; } = "";
+
     [Required]
     public required string ScreenshotDataUrl { get; init; }
 

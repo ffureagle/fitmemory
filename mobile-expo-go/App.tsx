@@ -5,6 +5,7 @@ import {
   Animated,
   AppState,
   Easing,
+  Image,
   Platform,
   Pressable,
   StatusBar as NativeStatusBar,
@@ -198,8 +199,8 @@ function Application() {
   if (introVisible) {
     return (
       <View style={styles.introSplash}>
-        <Animated.View style={{ opacity: introProgress, transform: [{ scale: introProgress.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }] }}>
-          <Brand />
+        <Animated.View style={[styles.introContent, { opacity: introProgress, transform: [{ scale: introProgress.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }] }]}>
+          <Image resizeMode="contain" source={require("./assets/fitmemory-logo.png")} style={styles.introLogo} />
           <Text style={styles.introSplashCopy}>KALIBIN. DOLABIN. SENİN VERİN.</Text>
         </Animated.View>
       </View>
@@ -227,16 +228,26 @@ export default function App() {
 const styles = StyleSheet.create({
   introSplash: {
     alignItems: "center",
-    backgroundColor: colors.paper,
+    backgroundColor: "#000000",
     flex: 1,
     justifyContent: "center",
   },
+  introContent: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+  introLogo: {
+    height: 260,
+    maxWidth: 420,
+    width: "84%",
+  },
   introSplashCopy: {
-    color: colors.blue,
-    fontSize: 9,
+    color: "#FFFFFF",
+    fontSize: 10,
     fontWeight: "900",
     letterSpacing: 1.4,
-    marginTop: 16,
+    marginTop: -20,
     textAlign: "center",
   },
   shell: {
@@ -293,11 +304,12 @@ const styles = StyleSheet.create({
   },
   navItem: {
     alignItems: "center",
-    borderRadius: 12,
+    borderRadius: 999,
     flex: 1,
     gap: 3,
     justifyContent: "center",
-    minHeight: 52,
+    marginHorizontal: 3,
+    minHeight: 56,
     position: "relative",
   },
   navItemActive: {

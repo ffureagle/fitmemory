@@ -46,6 +46,30 @@ const allowedShopDomains = [
   "inditex.com",
 ];
 
+function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null {
+  const selected = pageText.match(/\[selected\]\s*(XXXL|XXL|XL|L|M|S|XS|XXS|\d{2,3})\b/i)?.[1]?.toUpperCase();
+  if (!selected) return null;
+  const metrics: Array<[RegExp, string]> = [
+    [/(?:göğüs|gogus|chest|bust)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Göğüs"],
+    [/(?:omuz|shoulder)(?:\s+(?:genişliği|genisligi|width))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Omuz"],
+    [/(?:bel|waist)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Bel"],
+    [/(?:kalça|kalca|basen|hip)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Kalça"],
+    [/(?:ön uzunluk|on uzunluk|front length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Ön uzunluk"],
+    [/(?:kol uzunluğu|kol uzunlugu|sleeve length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Kol uzunluğu"],
+  ];
+  const found = metrics.map(([pattern, label]) => [label, pageText.match(pattern)?.[1]?.replace(",", ".")] as const)
+    .filter((item): item is readonly [string, string] => Boolean(item[1]));
+  if (!found.length) return null;
+  return {
+    found: true,
+    title: "Ekranda okunan ürün ölçüleri",
+    unit: /\bcm\b/i.test(pageText) ? "Centimeters" : "Unknown",
+    headers: ["Beden", ...found.map(([label]) => label)],
+    rows: [{ cells: [selected, ...found.map(([, value]) => value)] }],
+    rawText: pageText.slice(0, 12000),
+  };
+}
+
 function isAllowedShopUrl(value: string) {
   if (value === "about:blank") return true;
   try {
@@ -289,6 +313,16 @@ export function ScanScreen({
     fallback: Extract<ScannerMessage, { type: "fitmemory-product-fallback" }>["snapshot"],
   ) => {
     if (!session.token || !session.account) return;
+    const localChart = visibleTextChart(fallback.pageText);
+    if (localChart) {
+      setStatus("Ekrandaki ölçüler okundu, dolabınla karşılaştırılıyor");
+      await analyzeSnapshot({
+        product: fallback.product,
+        sizeChart: localChart,
+        capturedAt: new Date().toISOString(),
+      });
+      return;
+    }
     setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
     const base64 = await captureRef(captureViewRef, {
       format: "jpg",
@@ -1028,7 +1062,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     flexDirection: "row",
     gap: 9,
-    paddingBottom: Platform.OS === "ios" ? 24 : 24,
+    paddingBottom: Platform.OS === "ios" ? 8 : 8,
     paddingHorizontal: 12,
     paddingTop: 10,
   },
@@ -1125,7 +1159,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.blueSoft,
     borderTopColor: "#C8D5FF",
     borderTopWidth: 1,
-    bottom: Platform.OS === "ios" ? 86 : 72,
+    bottom: Platform.OS === "ios" ? 70 : 66,
     flexDirection: "row",
     gap: 9,
     left: 0,
@@ -1144,7 +1178,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderColor: colors.line,
     borderRadius: 18,
-    bottom: Platform.OS === "ios" ? 92 : 78,
+    bottom: Platform.OS === "ios" ? 76 : 72,
     left: 12,
     maxHeight: "60%",
     padding: 17,

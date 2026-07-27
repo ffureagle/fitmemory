@@ -2,7 +2,6 @@ import { type PropsWithChildren, type ReactNode, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
-  Image,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
   type TextInputProps,
   View,
 } from "react-native";
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
@@ -18,13 +18,12 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <View style={styles.brand}>
-      <Image
-        accessibilityLabel="FitMemory"
-        resizeMode="contain"
-        source={require("../../assets/fitmemory-logo.png")}
-        style={[styles.brandLogo, compact && styles.brandLogoCompact]}
-      />
+    <View accessibilityLabel="FitMemory" style={[styles.brand, !compact && styles.brandLarge]}>
+      <View style={[styles.brandGlyph, !compact && styles.brandGlyphLarge]}>
+        <MaterialCommunityIcons color={colors.ink} name="hanger" size={compact ? 24 : 32} />
+        <View style={[styles.brandSpark, !compact && styles.brandSparkLarge]} />
+      </View>
+      <Text style={[styles.brandWord, !compact && styles.brandWordLarge]}>FitMemory</Text>
     </View>
   );
 }
@@ -237,17 +236,45 @@ const styles = StyleSheet.create({
   brand: {
     alignItems: "center",
     flexDirection: "row",
+    gap: 8,
+  },
+  brandLarge: {
     gap: 11,
   },
-  brandLogo: {
-    backgroundColor: "#000",
-    borderRadius: 5,
-    height: 56,
-    width: 112,
+  brandGlyph: {
+    alignItems: "center",
+    height: 30,
+    justifyContent: "center",
+    position: "relative",
+    width: 30,
   },
-  brandLogoCompact: {
-    height: 44,
-    width: 88,
+  brandGlyphLarge: {
+    height: 40,
+    width: 40,
+  },
+  brandSpark: {
+    backgroundColor: colors.blue,
+    borderRadius: 3,
+    bottom: 3,
+    height: 5,
+    position: "absolute",
+    right: 1,
+    transform: [{ rotate: "45deg" }],
+    width: 5,
+  },
+  brandSparkLarge: {
+    bottom: 4,
+    height: 7,
+    width: 7,
+  },
+  brandWord: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: -0.55,
+  },
+  brandWordLarge: {
+    fontSize: 25,
   },
   brandMark: {
     alignItems: "center",

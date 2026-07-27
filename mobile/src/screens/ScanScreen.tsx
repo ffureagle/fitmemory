@@ -2,6 +2,7 @@ import { captureRef } from "react-native-view-shot";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   BackHandler,
   Image,
   Keyboard,
@@ -22,6 +23,16 @@ import {
   SectionTitle,
 } from "../components/Ui";
 import { createScanScript } from "../injectedScanner";
+import {
+  chartFromRecognizedText,
+  collectNativeScanEvidence,
+  nativeSizeOptions,
+  nativeAccessibilityEnabled,
+  openNativeAccessibilitySettings,
+  prepareNativeMeasurementPanel,
+  selectNativeSize,
+  snapshotWithChart,
+} from "../nativeScanner";
 import { useSession } from "../session";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
@@ -78,6 +89,7 @@ export function ScanScreen({
   const captureViewRef = useRef<View>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanOriginRef = useRef<string | null>(null);
+  const accessibilityPromptedRef = useRef(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -233,6 +245,25 @@ export function ScanScreen({
         "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
       );
     }, 35_000);
+    if (mode === "product") {
+      if (!accessibilityPromptedRef.current) {
+        accessibilityPromptedRef.current = true;
+        void nativeAccessibilityEnabled().then((enabled) => {
+          if (enabled !== false) return;
+          Alert.alert(
+            "Beden okuyucuyu etkinleştir",
+            "FitMemory yalnızca kendi mağaza tarayıcısındaki beden panellerini otomatik açmak için Android erişilebilirlik iznine ihtiyaç duyar. İzin verilmezse cihaz içi OCR ile devam eder.",
+            [
+              { text: "OCR ile devam", style: "cancel" },
+              { text: "Ayarları aç", onPress: openNativeAccessibilitySettings },
+            ],
+          );
+        });
+      }
+      void prepareNativeMeasurementPanel().then((opened) => {
+        if (opened) setStatus("Beden paneli erişilebilirlik katmanıyla açıldı");
+      });
+    }
     webViewRef.current?.injectJavaScript(createScanScript(mode));
   };
 
@@ -290,17 +321,67 @@ export function ScanScreen({
   ) => {
     if (!session.token || !session.account) return;
     setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
+    const options = await nativeSizeOptions();
+    const nativeRows: ProductSnapshot["sizeChart"]["rows"] = [];
+    let nativeHeaders: string[] = [];
+    for (const option of options.slice(0, 10)) {
+      if (!(await selectNativeSize(option))) continue;
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      const optionBase64 = await captureRef(captureViewRef, {
+        format: "jpg",
+        quality: 0.74,
+        result: "base64",
+      });
+      const optionEvidence = await collectNativeScanEvidence(`data:image/jpeg;base64,${optionBase64}`);
+      const optionChart = chartFromRecognizedText(
+        optionEvidence.ocrText,
+        `[selected] ${option}\n${optionEvidence.accessibilityText}\n${fallback.pageText}`,
+        optionEvidence.ocrLines,
+      );
+      const row = optionChart?.rows[0];
+      if (!row) continue;
+      if (!nativeHeaders.length) nativeHeaders = optionChart.headers;
+      const values = new Map(optionChart.headers.map((header, index) => [header, row.cells[index] ?? ""]));
+      nativeRows.push({ cells: nativeHeaders.map((header) => values.get(header) ?? "") });
+    }
+    if (nativeRows.length) {
+      await analyzeSnapshot(snapshotWithChart(fallback.product, {
+        found: true,
+        title: "Cihazda okunan ürün ölçüleri",
+        unit: "Centimeters",
+        headers: nativeHeaders,
+        rows: nativeRows,
+        rawText: nativeRows.map((row) => row.cells.join(" | ")).join("\n"),
+      }));
+      return;
+    }
+
     const base64 = await captureRef(captureViewRef, {
       format: "jpg",
       quality: 0.72,
       result: "base64",
     });
+    const imageDataUrl = `data:image/jpeg;base64,${base64}`;
+    const nativeEvidence = await collectNativeScanEvidence(imageDataUrl);
+    const localChart = chartFromRecognizedText(
+      nativeEvidence.ocrText,
+      `${nativeEvidence.accessibilityText}\n${fallback.pageText}`,
+      nativeEvidence.ocrLines,
+    );
+    if (localChart) {
+      setStatus("Ölçüler cihazda okundu, dolabınla karşılaştırılıyor");
+      await analyzeSnapshot(snapshotWithChart(fallback.product, localChart));
+      return;
+    }
+    setStatus("Cihaz kanıtı yetmedi, Vision AI tabloyu doğruluyor");
     const extracted = await session.api.extractProductMeasurements(
       session.account.userId,
       session.token,
       fallback.product,
       fallback.pageText,
-      `data:image/jpeg;base64,${base64}`,
+      imageDataUrl,
+      nativeEvidence.accessibilityText,
+      nativeEvidence.ocrText,
     );
     await analyzeSnapshot(extracted);
   };
@@ -1028,7 +1109,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     flexDirection: "row",
     gap: 9,
-    paddingBottom: Platform.OS === "ios" ? 24 : 24,
+    paddingBottom: Platform.OS === "ios" ? 8 : 8,
     paddingHorizontal: 12,
     paddingTop: 10,
   },
@@ -1125,7 +1206,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.blueSoft,
     borderTopColor: "#C8D5FF",
     borderTopWidth: 1,
-    bottom: Platform.OS === "ios" ? 86 : 72,
+    bottom: Platform.OS === "ios" ? 70 : 66,
     flexDirection: "row",
     gap: 9,
     left: 0,
@@ -1144,7 +1225,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderColor: colors.line,
     borderRadius: 18,
-    bottom: Platform.OS === "ios" ? 92 : 78,
+    bottom: Platform.OS === "ios" ? 76 : 72,
     left: 12,
     maxHeight: "60%",
     padding: 17,

@@ -68,7 +68,11 @@ public sealed class ProductCategoryService(
                 "t-shirt",
                 "t shirt",
                 " tee ",
-                "tee-shirt"))
+                "tee-shirt",
+                "polo yaka",
+                "polo shirt",
+                "polo t-shirt",
+                "jersey"))
         {
             return ProductCategoryGroup.Tees;
         }

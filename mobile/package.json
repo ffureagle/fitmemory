@@ -24,9 +24,10 @@
     "react-native-webview": "13.16.1"
   },
   "devDependencies": {
+    "@expo/config-plugins": "57.0.5",
     "@expo/ngrok": "4.1.0",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
   },
-  "packageManager": "pnpm@10.32.1"
+  "packageManager": "pnpm@11.9.0"
 }

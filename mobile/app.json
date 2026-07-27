@@ -36,6 +36,7 @@
       "permissions": []
     },
     "plugins": [
+      "./plugins/withFitMemoryScanner",
       [
         "expo-secure-store",
         {

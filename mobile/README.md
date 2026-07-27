@@ -1,5 +1,19 @@
 # FitMemory Mobil
 
+## Hibrit beden tablosu okuyucu
+
+Ürün taraması kanıt sırasıyla çalışır:
+
+1. Uygulama içi WebView DOM ve erişilebilirlik metni
+2. Android'de Google ML Kit, iOS'ta Apple Vision ile cihaz içi OCR
+3. İlk iki katman yeterli sayısal beden/ölçü eşleşmesi çıkaramazsa backend Vision AI
+
+Android AccessibilityService yalnız `com.mfurkangokbag.fitmemory` paketinin kendi uygulama içi mağaza
+tarayıcısıyla sınırlandırılmıştır; başka uygulamaların ekranını okuyamaz. Android beta APK kurulduktan
+sonra Ayarlar > Erişilebilirlik > FitMemory beden tablosu okuyucu seçeneği bir kez etkinleştirilmelidir.
+Expo Go özel native modülleri yükleyemediği için Expo Go testinde DOM + Vision AI hattı kullanılır;
+cihaz içi OCR ve AccessibilityService, EAS ile oluşturulan APK/IPA içinde etkinleşir.
+
 Expo SDK 57 tabanlı Android/iOS istemcisidir. Chrome uzantısıyla aynı backend
 hesabını kullanır; profil, dolap, uyum notları ve Kombin Stüdyosu iki cihazda
 aynı kalır.

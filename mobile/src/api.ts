@@ -229,13 +229,23 @@ export class FitMemoryApi {
     token: string,
     product: ProductSnapshot["product"],
     pageText: string,
-    screenshotDataUrl: string,
-  ) {
+      screenshotDataUrl: string,
+      accessibilityText = "",
+      ocrText = "",
+    ) {
     return this.request<ProductSnapshot>("/api/product-scans/vision", {
       method: "POST",
       token,
       timeoutMs: 100_000,
-      body: { userId, product, pageText, screenshotDataUrl, language: this.language },
+        body: {
+          userId,
+          product,
+          pageText,
+          screenshotDataUrl,
+          accessibilityText,
+          ocrText,
+          language: this.language,
+        },
     });
   }
 
