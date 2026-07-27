@@ -70,6 +70,18 @@ function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null
   };
 }
 
+function hasVerifiedNumericChart(chart: ProductSnapshot["sizeChart"] | null | undefined) {
+  if (!chart?.found || chart.headers.length < 2 || chart.rows.length < 1) return false;
+  return chart.rows.some((row) => {
+    const size = String(row.cells[0] ?? "").trim();
+    const validSize = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i.test(size);
+    const numericMeasurements = row.cells.slice(1).filter((value) =>
+      /^\s*\d{1,3}(?:[.,]\d+)?\s*(?:cm|in|inç)?\s*$/i.test(String(value ?? "")),
+    );
+    return validSize && numericMeasurements.length > 0;
+  });
+}
+
 function isAllowedShopUrl(value: string) {
   if (value === "about:blank") return true;
   try {
@@ -192,6 +204,9 @@ export function ScanScreen({
     setBrowserOpen(true);
     setError("");
     setStatus("");
+    // Render'in ucretsiz servisi uykuya girebilir. Kullanici magazada gezerken
+    // API'yi arka planda uyandir; tarama tusu bekleme suresini tasimasin.
+    void session.api.health().catch(() => undefined);
   };
 
   const goBackInBrowser = () => {
@@ -330,10 +345,14 @@ export function ScanScreen({
           session.token,
           fallback.product.url,
         );
-        if (agent.sizeTable.length > 0) {
+        const verifiedAgentRows = agent.sizeTable.filter((row) =>
+          /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i.test(row.size) &&
+          Object.values(row.measurements).some((value) => /\d/.test(String(value))),
+        );
+        if (verifiedAgentRows.length > 0) {
           const headers = [
             "Beden",
-            ...Array.from(new Set(agent.sizeTable.flatMap((row) => Object.keys(row.measurements)))),
+            ...Array.from(new Set(verifiedAgentRows.flatMap((row) => Object.keys(row.measurements)))),
           ].slice(0, 12);
           const agentSnapshot: ProductSnapshot = {
             product: {
@@ -347,13 +366,13 @@ export function ScanScreen({
               title: "Sunucu ajanı ürün ölçüleri",
               unit: "Centimeters",
               headers,
-              rows: agent.sizeTable.slice(0, 30).map((row) => ({
+              rows: verifiedAgentRows.slice(0, 30).map((row) => ({
                 cells: [
                   row.size,
                   ...headers.slice(1).map((header) => row.measurements[header] ?? ""),
                 ],
               })),
-              rawText: agent.sizeTable
+              rawText: verifiedAgentRows
                 .map((row) => `${row.size} | ${Object.entries(row.measurements).map(([key, value]) => `${key}: ${value}`).join(" | ")}`)
                 .join("\n")
                 .slice(0, 8000),
@@ -380,6 +399,11 @@ export function ScanScreen({
       fallback.pageText,
       `data:image/jpeg;base64,${base64}`,
     );
+    if (!hasVerifiedNumericChart(extracted.sizeChart)) {
+      throw new Error(
+        "Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.",
+      );
+    }
     await analyzeSnapshot(extracted);
   };
 

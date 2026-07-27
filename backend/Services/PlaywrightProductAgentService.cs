@@ -210,17 +210,37 @@ public sealed partial class PlaywrightProductAgentService(
     private static async Task OpenSizeUiAsync(IPage page, string domain, CancellationToken token)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(9);
+        if (domain == "zara.com")
+        {
+            var measurementsTab = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions
+            {
+                Name = "Ölçüler",
+                Exact = true
+            }).Last;
+            if (await SafeVisibleAsync(measurementsTab))
+            {
+                await SafeActivateAsync(measurementsTab);
+                await Task.Delay(650, token);
+            }
+        }
+
         var addPatterns = domain == "pullandbear.com"
             ? new[] { "Ekle", "Sepete ekle", "Add", "Add to bag" }
             : new[] { "Ekle", "Add", "Choose size", "Beden seç" };
         foreach (var pattern in addPatterns)
         {
             token.ThrowIfCancellationRequested();
-            var locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
+            var locator = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions
+            {
+                Name = pattern,
+                Exact = true
+            }).Last;
+            if (!await SafeVisibleAsync(locator))
+                locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
             if (await SafeVisibleAsync(locator))
             {
                 await SafeActivateAsync(locator);
-                await Task.Delay(250, token);
+                await Task.Delay(500, token);
                 break;
             }
         }
@@ -229,14 +249,20 @@ public sealed partial class PlaywrightProductAgentService(
             token.ThrowIfCancellationRequested();
             foreach (var pattern in new[]
             {
-                "Ölçüleri görüntüle", "Ölçüleri gör", "Ürün boyutları", "Ölçüler",
+                "Ölçüleri görüntüle", "Ölçüleri gör", "Ürün boyutları", "Ölçüler", "ÖLÇÜLERİ GÖR",
                 "Size guide", "Product measurements", "Measurements"
             })
             {
-                var locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
+                var locator = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions
+                {
+                    Name = pattern,
+                    Exact = true
+                }).Last;
+                if (!await SafeVisibleAsync(locator))
+                    locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
                 if (!await SafeVisibleAsync(locator)) continue;
                 await SafeActivateAsync(locator);
-                await Task.Delay(300, token);
+                await Task.Delay(700, token);
                 return;
             }
             await Task.Delay(100, token);
@@ -269,12 +295,12 @@ public sealed partial class PlaywrightProductAgentService(
         {
             labels = await page.EvaluateAsync<string[]>("""
                 () => {
-                  const size=/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i;
+                  const normalizeSize=v=>{const t=String(v||'').trim().toUpperCase();return (t.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)||[])[1]||(t.match(/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)||[])[1]||''};
                   const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=='none'&&s.visibility!=='hidden'};
                   const scopes=[...document.querySelectorAll('[role=dialog],aside,[class*="drawer" i],[class*="sheet" i],[class*="modal" i],[class*="size-guide" i]')].filter(visible);
                   const root=scopes.at(-1)||document;
-                  return [...new Set([...root.querySelectorAll('button,[role=radio],[role=option],[role=button],li,label')]
-                    .filter(visible).map(e=>(e.innerText||e.textContent||'').trim().toUpperCase()).filter(v=>size.test(v)))].slice(0,12);
+                  return [...new Set([...root.querySelectorAll('button,[role=radio],[role=option],[role=button],[role=tab],li,label')]
+                    .filter(visible).map(e=>normalizeSize(e.innerText||e.textContent)).filter(Boolean))].slice(0,12);
                 }
                 """);
         }
@@ -294,8 +320,9 @@ public sealed partial class PlaywrightProductAgentService(
                       const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=='none'&&s.visibility!=='hidden'};
                       const scopes=[...document.querySelectorAll('[role=dialog],aside,[class*="drawer" i],[class*="sheet" i],[class*="modal" i],[class*="size-guide" i]')].filter(visible);
                       const root=scopes.at(-1)||document;
-                      const target=[...root.querySelectorAll('button,[role=radio],[role=option],[role=button],li,label')]
-                        .find(e=>visible(e)&&(e.innerText||e.textContent||'').trim().toUpperCase()===String(size).toUpperCase());
+                      const normalizeSize=v=>{const t=String(v||'').trim().toUpperCase();return (t.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)||[])[1]||(t.match(/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)||[])[1]||''};
+                      const target=[...root.querySelectorAll('button,[role=radio],[role=option],[role=button],[role=tab],li,label')]
+                        .find(e=>visible(e)&&normalizeSize(e.innerText||e.textContent)===String(size).toUpperCase());
                       if(!target)return false;
                       target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'touch'}));
                       target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'touch'}));
@@ -369,10 +396,15 @@ public sealed partial class PlaywrightProductAgentService(
             for(const x of Object.values(v)){const y=findProduct(x);if(y)return y;} return null; };
           for(const s of scripts){try{product=findProduct(JSON.parse(s.textContent||''))||product;}catch{}}
           const sizeRx=/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i;
+          const normalizeSize = value => {
+            const v=clean(value).toUpperCase();
+            return (v.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)||[])[1] ||
+              (v.match(/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)||[])[1] || '';
+          };
           const sizes=[]; const unavailable=[];
-          for(const e of all('button,[role=option],[role=radio],li,label')){
-            if(!visible(e))continue; const value=clean(e.innerText||e.textContent).toUpperCase();
-            if(!sizeRx.test(value))continue; const disabled=e.disabled||e.getAttribute('aria-disabled')==='true'||/disabled|sold|tukendi/i.test(e.className+' '+e.innerText);
+          for(const e of all('button,[role=option],[role=radio],[role=tab],li,label')){
+            if(!visible(e))continue; const value=normalizeSize(e.innerText||e.textContent);
+            if(!value)continue; const disabled=e.disabled||e.getAttribute('aria-disabled')==='true'||/disabled|sold|tukendi/i.test(e.className+' '+e.innerText);
             (disabled?unavailable:sizes).push(value);
           }
           const metricRx=/göğüs|gogus|chest|bust|omuz|shoulder|bel|waist|kalça|kalca|basen|hip|uzunluk|length|kol|sleeve|inseam|uyluk|thigh|paça|paca|rise/i;
@@ -380,12 +412,45 @@ public sealed partial class PlaywrightProductAgentService(
           for(const table of all('table,[role=table]')){
             if(!visible(table))continue; const rows=[...table.querySelectorAll('tr,[role=row]')].map(r=>[...r.querySelectorAll('th,td,[role=cell],[role=columnheader]')].map(c=>clean(c.innerText||c.textContent))).filter(r=>r.length>1);
             if(rows.length<2)continue; const headers=rows[0];
-            for(const row of rows.slice(1)){ const size=row[0]; if(!sizeRx.test(size))continue; const measurements={};
+            for(const row of rows.slice(1)){ const size=normalizeSize(row[0]); if(!size)continue; const measurements={};
               for(let i=1;i<row.length;i++) if(row[i]&&headers[i]) measurements[headers[i]]=row[i];
               if(Object.keys(measurements).length)sizeTable.push({size,measurements}); }
           }
           if(!sizeTable.length){
-            const selected=all('[aria-selected=true],[aria-checked=true],[aria-pressed=true],.selected,.active').map(e=>clean(e.innerText||e.textContent).toUpperCase()).find(v=>sizeRx.test(v))||sizes[0]||'';
+            const candidates=all('[role=tabpanel],[role=dialog],section,aside,div').filter(visible).map(scope=>{
+              const t=clean(scope.innerText||scope.textContent);
+              const r=scope.getBoundingClientRect();
+              const metricHits=(t.match(/göğüs|gogus|chest|bust|omuz|shoulder|bel|waist|kalça|kalca|basen|hip|uzunluk|length|kol|sleeve|inseam|uyluk|thigh|paça|paca|rise/gi)||[]).length;
+              const numberHits=(t.match(/\b\d{1,3}(?:[.,]\d+)?\b/g)||[]).length;
+              return {scope,t,r,metricHits,numberHits};
+            }).filter(x=>x.t.length<8000&&x.metricHits>0&&x.numberHits>1)
+              .sort((a,b)=>(a.r.width*a.r.height)-(b.r.width*b.r.height));
+            const scope=candidates[0]?.scope;
+            if(scope){
+              const leaves=[...scope.querySelectorAll('*')].filter(e=>visible(e)&&e.childElementCount===0)
+                .map(e=>({e,t:clean(e.innerText||e.textContent),r:e.getBoundingClientRect()}))
+                .filter(x=>x.t&&x.t.length<70);
+              const headers=[];
+              for(const leaf of leaves){
+                const size=normalizeSize(leaf.t); if(!size)continue;
+                if(!headers.some(h=>h.size===size))headers.push({size,x:leaf.r.left+leaf.r.width/2,y:leaf.r.top+leaf.r.height/2});
+              }
+              const metrics=leaves.filter(x=>metricRx.test(x.t)&&!normalizeSize(x.t));
+              const numbers=leaves.filter(x=>/^\d{1,3}(?:[.,]\d+)?(?:\s*(?:cm|in|inç))?$/i.test(x.t));
+              for(const header of headers){
+                const measurements={};
+                for(const metric of metrics){
+                  const my=metric.r.top+metric.r.height/2;
+                  const value=numbers.filter(n=>Math.abs((n.r.top+n.r.height/2)-my)<34)
+                    .sort((a,b)=>Math.abs((a.r.left+a.r.width/2)-header.x)-Math.abs((b.r.left+b.r.width/2)-header.x))[0];
+                  if(value&&Math.abs((value.r.left+value.r.width/2)-header.x)<150)measurements[metric.t]=value.t;
+                }
+                if(Object.keys(measurements).length)sizeTable.push({size:header.size,measurements});
+              }
+            }
+          }
+          if(!sizeTable.length){
+            const selected=all('[aria-selected=true],[aria-checked=true],[aria-pressed=true],.selected,.active').map(e=>normalizeSize(e.innerText||e.textContent)).find(Boolean)||sizes[0]||'';
             const measurements={};
             for(const e of all('tr,li,div,p,dl')){if(!visible(e))continue;const t=clean(e.innerText||e.textContent);if(t.length>160||!metricRx.test(t))continue;
               const m=t.match(/(.{2,45}?)\s+(\d{1,3}(?:[.,]\d+)?)(?:\s*(?:cm|in|inç))?$/i);if(m)measurements[clean(m[1])]=m[2];}
@@ -458,7 +523,7 @@ public sealed partial class PlaywrightProductAgentService(
             for (var index = 1; index < cells.Count && index < chart.Headers.Count; index++)
                 measurements[chart.Headers[index]] = cells[index];
             return new AgentSizeTableRow(cells.FirstOrDefault() ?? "", measurements);
-        }).Where(row => row.Measurements.Count > 0).ToList();
+        }).Where(row => IsSize(row.Size) && row.Measurements.Values.Any(HasNumericValue)).ToList();
         return evidence;
     }
 
@@ -508,7 +573,11 @@ public sealed partial class PlaywrightProductAgentService(
     }
 
     private static bool HasUsableSizeTable(PageEvidence evidence) =>
-        evidence.SizeTable.Any(row => row.Measurements.Count > 0);
+        evidence.SizeTable.Any(row =>
+            IsSize(row.Size) && row.Measurements.Values.Any(HasNumericValue));
+
+    private static bool HasNumericValue(string value) =>
+        Regex.IsMatch(value ?? "", @"\d{1,3}(?:[.,]\d+)?");
 
     private static bool TryValidateUrl(string value, out Uri uri, out string domain)
     {

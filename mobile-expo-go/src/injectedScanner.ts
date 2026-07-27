@@ -299,7 +299,9 @@ const scannerBootstrap = String.raw`
     element.getAttribute?.("data-testid") || ""
   );
   const clickable = (element) =>
-    element?.closest?.("button, a, [role='button'], [role='radio'], [role='option'], summary") || element;
+    element?.closest?.(
+      "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary"
+    ) || element;
   const clickElement = async (element) => {
     const target = clickable(element);
     if (!target) return false;
@@ -333,7 +335,7 @@ const scannerBootstrap = String.raw`
     return true;
   };
   const findShortTextControl = (pattern) => all(
-    "button, a, [role='button'], [role='radio'], [role='option'], summary, " +
+    "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
     "[data-testid], [data-qa], [aria-label], span, div"
   ).filter(visible).map((element) => ({
     element,
@@ -344,7 +346,7 @@ const scannerBootstrap = String.raw`
       left.element.childElementCount - right.element.childElementCount
     )[0]?.element || null;
   const findExactControl = (pattern) => all(
-    "button, [role='button'], input[type='button'], input[type='submit'], a, [data-testid], [data-qa]"
+    "button, [role='button'], [role='tab'], input[type='button'], input[type='submit'], a, [data-testid], [data-qa]"
   ).filter(visible).map((element) => ({
     element,
     text: clean(element.value || element.getAttribute?.("aria-label") || ownText(element) || controlText(element))
@@ -393,7 +395,7 @@ const scannerBootstrap = String.raw`
     /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
   const findMeasurementTrigger = () =>
     all(
-      "button, a, [role='button'], summary, [data-testid*='measure' i], " +
+      "button, a, [role='button'], [role='tab'], summary, [data-testid*='measure' i], " +
       "[data-qa*='measure' i], [aria-label*='ölç' i], " +
       "[aria-label*='size guide' i], [class*='measure' i], span, div"
     ).filter(visible).map((element) => ({
@@ -411,6 +413,7 @@ const scannerBootstrap = String.raw`
   const sizeLabelFromText = (value) => {
     const text = clean(value).toUpperCase();
     return text.match(/^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)?.[1]?.toUpperCase() ||
+      text.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)?.[1] ||
       text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3})\)/i)?.[1]?.toUpperCase() || "";
   };
   const selectedSizeEvidence = () => all(
@@ -490,6 +493,26 @@ const scannerBootstrap = String.raw`
     }
     return result.slice(0, 24);
   }
+  const findSizePanel = () => {
+    const candidates = all(
+      "[role='dialog'], [role='tabpanel'], aside, " +
+      "[class*='drawer' i], [class*='sheet' i], [class*='modal' i], " +
+      "[class*='size-selector' i], [class*='sizeSelector' i], " +
+      "[class*='size-guide' i], [class*='sizeguide' i], [class*='product-size' i]"
+    ).filter(visible).map((panel) => {
+      const text = fold(panelText(panel));
+      const buttons = findSizeButtons(panel);
+      const signal = /beden sec|choose size|select size|olculer|measurements?|size guide/.test(text);
+      return {
+        panel,
+        buttons,
+        score: buttons.length * 12 + (signal ? 25 : 0) - Math.min(text.length / 4000, 4)
+      };
+    }).filter((candidate) => candidate.buttons.length >= 2)
+      .sort((left, right) => right.score - left.score);
+    if (candidates[0]) return candidates[0].panel;
+    return findSizeButtons(document).length >= 3 ? document.body : null;
+  };
   const selectedSizeButton = (button) => {
     if (!button) return false;
     if (button.getAttribute("aria-checked") === "true" ||
@@ -502,12 +525,7 @@ const scannerBootstrap = String.raw`
     ].join(" ")));
   };
   const sizeDrawerVisible = () => {
-    if (findMeasurementTrigger()) return true;
-    const drawer = all(
-      "[role='dialog'], aside, [class*='drawer' i], [class*='sheet' i], " +
-      "[class*='modal' i], [class*='size-selector' i], [class*='sizeSelector' i]"
-    ).filter(visible).find((element) => findSizeButtons(element).length >= 2);
-    return drawer || (findSizeButtons(document).length >= 3 ? document.body : null);
+    return findSizePanel();
   };
   const activatePullSizeDrawer = async () => {
     let candidates = pullAddCandidates();
@@ -529,6 +547,7 @@ const scannerBootstrap = String.raw`
     return null;
   };
   const openSizeGuide = async () => {
+    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
     if (tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
       return panel && extractMeasurements(panel).length > 0;
@@ -536,8 +555,8 @@ const scannerBootstrap = String.raw`
       guideStage = "Ölçü paneli açık";
       return true;
     }
-    let measurement = findMeasurementTrigger();
-    if (measurement && await clickElement(measurement)) {
+    let measurement = isPullAndBear ? null : findMeasurementTrigger();
+    if (!isPullAndBear && measurement && await clickElement(measurement)) {
       guideStage = "Ölçüleri görüntüle tıklandı";
       progress(guideStage);
        const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
@@ -546,7 +565,6 @@ const scannerBootstrap = String.raw`
        })(), 10000, 500);
       if (panel) return true;
     }
-    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
     const addControl = isPullAndBear
       ? null
       : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
@@ -560,7 +578,7 @@ const scannerBootstrap = String.raw`
       if (drawer) {
         guideStage = "Pull&Bear beden paneli açıldı";
         progress(guideStage);
-        measurement = await waitFor(() => findMeasurementTrigger(), 3500, 70);
+        measurement = await waitFor(() => findMeasurementTrigger(), 6500, 70);
         if (measurement && await clickElement(measurement)) {
           guideStage = "Ölçüleri görüntüle tıklandı";
           progress(guideStage);
@@ -693,6 +711,9 @@ const scannerBootstrap = String.raw`
       }).sort((a, b) => b.rect.bottom - a.rect.bottom);
       return sizeLabelFromText(candidates[0]?.text) || "Beden " + (index + 1);
     });
+    // Kolon basligi gercek bir beden degilse tabloyu uydurma etiketlerle kabul etme.
+    // Bu, Zara urun gridlerinde "Beden 1" gibi sahte satirlarin AI'a gitmesini engeller.
+    if (sizes.some((size) => /^Beden\s/i.test(size))) return null;
     const headers = ["Beden", ...metricRows.map((row) => normalizeMeasurementLabel(row.metric.text))];
     const rows = sizes.map((size, index) => ({ cells: [size, ...metricRows.map((row) => row.values[index]?.text.replace(",", ".") || "")] }))
       .filter((row) => row.cells.slice(1).some(Boolean));
@@ -746,7 +767,8 @@ const scannerBootstrap = String.raw`
     const measurements = extractMeasurements(scope);
     if (!measurements.length) return null;
     const selectedButton = findSizeButtons(document).find(selectedSizeButton);
-    const size = sizeLabelFromText(controlText(selectedButton)) || sizeLabelFromText(selected) || "Bilinmiyor";
+    const size = sizeLabelFromText(controlText(selectedButton)) || sizeLabelFromText(selected);
+    if (!size) return null;
     const headers = ["Beden", ...measurements.map((item) => item.label)];
     const row = { cells: [size, ...measurements.map((item) => item.value)] };
     return {
@@ -759,38 +781,39 @@ const scannerBootstrap = String.raw`
     };
   };
   const measureSignature = () => {
-    const panel = findMeasurePanel();
+    const panel = findMeasurePanel() || findSizePanel();
     if (!panel) return "";
     return extractMeasurements(panel).map((item) => item.label + ":" + item.value).join("|") || panelText(panel).slice(0, 1000);
   };
   const panelChart = async () => {
-    let panel = findMeasurePanel();
+    let panel = findMeasurePanel() || findSizePanel();
     if (!panel) return null;
     const availableButtons = () => {
       const local = findSizeButtons(panel);
       return local.length ? local : findSizeButtons(document);
     };
     const initial = availableButtons().find(selectedSizeButton);
-    const initialLabel = clean(initial?.innerText || initial?.textContent).toUpperCase();
+    const initialLabel = sizeLabelFromText(controlText(initial));
     const labels = availableButtons()
-      .map((button) => clean(button.innerText || button.textContent).toUpperCase())
-      .filter(size => sizePattern.test(size))
+      .map((button) => sizeLabelFromText(controlText(button)))
+      .filter(Boolean)
       .filter((size, index, values) => values.indexOf(size) === index);
     const records = [];
     let headers = null;
-    const targets = labels.length ? labels : [initialLabel || "Bilinmiyor"];
+    const targets = labels;
+    if (!targets.length) return null;
     for (const size of targets.slice(0, 10)) {
-      panel = findMeasurePanel() || panel;
+      panel = findMeasurePanel() || findSizePanel() || panel;
       const localButtons = findSizeButtons(panel);
       const button = (localButtons.length ? localButtons : findSizeButtons(document)).find((candidate) =>
-        clean(candidate.innerText || candidate.textContent).toUpperCase() === size);
+        sizeLabelFromText(controlText(candidate)) === size);
       if (button && !selectedSizeButton(button)) {
         const before = measureSignature();
         await clickElement(button);
         await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 1100, 55);
         await waitForStable(() => measureSignature(), 1500, 220);
       }
-      panel = findMeasurePanel() || panel;
+      panel = findMeasurePanel() || findSizePanel() || panel;
       const measurements = extractMeasurements(panel);
       if (!measurements.length) continue;
       headers ||= ["Beden", ...measurements.map((item) => item.label)];
@@ -800,13 +823,13 @@ const scannerBootstrap = String.raw`
       });
     }
     if (initialLabel) {
-      panel = findMeasurePanel() || panel;
+      panel = findMeasurePanel() || findSizePanel() || panel;
        const restoreButtons = findSizeButtons(panel);
        const restore = (restoreButtons.length ? restoreButtons : findSizeButtons(document)).find((button) =>
-        clean(button.innerText || button.textContent).toUpperCase() === initialLabel);
+        sizeLabelFromText(controlText(button)) === initialLabel);
       if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
-    const finalText = panelText(findMeasurePanel() || panel);
+    const finalText = panelText(findMeasurePanel() || findSizePanel() || panel);
     if (!records.length || !headers) return null;
     return {
       found: true,

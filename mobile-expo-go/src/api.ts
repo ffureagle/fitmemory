@@ -278,7 +278,7 @@ export class FitMemoryApi {
     return this.request<ProductAgentResult>("/api/product-scans/agent", {
       method: "POST",
       token,
-      timeoutMs: 45_000,
+      timeoutMs: 120_000,
       retries: 1,
       body: {
         url,
