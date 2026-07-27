@@ -309,18 +309,26 @@ const scannerBootstrap = String.raw`
           !href.toLowerCase().startsWith("javascript:")) return false;
     }
     target.scrollIntoView?.({ block: "center", inline: "center" });
-    await sleep(100);
+    await sleep(35);
     try { target.focus?.({ preventScroll: true }); } catch {}
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+    for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
       try {
-        target.dispatchEvent(new MouseEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        }));
+        const event = type.startsWith("pointer") && typeof PointerEvent !== "undefined"
+          ? new PointerEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 1,
+              pointerType: "touch",
+              isPrimary: true
+            })
+          : type.startsWith("touch")
+            ? new Event(type, { bubbles: true, cancelable: true })
+            : new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
+        target.dispatchEvent(event);
       } catch {}
     }
     try { target.click?.(); } catch {}
+    await sleep(45);
     roots(true);
     return true;
   };
@@ -344,6 +352,43 @@ const scannerBootstrap = String.raw`
     .sort((left, right) => left.text.length - right.text.length)[0]?.element || null;
   const findExactVisibleTextControl = (pattern) =>
     findExactControl(pattern) || findShortTextControl(pattern);
+  const addPattern = /^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i;
+  const pullAddCandidates = () => {
+    const candidates = all(
+      "button, [role='button'], input[type='button'], input[type='submit'], " +
+      "[data-testid], [data-qa], [class*='add' i], [class*='cart' i]"
+    ).filter(visible).map((element) => {
+      const own = fold(clean(element.value || ownText(element)));
+      const full = fold(controlText(element));
+      const attributes = fold(clean([
+        element.getAttribute?.("data-testid"),
+        element.getAttribute?.("data-qa"),
+        element.getAttribute?.("name"),
+        element.id,
+        element.className
+      ].join(" ")));
+      const rect = element.getBoundingClientRect();
+      let score = 0;
+      if (/^(ekle|sepete ekle|add|add to bag|add to basket)$/.test(own)) score += 100;
+      if (addPattern.test(full)) score += 55;
+      if (/(add.to.cart|add.to.bag|add.product|product.add|add-button|addtocart)/.test(attributes)) score += 45;
+      if (rect.width > innerWidth * 0.45 && rect.height >= 34) score += 15;
+      if (/(stil|style|favori|favorite|wishlist|benzer)/.test(own + " " + full)) score -= 100;
+      return { element, score, top: rect.top };
+    }).filter((candidate) => candidate.score >= 45);
+    const textFallback = findExactVisibleTextControl(addPattern);
+    if (textFallback) {
+      candidates.push({
+        element: textFallback,
+        score: 90,
+        top: textFallback.getBoundingClientRect().top
+      });
+    }
+    candidates.sort((left, right) => right.score - left.score || right.top - left.top);
+    const seen = new Set();
+    return candidates.map((candidate) => clickable(candidate.element))
+      .filter((element) => element && !seen.has(element) && seen.add(element));
+  };
   const measurementPattern =
     /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
   const findMeasurementTrigger = () =>
@@ -456,6 +501,33 @@ const scannerBootstrap = String.raw`
       button.className
     ].join(" ")));
   };
+  const sizeDrawerVisible = () => {
+    if (findMeasurementTrigger()) return true;
+    const drawer = all(
+      "[role='dialog'], aside, [class*='drawer' i], [class*='sheet' i], " +
+      "[class*='modal' i], [class*='size-selector' i], [class*='sizeSelector' i]"
+    ).filter(visible).find((element) => findSizeButtons(element).length >= 2);
+    return drawer || (findSizeButtons(document).length >= 3 ? document.body : null);
+  };
+  const activatePullSizeDrawer = async () => {
+    let candidates = pullAddCandidates();
+    if (!candidates.length) {
+      guideStage = "Pull&Bear ürün aksiyonları bekleniyor";
+      progress(guideStage);
+      await waitFor(() => {
+        candidates = pullAddCandidates();
+        return candidates.length ? candidates : null;
+      }, 8500, 100);
+    }
+    for (const candidate of candidates.slice(0, 4)) {
+      guideStage = "Pull&Bear Ekle düğmesi açılıyor";
+      progress(guideStage);
+      await clickElement(candidate);
+      const opened = await waitFor(() => sizeDrawerVisible(), 2400, 60);
+      if (opened) return opened;
+    }
+    return null;
+  };
   const openSizeGuide = async () => {
     if (tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
@@ -476,19 +548,45 @@ const scannerBootstrap = String.raw`
     }
     const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
     const addControl = isPullAndBear
-      ? findExactVisibleTextControl(/^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i)
+      ? null
       : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
-        ? findExactVisibleTextControl(/^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i)
+        ? findExactVisibleTextControl(addPattern)
         : null;
     const sizeControl = findExactVisibleTextControl(
       /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^beden$|^size$/i
     );
-    const opener = isPullAndBear ? addControl : (sizeControl || addControl);
+    if (isPullAndBear) {
+      const drawer = await activatePullSizeDrawer();
+      if (drawer) {
+        guideStage = "Pull&Bear beden paneli açıldı";
+        progress(guideStage);
+        measurement = await waitFor(() => findMeasurementTrigger(), 3500, 70);
+        if (measurement && await clickElement(measurement)) {
+          guideStage = "Ölçüleri görüntüle tıklandı";
+          progress(guideStage);
+          const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
+            const found = findMeasurePanel();
+            return found && extractMeasurements(found).length > 0;
+          })(), 8500, 260);
+          if (panel) return true;
+        }
+        guideStage = measurement
+          ? "Ölçü bağlantısı açıldı ancak sayısal tablo oluşmadı"
+          : "Beden paneli açıldı ancak Ölçüleri görüntüle bulunamadı";
+      } else {
+        guideStage = "Pull&Bear Ekle düğmesi açılmadı";
+      }
+      return Boolean(tableChart() || geometryChart() || visiblePanelChart() || (() => {
+        const panel = findMeasurePanel();
+        return panel && extractMeasurements(panel).length > 0;
+      })());
+    }
+    const opener = sizeControl || addControl;
     if (opener) {
-      guideStage = isPullAndBear ? "Ekle düğmesi bulundu" : "Beden seçici bulundu";
+      guideStage = "Beden seçici bulundu";
       progress(guideStage);
       await clickElement(opener);
-      guideStage = isPullAndBear ? "Ekle tıklandı, ölçü bağlantısı bekleniyor" : "Beden paneli açılıyor";
+      guideStage = "Beden paneli açılıyor";
       progress(guideStage);
       measurement = await waitFor(() => findMeasurementTrigger(), 6000, 180);
       if (measurement && await clickElement(measurement)) {
@@ -504,9 +602,7 @@ const scannerBootstrap = String.raw`
         ? "Ölçü bağlantısı tıklandı ancak tablo oluşmadı"
         : "Ekle açıldı ancak Ölçüleri görüntüle bulunamadı";
     } else {
-      guideStage = isPullAndBear
-        ? "Sayfadaki Ekle düğmesi bulunamadı"
-        : "Beden seçici bulunamadı";
+      guideStage = "Beden seçici bulunamadı";
     }
     return Boolean(tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
@@ -691,8 +787,8 @@ const scannerBootstrap = String.raw`
       if (button && !selectedSizeButton(button)) {
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 2400, 120);
-        await waitForStable(() => measureSignature(), 3200, 500);
+        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 1100, 55);
+        await waitForStable(() => measureSignature(), 1500, 220);
       }
       panel = findMeasurePanel() || panel;
       const measurements = extractMeasurements(panel);
