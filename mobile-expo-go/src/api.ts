@@ -13,6 +13,23 @@ import type {
   WardrobeOutfit,
 } from "./types";
 
+export type ProductAgentResult = {
+  requestId: string;
+  url: string;
+  brand: string;
+  productName: string;
+  availableSizes: string[];
+  unavailableSizes: string[];
+  sizeChartUrl: string;
+  sizeTable: { size: string; measurements: Record<string, string> }[];
+  fitDescription: string;
+  confidence: number;
+  source: "DOM" | "JSON-LD" | "XHR" | "VISION" | "IFRAME" | "SHADOW";
+  notes: string[];
+  extractionTimeMs: number;
+  extractionStatusCode: number;
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -254,6 +271,22 @@ export class FitMemoryApi {
       timeoutMs: 100_000,
       retries: 1,
       body: { userId, product, pageText, screenshotDataUrl, language: this.language },
+    });
+  }
+
+  extractProductWithAgent(token: string, url: string) {
+    return this.request<ProductAgentResult>("/api/product-scans/agent", {
+      method: "POST",
+      token,
+      timeoutMs: 45_000,
+      retries: 1,
+      body: {
+        url,
+        requestId: `mobile-${Date.now()}`,
+        sourcePlatform: "mobile-webview",
+        language: this.language,
+        maxWaitMs: 22_000,
+      },
     });
   }
 

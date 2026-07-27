@@ -222,6 +222,7 @@ builder.Services.AddSingleton<ProductIdentityService>();
 builder.Services.AddSingleton<ProductCategoryService>();
 builder.Services.AddSingleton<ProductFitTaxonomyService>();
 builder.Services.AddSingleton<RegionalFitFeedbackService>();
+builder.Services.AddSingleton<PlaywrightProductAgentService>();
 builder.Services.AddSingleton<WardrobeStylistService>();
 builder.Services.AddSingleton<LocalFitRecommendationEngine>();
 builder.Services.AddSingleton<ArchivedFitAssessmentService>();

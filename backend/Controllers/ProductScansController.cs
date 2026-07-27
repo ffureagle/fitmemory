@@ -9,8 +9,18 @@ namespace FitMemory.Api.Controllers;
 [ApiController]
 [Route("api/product-scans")]
 [Authorize]
-public sealed class ProductScansController(GeminiProductScanClient scanner) : ControllerBase
+public sealed class ProductScansController(
+    GeminiProductScanClient scanner,
+    PlaywrightProductAgentService productAgent) : ControllerBase
 {
+    [HttpPost("agent")]
+    public async Task<ActionResult<AgentProductScanResponse>> Agent(
+        AgentProductScanRequest request,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await productAgent.ExtractAsync(request, cancellationToken));
+    }
+
     [HttpPost("vision")]
     public async Task<ActionResult<VisionProductScanResponse>> Vision(
         VisionProductScanRequest request,

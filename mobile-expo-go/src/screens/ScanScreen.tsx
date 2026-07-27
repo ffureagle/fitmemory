@@ -323,6 +323,50 @@ export function ScanScreen({
       });
       return;
     }
+    if (/^https:\/\/(?:[^/]+\.)?(?:pullandbear|zara)\.com(?:\/|$)/i.test(fallback.product.url)) {
+      setStatus("Mağazanın beden verisi güvenli sunucu ajanıyla okunuyor");
+      try {
+        const agent = await session.api.extractProductWithAgent(
+          session.token,
+          fallback.product.url,
+        );
+        if (agent.sizeTable.length > 0) {
+          const headers = [
+            "Beden",
+            ...Array.from(new Set(agent.sizeTable.flatMap((row) => Object.keys(row.measurements)))),
+          ].slice(0, 12);
+          const agentSnapshot: ProductSnapshot = {
+            product: {
+              ...fallback.product,
+              brand: agent.brand || fallback.product.brand,
+              name: agent.productName || fallback.product.name,
+              fitLabel: agent.fitDescription || fallback.product.fitLabel,
+            },
+            sizeChart: {
+              found: true,
+              title: "Sunucu ajanı ürün ölçüleri",
+              unit: "Centimeters",
+              headers,
+              rows: agent.sizeTable.slice(0, 30).map((row) => ({
+                cells: [
+                  row.size,
+                  ...headers.slice(1).map((header) => row.measurements[header] ?? ""),
+                ],
+              })),
+              rawText: agent.sizeTable
+                .map((row) => `${row.size} | ${Object.entries(row.measurements).map(([key, value]) => `${key}: ${value}`).join(" | ")}`)
+                .join("\n")
+                .slice(0, 8000),
+            },
+            capturedAt: new Date().toISOString(),
+          };
+          await analyzeSnapshot(agentSnapshot);
+          return;
+        }
+      } catch {
+        // Sunucu ajanı başarısız olduğunda mevcut cihaz içi Vision zinciri devam eder.
+      }
+    }
     setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
     const base64 = await captureRef(captureViewRef, {
       format: "jpg",
