@@ -7,11 +7,11 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "icon": "./assets/icon.png",
+    "icon": "./assets/fitmemory-logo.png",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/fitmemory-logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F3F1EA"
+      "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
@@ -30,8 +30,8 @@
       "package": "com.mfurkangokbag.fitmemory",
       "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#F3F1EA"
+        "foregroundImage": "./assets/fitmemory-logo.png",
+        "backgroundColor": "#000000"
       },
       "permissions": []
     },

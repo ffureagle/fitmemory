@@ -16,7 +16,14 @@
     "https://*/*"
   ],
   "action": {
-    "default_title": "FitMemory yan panelini aç"
+    "default_title": "FitMemory yan panelini aç",
+    "default_icon": "fitmemory-logo.png"
+  },
+  "icons": {
+    "16": "fitmemory-logo.png",
+    "32": "fitmemory-logo.png",
+    "48": "fitmemory-logo.png",
+    "128": "fitmemory-logo.png"
   },
   "side_panel": {
     "default_path": "popup.html"
@@ -40,7 +47,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "styles.css"
+        "styles.css",
+        "fitmemory-logo.png"
       ],
       "matches": [
         "http://*/*",

@@ -224,6 +224,21 @@ export class FitMemoryApi {
     });
   }
 
+  extractProductMeasurements(
+    userId: string,
+    token: string,
+    product: ProductSnapshot["product"],
+    pageText: string,
+    screenshotDataUrl: string,
+  ) {
+    return this.request<ProductSnapshot>("/api/product-scans/vision", {
+      method: "POST",
+      token,
+      timeoutMs: 100_000,
+      body: { userId, product, pageText, screenshotDataUrl, language: this.language },
+    });
+  }
+
   importOrders(
     userId: string,
     token: string,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -57,6 +57,7 @@ export function StudioScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const selectionVersions = useRef(new Map<number, number>());
 
   const groups = useMemo(() => {
     const map = new Map<string, StyleBoardItem[]>();
@@ -79,22 +80,32 @@ export function StudioScreen() {
   const selectItem = async (item: StyleBoardItem) => {
     if (!session.token || !session.account) return;
     setError("");
+    const before = session.styleBoard;
+    const itemSlot = slot(item);
+    const nextSelected = !item.isSelected;
+    const version = (selectionVersions.current.get(item.id) ?? 0) + 1;
+    selectionVersions.current.set(item.id, version);
+    setAnalysis(null);
+    session.updateStyleBoard(before.map((candidate) =>
+      candidate.id === item.id
+        ? { ...candidate, isSelected: nextSelected }
+        : nextSelected && slot(candidate) === itemSlot
+          ? { ...candidate, isSelected: false }
+          : candidate,
+    ));
     try {
       const updated = await session.api.selectStyleBoardItem(
         item.id,
         session.account.userId,
         session.token,
       );
-      setAnalysis(null);
-      const itemSlot = slot(item);
-      session.updateStyleBoard(session.styleBoard.map((candidate) =>
-        candidate.id === item.id
-          ? { ...candidate, isSelected: updated.isSelected }
-          : slot(candidate) === itemSlot
-            ? { ...candidate, isSelected: false }
-            : candidate,
-      ));
+      if (selectionVersions.current.get(item.id) === version && updated.isSelected !== nextSelected) {
+        session.updateStyleBoard(before.map((candidate) =>
+          candidate.id === item.id ? { ...candidate, isSelected: updated.isSelected } : candidate,
+        ));
+      }
     } catch (reason) {
+      if (selectionVersions.current.get(item.id) === version) session.updateStyleBoard(before);
       setError(
         reason instanceof Error ? reason.message : "Parça seçilemedi.",
       );

@@ -210,6 +210,10 @@ builder.Services.AddHttpClient<GeminiOrderImportClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(180);
 });
+builder.Services.AddHttpClient<GeminiProductScanClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(90);
+});
 builder.Services.AddHttpClient<StyleBoardAnalysisService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(90);

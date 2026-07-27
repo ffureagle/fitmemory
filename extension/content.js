@@ -2328,7 +2328,7 @@
     top.className = "top";
     const brand = document.createElement("div");
     brand.className = "brand";
-    brand.innerHTML = '<span class="mark">FM</span><span>FitMemory kararı</span>';
+    brand.innerHTML = '<img class="mark" src="' + chrome.runtime.getURL("fitmemory-logo.png") + '" alt="FitMemory"><span>FitMemory kararı</span>';
     const close = document.createElement("button");
     close.className = "close";
     close.type = "button";

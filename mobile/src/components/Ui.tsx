@@ -2,6 +2,7 @@ import { type PropsWithChildren, type ReactNode, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
+  Image,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -18,15 +19,12 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <View style={styles.brand}>
-      <View style={[styles.brandMark, compact && styles.brandMarkCompact]}>
-        <Text style={styles.brandMarkText}>FM</Text>
-      </View>
-      <View>
-        <Text style={styles.brandName}>FITMEMORY</Text>
-        {!compact && (
-          <Text style={styles.brandTag}>KALIBINI HATIRLAR</Text>
-        )}
-      </View>
+      <Image
+        accessibilityLabel="FitMemory"
+        resizeMode="contain"
+        source={require("../../assets/fitmemory-logo.png")}
+        style={[styles.brandLogo, compact && styles.brandLogoCompact]}
+      />
     </View>
   );
 }
@@ -173,8 +171,13 @@ export function ErrorNotice({
   const translateY = useRef(new Animated.Value(0)).current;
   const panResponder = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => Boolean(onDismiss),
+      onMoveShouldSetPanResponderCapture: (_, gesture) =>
+        Boolean(onDismiss) && gesture.dy < -3 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
       onMoveShouldSetPanResponder: (_, gesture) =>
         Boolean(onDismiss) && gesture.dy < -4 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
       onPanResponderMove: (_, gesture) => {
         if (gesture.dy < 0) translateY.setValue(gesture.dy);
       },
@@ -235,6 +238,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 11,
+  },
+  brandLogo: {
+    backgroundColor: "#000",
+    borderRadius: 5,
+    height: 56,
+    width: 112,
+  },
+  brandLogoCompact: {
+    height: 44,
+    width: 88,
   },
   brandMark: {
     alignItems: "center",

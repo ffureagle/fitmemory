@@ -285,6 +285,26 @@ export function ScanScreen({
     setTimeout(() => setStatus(""), 5000);
   };
 
+  const analyzeVisualFallback = async (
+    fallback: Extract<ScannerMessage, { type: "fitmemory-product-fallback" }>["snapshot"],
+  ) => {
+    if (!session.token || !session.account) return;
+    setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
+    const base64 = await captureRef(captureViewRef, {
+      format: "jpg",
+      quality: 0.72,
+      result: "base64",
+    });
+    const extracted = await session.api.extractProductMeasurements(
+      session.account.userId,
+      session.token,
+      fallback.product,
+      fallback.pageText,
+      `data:image/jpeg;base64,${base64}`,
+    );
+    await analyzeSnapshot(extracted);
+  };
+
   const handleMessage = async (event: WebViewMessageEvent) => {
     let message: ScannerMessage;
     try {
@@ -311,6 +331,8 @@ export function ScanScreen({
     try {
       if (message.type === "fitmemory-product") {
         await analyzeSnapshot(message.snapshot);
+      } else if (message.type === "fitmemory-product-fallback") {
+        await analyzeVisualFallback(message.snapshot);
       } else {
         await importOrderSnapshot(message.snapshot);
       }
