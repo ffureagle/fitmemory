@@ -501,14 +501,16 @@ public sealed class StyleBoardController(
             UpdatedAt = now
         }).ToArray();
         var analysis = await analysisService.AnalyzeAsync(profile, items, request.Language, request.Prompt, cancellationToken);
-        var strongVerdict = analysis.Verdict.Equals("Güçlü", StringComparison.OrdinalIgnoreCase) ||
-                            analysis.Verdict.Equals("Strong", StringComparison.OrdinalIgnoreCase);
-        if (analysis.Score < 72 || !strongVerdict)
+        // "Düzenle" is still an actionable stylist result. Previously every
+        // score below 72 was converted into an HTTP error, so a coherent outfit
+        // with one minor adjustment never reached the user. Only reject a truly
+        // weak pairing; the client can show the concrete adjustment for the rest.
+        if (analysis.Score < 52)
         {
             return Problem(
                 statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Bu istek için güçlü kombin bulunamadı",
-                detail: "Dolabındaki parçalar bu kullanım ve mevsim isteğini yeterince iyi karşılamıyor. Daha uygun parçalar eklediğinde yeniden deneyebilirsin.");
+                title: "Bu istek için uygun kombin bulunamadı",
+                detail: "Dolabındaki parçalar bu kullanım ve mevsim isteğini yeterince iyi karşılamıyor. İsteği değiştir veya uygun bir üst ve alt parça ekleyip yeniden dene.");
         }
         return Ok(new WardrobeOutfitResponse(
             analysis,

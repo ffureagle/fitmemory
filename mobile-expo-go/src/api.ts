@@ -185,6 +185,11 @@ export class FitMemoryApi {
       method: "POST",
       token,
       body: { userId, prompt, language: this.language },
+      // Render's free instance can need close to a minute to wake up. Outfit
+      // creation also includes an AI pass, so the generic 45 second deadline
+      // was aborting otherwise valid requests on mobile.
+      timeoutMs: 90_000,
+      retries: 1,
     });
   }
 
