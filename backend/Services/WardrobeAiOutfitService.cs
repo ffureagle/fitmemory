@@ -50,7 +50,16 @@ public sealed class WardrobeAiOutfitService(
             .ThenByDescending(item => item.UpdatedAt)
             .Take(18)
             .ToArray();
-        if (candidates.Length < 2) return null;
+        if (candidates.Length < 2)
+        {
+            return new WardrobeAiOutfitResult(
+                false,
+                language.Equals("en", StringComparison.OrdinalIgnoreCase)
+                    ? "Add at least two kept items from different clothing categories to your closet."
+                    : "Dolabına farklı giyim kategorilerinden en az iki tutulmuş ürün ekle.",
+                null,
+                []);
+        }
 
         var parts = new List<object>();
         var visualIds = new HashSet<int>();

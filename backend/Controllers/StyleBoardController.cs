@@ -17,7 +17,6 @@ public sealed class StyleBoardController(
     FitMemoryDbContext db,
     StyleBoardAnalysisService analysisService,
     ProductCategoryService categoryService,
-    WardrobeStylistService wardrobeStylistService,
     WardrobeAiOutfitService wardrobeAiOutfitService,
     ILogger<StyleBoardController> logger) : ControllerBase
 {
@@ -487,8 +486,11 @@ public sealed class StyleBoardController(
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "Görsel AI stilist kullanılamadı; yerel güvenli akışa dönülüyor.");
-            aiOutfit = null;
+            logger.LogError(exception, "Görsel AI stilist kullanılamadı.");
+            return Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                title: "AI stilist şu anda kullanılamıyor",
+                detail: "Kısa bir süre sonra yeniden dene.");
         }
         if (aiOutfit is not null)
         {
@@ -509,48 +511,10 @@ public sealed class StyleBoardController(
                     order.PurchasedSize,
                     order.ImageUrl)).ToArray()));
         }
-        var chosen = wardrobeStylistService
-            .SelectRequestedOutfit(profile, wardrobe, request.Prompt)
-            .ToArray();
-        if (chosen.Length < 2)
-        {
-            return Problem(statusCode: 422, title: "Dolapta yeterli parça yok", detail: "Kombin için en az iki farklı kategoride tutulmuş ürün gerekli.");
-        }
-        var now = DateTimeOffset.UtcNow;
-        var items = chosen.Select(order => new StyleBoardItem
-        {
-            UserProfileId = profile.Id,
-            UserProfile = profile,
-            ProductUrl = order.ProductUrl ?? $"https://fitmemory.local/wardrobe/{order.Id}",
-            Brand = order.Brand,
-            ProductName = order.ProductName,
-            Category = order.Category,
-            ImageUrl = order.ImageUrl ?? "",
-            FitLabel = order.FitLabel ?? "",
-            FitEvidence = order.SizeEvidence ?? "",
-            MaterialSummary = order.MaterialSummary ?? "",
-            MaterialEvidence = order.MaterialEvidence ?? "",
-            RecommendedSize = order.PurchasedSize,
-            RecommendationConfidence = order.FitAssessmentConfidence,
-            IsSelected = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        }).ToArray();
-        var analysis = await analysisService.AnalyzeAsync(profile, items, request.Language, request.Prompt, cancellationToken);
-        // "Düzenle" is still an actionable stylist result. Previously every
-        // score below 72 was converted into an HTTP error, so a coherent outfit
-        // with one minor adjustment never reached the user. Only reject a truly
-        // weak pairing; the client can show the concrete adjustment for the rest.
-        if (analysis.Score < 52)
-        {
-            return Problem(
-                statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Bu istek için uygun kombin bulunamadı",
-                detail: "Dolabındaki parçalar bu kullanım ve mevsim isteğini yeterince iyi karşılamıyor. İsteği değiştir veya uygun bir üst ve alt parça ekleyip yeniden dene.");
-        }
-        return Ok(new WardrobeOutfitResponse(
-            analysis,
-            chosen.Select(order => new WardrobeOutfitPieceResponse(order.Id, order.Brand, order.ProductName, order.Category, order.PurchasedSize, order.ImageUrl)).ToArray()));
+        return Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "AI stilist yapılandırılmamış",
+            detail: "Sunucudaki Gemini bağlantısını kontrol et.");
     }
 
     private string GetSlot(StyleBoardItem item)
