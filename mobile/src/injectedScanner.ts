@@ -1,5 +1,9 @@
 const scannerBootstrap = String.raw`
 (function () {
+  const recordDiagnostic = (stage, error) => {
+    const message = error instanceof Error ? error.message : String(error || "unknown error");
+    window.__fitmemoryScannerDiagnostics = [...(window.__fitmemoryScannerDiagnostics || []), stage + ": " + message].slice(-20);
+  };
   const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
   const fold = (value) => clean(value)
     .toLocaleLowerCase("tr-TR")
@@ -40,7 +44,7 @@ const scannerBootstrap = String.raw`
               result.push(frameDocument);
               queue.push(frameDocument);
             }
-          } catch {}
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
         }
       }
     }
@@ -64,7 +68,8 @@ const scannerBootstrap = String.raw`
     try {
       const result = new URL(value, location.href);
       return /^https?:$/.test(result.protocol) ? result.href : "";
-    } catch {
+    } catch (error) {
+      recordDiagnostic("url-normalization", error);
       return "";
     }
   };
@@ -95,7 +100,7 @@ const scannerBootstrap = String.raw`
       try {
         const match = findTyped(JSON.parse(script.textContent || ""), "Product");
         if (match) return match;
-      } catch {}
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     return null;
   };
@@ -245,7 +250,7 @@ const scannerBootstrap = String.raw`
         type: "fitmemory-progress",
         message
       }));
-    } catch {}
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
   let guideStage = "Beden paneli aranıyor";
   const waitFor = async (predicate, timeout = 4000, interval = 80) => {
@@ -254,7 +259,7 @@ const scannerBootstrap = String.raw`
       try {
         const value = predicate();
         if (value) return value;
-      } catch {}
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
       await sleep(interval);
     }
     return null;
@@ -276,7 +281,7 @@ const scannerBootstrap = String.raw`
     }
     target.scrollIntoView?.({ block: "center", inline: "center" });
     await sleep(100);
-    try { target.focus?.({ preventScroll: true }); } catch {}
+    try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
     for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
       try {
         target.dispatchEvent(new MouseEvent(type, {
@@ -284,9 +289,9 @@ const scannerBootstrap = String.raw`
           cancelable: true,
           view: window
         }));
-      } catch {}
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
-    try { target.click?.(); } catch {}
+    try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
     roots(true);
     return true;
   };

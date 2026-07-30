@@ -31,6 +31,14 @@ public sealed class RecommendationsController(
             return Forbid();
         }
 
+        if (!ProductScanEvidenceValidator.IsVerifiedChart(request.Product, request.SizeChart))
+        {
+            return Problem(
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Doğrulanmış ürün ölçüsü bulunamadı",
+                detail: "Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
+        }
+
         var normalizedAdjustmentNote =
             (request.UserAdjustmentNote ?? string.Empty).Trim();
         if (request.IsReconsideration &&

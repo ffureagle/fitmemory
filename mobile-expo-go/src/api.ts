@@ -11,24 +11,8 @@ import type {
   StyleBoardItem,
   FavoriteOutfit,
   WardrobeOutfit,
+  ProductAgentResult,
 } from "./types";
-
-export type ProductAgentResult = {
-  requestId: string;
-  url: string;
-  brand: string;
-  productName: string;
-  availableSizes: string[];
-  unavailableSizes: string[];
-  sizeChartUrl: string;
-  sizeTable: { size: string; measurements: Record<string, string> }[];
-  fitDescription: string;
-  confidence: number;
-  source: "DOM" | "JSON-LD" | "XHR" | "VISION" | "IFRAME" | "SHADOW";
-  notes: string[];
-  extractionTimeMs: number;
-  extractionStatusCode: number;
-};
 
 export class ApiError extends Error {
   constructor(
@@ -46,6 +30,7 @@ type ApiOptions = {
   allowNotFound?: boolean;
   timeoutMs?: number;
   retries?: number;
+  signal?: AbortSignal;
 };
 
 export class FitMemoryApi {
@@ -56,6 +41,8 @@ export class FitMemoryApi {
 
   async request<T>(path: string, options: ApiOptions = {}): Promise<T> {
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    options.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
     let response: Response;
     try {
@@ -89,6 +76,7 @@ export class FitMemoryApi {
       throw reason;
     } finally {
       clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abortFromCaller);
     }
 
     if (options.allowNotFound && response.status === 404) {
@@ -105,6 +93,7 @@ export class FitMemoryApi {
       return undefined as T;
     }
     if (!response.ok) {
+      const textResponse = response.clone();
       const fallback = `Sunucu isteği başarısız oldu (${response.status}).`;
       let message = fallback;
       try {
@@ -120,17 +109,18 @@ export class FitMemoryApi {
           problem.title ||
           problem.message ||
           fallback;
-      } catch {
-        message = (await response.text().catch(() => "")) || fallback;
+      } catch (parseError) {
+        console.warn("API problem response was not JSON", parseError);
+        message = (await textResponse.text()) || fallback;
       }
       throw new ApiError(message, response.status);
     }
     return (await response.json()) as T;
   }
 
-  health() {
+  health(timeoutMs = 60_000) {
     return this.request<{ status: string; databaseHealthy: boolean }>(
-      "/health",
+      "/health", { timeoutMs },
     );
   }
 
@@ -279,18 +269,24 @@ export class FitMemoryApi {
     });
   }
 
-  extractProductWithAgent(token: string, url: string) {
+  extractProductWithAgent(
+    token: string,
+    url: string,
+    requestId: string,
+    signal?: AbortSignal,
+  ) {
     return this.request<ProductAgentResult>("/api/product-scans/agent", {
       method: "POST",
       token,
-      timeoutMs: 120_000,
-      retries: 1,
+      timeoutMs: 190_000,
+      retries: 0,
+      signal,
       body: {
         url,
-        requestId: `mobile-${Date.now()}`,
+        requestId,
         sourcePlatform: "mobile-webview",
         language: this.language,
-        maxWaitMs: 22_000,
+        maxWaitMs: 110_000,
       },
     });
   }

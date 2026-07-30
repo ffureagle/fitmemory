@@ -48,8 +48,8 @@ public sealed class AgentProductScanRequest
     [RegularExpression("^(tr|en)$")]
     public string Language { get; init; } = "tr";
 
-    [Range(8000, 30000)]
-    public int MaxWaitMs { get; init; } = 20000;
+    [Range(15000, 120000)]
+    public int MaxWaitMs { get; init; } = 110000;
 }
 
 public sealed record AgentSizeTableRow(
@@ -63,6 +63,28 @@ public sealed record AgentRawSourcesMeta(
     int SameOriginFrames,
     int OpenShadowRoots,
     IReadOnlyList<string> MaskedSourceHints);
+
+public sealed record AgentScanTraceStep(
+    string Stage,
+    string Status,
+    string Message,
+    long? ElapsedMs = null,
+    IReadOnlyList<string>? Details = null);
+
+public sealed record AgentScanTrace(
+    string ScanId,
+    string ProductUrl,
+    string Brand,
+    DateTimeOffset StartedAt,
+    IReadOnlyList<AgentScanTraceStep> Steps);
+
+public sealed record AgentProductMetadata(
+    string Reference,
+    string Price,
+    string Currency,
+    string Color,
+    string Material,
+    string ImageUrl);
 
 public sealed record AgentProductScanResponse(
     string RequestId,
@@ -79,4 +101,6 @@ public sealed record AgentProductScanResponse(
     IReadOnlyList<string> Notes,
     long ExtractionTimeMs,
     int ExtractionStatusCode,
-    AgentRawSourcesMeta RawSources);
+    AgentRawSourcesMeta RawSources,
+    AgentScanTrace? Trace = null,
+    AgentProductMetadata? ProductMetadata = null);

@@ -67,6 +67,59 @@ export type ProductSnapshot = {
   capturedAt: string;
 };
 
+export type ScanStage =
+  | "idle"
+  | "warming-api"
+  | "webview"
+  | "server-agent"
+  | "native-ocr"
+  | "vision"
+  | "recommending"
+  | "completed"
+  | "failed";
+
+export type ScanTraceStep = {
+  stage: "webview" | "server-agent" | "native-ocr" | "vision" | "recommendation";
+  status: "started" | "success" | "failed" | "skipped";
+  message: string;
+  elapsedMs?: number;
+  details?: string[];
+};
+
+export type ScanTrace = {
+  scanId: string;
+  productUrl: string;
+  brand: "Zara" | "Pull&Bear" | "Unknown";
+  startedAt: string;
+  steps: ScanTraceStep[];
+};
+
+export type ProductAgentResult = {
+  requestId: string;
+  url: string;
+  brand: string;
+  productName: string;
+  availableSizes: string[];
+  unavailableSizes: string[];
+  sizeChartUrl: string;
+  sizeTable: { size: string; measurements: Record<string, string> }[];
+  fitDescription: string;
+  confidence: number;
+  source: "DOM" | "JSON-LD" | "XHR" | "VISION" | "IFRAME" | "SHADOW";
+  notes: string[];
+  extractionTimeMs: number;
+  extractionStatusCode: number;
+  productMetadata?: {
+    reference: string;
+    price: string;
+    currency: string;
+    color: string;
+    material: string;
+    imageUrl: string;
+  } | null;
+  trace?: { steps?: ScanTraceStep[] };
+};
+
 export type StylePiece = {
   orderId: number;
   brand: string;

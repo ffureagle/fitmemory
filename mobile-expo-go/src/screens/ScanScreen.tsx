@@ -26,9 +26,13 @@ import { useSession } from "../session";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
+import { agentResultToSnapshot, hasVerifiedNumericChart as hasVerifiedSnapshot } from "../scanValidation";
+import { isCurrentScanResponse, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
 import type {
   ProductSnapshot,
   Recommendation,
+  ScanStage,
+  ScanTraceStep,
   ScannerMessage,
   WardrobeOutfit,
 } from "../types";
@@ -78,7 +82,11 @@ function hasVerifiedNumericChart(chart: ProductSnapshot["sizeChart"] | null | un
     const numericMeasurements = row.cells.slice(1).filter((value) =>
       /^\s*\d{1,3}(?:[.,]\d+)?\s*(?:cm|in|inç)?\s*$/i.test(String(value ?? "")),
     );
-    return validSize && numericMeasurements.length > 0;
+    const numericSize = /^\d/.test(size) ? Number(size.replace(",", ".")) : null;
+    const sizeIsMeasurement = numericSize !== null && numericMeasurements.some((value) =>
+      Math.abs(Number(String(value).replace(/[^\d.,]/g, "").replace(",", ".")) - numericSize) < 0.01,
+    );
+    return validSize && numericMeasurements.length > 0 && !sizeIsMeasurement;
   });
 }
 
@@ -93,7 +101,8 @@ function isAllowedShopUrl(value: string) {
           url.hostname === domain || url.hostname.endsWith(`.${domain}`),
       )
     );
-  } catch {
+  } catch (reason) {
+    void reason;
     return false;
   }
 }
@@ -114,6 +123,7 @@ export function ScanScreen({
   const captureViewRef = useRef<View>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanOriginRef = useRef<string | null>(null);
+  const activeScanRef = useRef<{ scanId: string; url: string; controller: AbortController } | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -130,20 +140,30 @@ export function ScanScreen({
   const [studioBusy, setStudioBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [scanStage, setScanStage] = useState<ScanStage>("idle");
+  const [scanTrace, setScanTrace] = useState<ScanTraceStep[]>([]);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [outfitPrompt, setOutfitPrompt] = useState("");
   const [outfitBusy, setOutfitBusy] = useState(false);
+  const [outfitError, setOutfitError] = useState("");
   const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
   const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
 
   const createWardrobeOutfit = async () => {
-    if (!session.token || !session.account || outfitPrompt.trim().length < 3) return;
+    if (!session.token || !session.account) {
+      setOutfitError(translate("Kombin oluşturmak için hesabına giriş yapmalısın."));
+      return;
+    }
+    const prompt = outfitPrompt.trim();
+    if (prompt.length < 3) return;
     setOutfitBusy(true);
-    setError("");
+    setOutfitError("");
+    setWardrobeOutfit(null);
     try {
-      setWardrobeOutfit(await session.api.createWardrobeOutfit(session.account.userId, session.token, outfitPrompt.trim()));
+      setWardrobeOutfit(await session.api.createWardrobeOutfit(session.account.userId, session.token, prompt));
       feedback.success();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Kombin oluşturulamadı.");
+      setOutfitError(reason instanceof Error ? reason.message : translate("Kombin oluşturulamadı."));
     } finally {
       setOutfitBusy(false);
     }
@@ -179,7 +199,10 @@ export function ScanScreen({
       scanTimeoutRef.current = null;
     }
     scanOriginRef.current = null;
+    activeScanRef.current?.controller.abort();
+    activeScanRef.current = null;
     setScanMode(null);
+    setScanStage("idle");
     setStatus("");
   };
 
@@ -206,7 +229,13 @@ export function ScanScreen({
     setStatus("");
     // Render'in ucretsiz servisi uykuya girebilir. Kullanici magazada gezerken
     // API'yi arka planda uyandir; tarama tusu bekleme suresini tasimasin.
-    void session.api.health().catch(() => undefined);
+    void session.api.health(60_000).catch((reason: unknown) => {
+      setScanTrace((steps) => [...steps, {
+        stage: "server-agent",
+        status: "failed",
+        message: reason instanceof Error ? reason.message : "Sunucu ön ısıtması tamamlanamadı",
+      }]);
+    });
   };
 
   const goBackInBrowser = () => {
@@ -255,37 +284,54 @@ export function ScanScreen({
       return;
     }
     setError("");
+    activeScanRef.current?.controller.abort();
+    const scanId = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const normalizedUrl = normalizeScanUrl(address);
+    activeScanRef.current = { scanId, url: normalizedUrl, controller: new AbortController() };
+    setScanStage("webview");
+    setScanTrace([{ stage: "webview", status: "started", message: "Mağaza sayfası hazırlanıyor" }]);
     setStatus(
       mode === "product"
         ? "Beden tablosu ve kalıp okunuyor"
         : "Görünür siparişler hazırlanıyor",
     );
     setScanMode(mode);
-    scanOriginRef.current = address.split("#")[0] ?? address;
+    scanOriginRef.current = normalizedUrl;
     if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
     scanTimeoutRef.current = setTimeout(() => {
       scanTimeoutRef.current = null;
       setScanMode(null);
       scanOriginRef.current = null;
+      activeScanRef.current?.controller.abort();
+      activeScanRef.current = null;
+      setScanStage("failed");
       setStatus("");
       setError(
         "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
       );
-    }, 65_000);
+    }, SCAN_TIMEOUT_MS);
     webViewRef.current?.injectJavaScript(createScanScript(mode));
   };
 
   const analyzeSnapshot = async (nextSnapshot: ProductSnapshot) => {
     if (!session.token || !session.account) return;
+    if (!hasVerifiedSnapshot(nextSnapshot)) {
+      throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
+    }
+    const scanId = activeScanRef.current?.scanId;
     setSnapshot(nextSnapshot);
     setRecommendation(null);
+    setScanStage("recommending");
     setStatus("Ölçüler ve dolabın karşılaştırılıyor");
     const result = await session.api.analyzeProduct(
       session.account.userId,
       session.token,
       nextSnapshot,
     );
+    if (scanId && activeScanRef.current?.scanId !== scanId) return;
     setRecommendation(result);
+    setScanStage("completed");
+    setScanTrace((steps) => [...steps, { stage: "recommendation", status: "success", message: "Ölçüler profil ile karşılaştırıldı" }]);
     setStatus("");
     feedback.success();
   };
@@ -328,91 +374,110 @@ export function ScanScreen({
     fallback: Extract<ScannerMessage, { type: "fitmemory-product-fallback" }>["snapshot"],
   ) => {
     if (!session.token || !session.account) return;
+    const active = activeScanRef.current;
+      if (!active || !isCurrentScanResponse(active, active.scanId, fallback.product.url)) return;
     const localChart = visibleTextChart(fallback.pageText);
-    if (localChart) {
+    const localSnapshot: ProductSnapshot | null = localChart ? {
+      product: fallback.product,
+      sizeChart: localChart,
+      capturedAt: new Date().toISOString(),
+    } : null;
+    if (localSnapshot && hasVerifiedSnapshot(localSnapshot)) {
       setStatus("Ekrandaki ölçüler okundu, dolabınla karşılaştırılıyor");
-      await analyzeSnapshot({
-        product: fallback.product,
-        sizeChart: localChart,
-        capturedAt: new Date().toISOString(),
-      });
+      await analyzeSnapshot(localSnapshot);
       return;
     }
+    setScanTrace((steps) => [...steps, { stage: "webview", status: "failed", message: "Beden tablosu görünür DOM'da doğrulanamadı" }]);
     if (/^https:\/\/(?:[^/]+\.)?(?:pullandbear|zara)\.com(?:\/|$)/i.test(fallback.product.url)) {
-      setStatus("Mağazanın beden verisi güvenli sunucu ajanıyla okunuyor");
       try {
+        setScanStage("warming-api");
+        setStatus("Sunucu hazırlanıyor");
+        await session.api.health(60_000);
+        if (activeScanRef.current?.scanId !== active.scanId) return;
+        setScanStage("server-agent");
+        setStatus("Ürün bilgileri ve beden paneli okunuyor");
+        setScanTrace((steps) => [...steps, { stage: "server-agent", status: "started", message: "Marka adaptörü ürün ve beden panelini okuyor" }]);
         const agent = await session.api.extractProductWithAgent(
-          session.token,
+          session.token!,
           fallback.product.url,
+          active!.scanId,
+          active!.controller.signal,
         );
-        const verifiedAgentRows = agent.sizeTable.filter((row) =>
-          /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i.test(row.size) &&
-          Object.values(row.measurements).some((value) => /\d/.test(String(value))),
-        );
-        if (verifiedAgentRows.length > 0) {
-          const headers = [
-            "Beden",
-            ...Array.from(new Set(verifiedAgentRows.flatMap((row) => Object.keys(row.measurements)))),
-          ].slice(0, 12);
-          const agentSnapshot: ProductSnapshot = {
-            product: {
-              ...fallback.product,
-              brand: agent.brand || fallback.product.brand,
-              name: agent.productName || fallback.product.name,
-              fitLabel: agent.fitDescription || fallback.product.fitLabel,
-            },
-            sizeChart: {
-              found: true,
-              title: "Sunucu ajanı ürün ölçüleri",
-              unit: "Centimeters",
-              headers,
-              rows: verifiedAgentRows.slice(0, 30).map((row) => ({
-                cells: [
-                  row.size,
-                  ...headers.slice(1).map((header) => row.measurements[header] ?? ""),
-                ],
-              })),
-              rawText: verifiedAgentRows
-                .map((row) => `${row.size} | ${Object.entries(row.measurements).map(([key, value]) => `${key}: ${value}`).join(" | ")}`)
-                .join("\n")
-                .slice(0, 8000),
-            },
-            capturedAt: new Date().toISOString(),
-          };
+        if (!isCurrentScanResponse(activeScanRef.current, active.scanId, fallback.product.url, agent.requestId)) return;
+        const agentSnapshot = agentResultToSnapshot(agent, fallback.product);
+        if (agentSnapshot) {
+          setScanTrace((steps) => [...steps, ...(agent.trace?.steps ?? []), {
+            stage: "server-agent",
+            status: "success",
+            message: `${agentSnapshot.sizeChart.rows.length} geçerli beden ölçü satırı bulundu`,
+          }]);
           await analyzeSnapshot(agentSnapshot);
           return;
         }
-      } catch {
-        // Sunucu ajanı başarısız olduğunda mevcut cihaz içi Vision zinciri devam eder.
+        setScanTrace((steps) => [...steps, ...(agent.trace?.steps ?? []), {
+          stage: "server-agent",
+          status: "failed",
+          message: "Sunucu ajanı doğrulanmış ölçü tablosu döndürmedi",
+          details: agent.notes,
+        }]);
+      } catch (reason) {
+        if (active.controller.signal.aborted) return;
+        setScanTrace((steps) => [...steps, {
+          stage: "server-agent",
+          status: "failed",
+          message: reason instanceof Error ? reason.message : "Sunucu ajanı başarısız",
+        }]);
       }
     }
-    setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
-    const base64 = await captureRef(captureViewRef, {
-      format: "jpg",
-      quality: 0.72,
-      result: "base64",
-    });
-    const extracted = await session.api.extractProductMeasurements(
-      session.account.userId,
-      session.token,
-      fallback.product,
-      fallback.pageText,
-      `data:image/jpeg;base64,${base64}`,
-    );
-    if (!hasVerifiedNumericChart(extracted.sizeChart)) {
-      throw new Error(
-        "Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.",
+    if (activeScanRef.current?.scanId !== active.scanId) return;
+    setScanStage("vision");
+
+    // Marka akisi tabloyu uygulamanin kendi WebView'i icinde acti. Once tam bu
+    // ekrani oku; Render'daki basliksiz tarayicilar Inditex tarafindan zaman
+    // zaman Access Denied ile engellendigi icin sunucu ajani son yedektir.
+    setStatus("Görsel ölçü okuyucu açık tabloyu doğruluyor");
+    let visualFailure: unknown = null;
+    try {
+      const base64 = await captureRef(captureViewRef, {
+        format: "jpg",
+        quality: 0.82,
+        result: "base64",
+      });
+      const extracted = await session.api.extractProductMeasurements(
+        session.account.userId,
+        session.token,
+        fallback.product,
+        fallback.pageText,
+        `data:image/jpeg;base64,${base64}`,
       );
+      if (hasVerifiedSnapshot(extracted)) {
+        await analyzeSnapshot(extracted);
+        return;
+      }
+      visualFailure = new Error(
+        "Açık ölçü tablosunda bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı.",
+      );
+    } catch (reason) {
+      visualFailure = reason;
     }
-    await analyzeSnapshot(extracted);
+
+    if (visualFailure instanceof Error) throw visualFailure;
+    throw new Error(
+      "Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.",
+    );
   };
 
   const handleMessage = async (event: WebViewMessageEvent) => {
     let message: ScannerMessage;
     try {
       message = JSON.parse(event.nativeEvent.data) as ScannerMessage;
-    } catch {
+    } catch (reason) {
       setScanMode(null);
+      setScanTrace((steps) => [...steps, {
+        stage: "webview",
+        status: "failed",
+        message: reason instanceof Error ? reason.message : "Tarama yanıtı ayrıştırılamadı",
+      }]);
       setError("Sayfa tarama sonucunu okunamayan biçimde döndürdü.");
       return;
     }
@@ -426,19 +491,32 @@ export function ScanScreen({
     }
     if (message.type === "fitmemory-error") {
       setScanMode(null);
+      activeScanRef.current?.controller.abort();
+      activeScanRef.current = null;
+      setScanStage("failed");
       setStatus("");
       setError(message.message);
       return;
     }
     try {
       if (message.type === "fitmemory-product") {
-        await analyzeSnapshot(message.snapshot);
+        if (hasVerifiedSnapshot(message.snapshot)) {
+          await analyzeSnapshot(message.snapshot);
+        } else {
+          await analyzeVisualFallback({
+            fallback: true,
+            reason: "WebView ölçü tablosu doğrulanamadı",
+            pageText: message.snapshot.sizeChart.rawText,
+            product: message.snapshot.product,
+          });
+        }
       } else if (message.type === "fitmemory-product-fallback") {
         await analyzeVisualFallback(message.snapshot);
       } else {
         await importOrderSnapshot(message.snapshot);
       }
     } catch (reason) {
+      setScanStage("failed");
       setError(
         reason instanceof Error ? reason.message : "Tarama tamamlanamadı.",
       );
@@ -446,11 +524,13 @@ export function ScanScreen({
     } finally {
       setScanMode(null);
       scanOriginRef.current = null;
+      activeScanRef.current = null;
     }
   };
 
   useEffect(() => () => {
     if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    activeScanRef.current?.controller.abort();
   }, []);
 
   const reconsider = async () => {
@@ -596,13 +676,19 @@ export function ScanScreen({
           <TextInput
             maxLength={500}
             multiline
-            onChangeText={setOutfitPrompt}
+            onChangeText={(value) => {
+              setOutfitPrompt(value);
+              if (outfitError) setOutfitError("");
+            }}
             placeholder={translate("Örn. Akşam yemeği için sade, rahat ve yaşımı yansıtan bir kombin.")}
             placeholderTextColor="#918E85"
             style={styles.outfitPrompt}
             value={outfitPrompt}
           />
           <Button busy={outfitBusy} disabled={outfitPrompt.trim().length < 3} label="Dolabımla kombin oluştur" onPress={() => void createWardrobeOutfit()} small tone="blue" />
+          {outfitError ? (
+            <ErrorNotice message={outfitError} onDismiss={() => setOutfitError("")} />
+          ) : null}
           {wardrobeOutfit ? (
             <View style={styles.outfitResult}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -696,7 +782,7 @@ export function ScanScreen({
               }}
               onMessage={(event) => void handleMessage(event)}
               onNavigationStateChange={(state) => {
-                const nextUrl = state.url.split("#")[0] ?? state.url;
+                const nextUrl = normalizeScanUrl(state.url);
                 if (scanOriginRef.current && nextUrl !== scanOriginRef.current) {
                   stopScan();
                   setSnapshot(null);
@@ -879,6 +965,18 @@ export function ScanScreen({
               <Text style={styles.scanStatusText}>{status}</Text>
             </View>
           ) : null}
+          {scanTrace.length ? (
+            <View style={styles.diagnostics}>
+              <Pressable onPress={() => setShowDiagnostics((value) => !value)}>
+                <Text style={styles.diagnosticsTitle}>Tarama tanısı · {scanStage}</Text>
+              </Pressable>
+              {showDiagnostics ? scanTrace.slice(-8).map((step, index) => (
+                <Text key={`${step.stage}-${index}`} style={styles.diagnosticsLine}>
+                  [{step.stage}] {step.status}: {step.message}
+                </Text>
+              )) : null}
+            </View>
+          ) : null}
         </View>
       </Modal>
     </>
@@ -886,6 +984,15 @@ export function ScanScreen({
 }
 
 const styles = StyleSheet.create({
+  diagnostics: {
+    backgroundColor: "#F4F2ED",
+    borderTopColor: "#D8D4CC",
+    borderTopWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  diagnosticsTitle: { color: colors.ink, fontSize: 11, fontWeight: "800" },
+  diagnosticsLine: { color: "#5E5A52", fontSize: 10, lineHeight: 15, marginTop: 3 },
   content: {
     gap: 18,
     paddingBottom: 110,

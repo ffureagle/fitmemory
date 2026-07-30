@@ -1,5 +1,9 @@
 const scannerBootstrap = String.raw`
 (function () {
+  const recordDiagnostic = (stage, error) => {
+    const message = error instanceof Error ? error.message : String(error || "unknown error");
+    window.__fitmemoryScannerDiagnostics = [...(window.__fitmemoryScannerDiagnostics || []), stage + ": " + message].slice(-20);
+  };
   const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
   const fold = (value) => clean(value)
     .toLocaleLowerCase("tr-TR")
@@ -29,7 +33,7 @@ const scannerBootstrap = String.raw`
       const observer = new MutationObserver(() => { rootCache = null; });
       observer.observe(root, { subtree: true, childList: true, attributes: true });
       observedRoots.add(root);
-    } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
   const roots = (refresh = false) => {
     if (!refresh && rootCache) return rootCache;
@@ -49,7 +53,7 @@ const scannerBootstrap = String.raw`
               result.push(frameDocument);
               queue.push(frameDocument);
             }
-          } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
         }
       }
     }
@@ -74,7 +78,8 @@ const scannerBootstrap = String.raw`
     try {
       const result = new URL(value, location.href);
       return /^https?:$/.test(result.protocol) ? result.href : "";
-    } catch {
+    } catch (error) {
+      recordDiagnostic("url-normalization", error);
       return "";
     }
   };
@@ -105,7 +110,7 @@ const scannerBootstrap = String.raw`
       try {
         const match = findTyped(JSON.parse(script.textContent || ""), "Product");
         if (match) return match;
-      } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     return null;
   };
@@ -255,7 +260,7 @@ const scannerBootstrap = String.raw`
         type: "fitmemory-progress",
         message
       }));
-    } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
   let guideStage = "Beden paneli aranıyor";
   const waitFor = async (predicate, timeout = 4000, interval = 80) => {
@@ -264,7 +269,7 @@ const scannerBootstrap = String.raw`
       try {
         const value = predicate();
         if (value) return value;
-      } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
       await sleep(interval);
     }
     return null;
@@ -288,7 +293,7 @@ const scannerBootstrap = String.raw`
             stableSince = Date.now();
           }
         }
-      } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
       await sleep(120);
     }
     return null;
@@ -312,7 +317,7 @@ const scannerBootstrap = String.raw`
     }
     target.scrollIntoView?.({ block: "center", inline: "center" });
     await sleep(35);
-    try { target.focus?.({ preventScroll: true }); } catch {}
+    try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
     for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
       try {
         const event = type.startsWith("pointer") && typeof PointerEvent !== "undefined"
@@ -327,9 +332,9 @@ const scannerBootstrap = String.raw`
             ? new Event(type, { bubbles: true, cancelable: true })
             : new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
         target.dispatchEvent(event);
-      } catch {}
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
-    try { target.click?.(); } catch {}
+    try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
     await sleep(45);
     roots(true);
     return true;
@@ -393,7 +398,7 @@ const scannerBootstrap = String.raw`
   };
   const measurementPattern =
     /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
-  const findMeasurementTrigger = () =>
+  const measurementControls = () =>
     all(
       "button, a, [role='button'], [role='tab'], summary, [data-testid*='measure' i], " +
       "[data-qa*='measure' i], [aria-label*='ölç' i], " +
@@ -408,7 +413,9 @@ const scannerBootstrap = String.raw`
     ).sort((left, right) =>
       left.text.length - right.text.length ||
       left.element.childElementCount - right.element.childElementCount
-    )[0]?.element || null;
+    ).map(({ element }) => clickable(element));
+  const findMeasurementTrigger = (excluded) =>
+    measurementControls().find((element) => element && !excluded?.has(element)) || null;
   const sizePattern = /^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)$/i;
   const sizeLabelFromText = (value) => {
     const text = clean(value).toUpperCase();
@@ -423,7 +430,7 @@ const scannerBootstrap = String.raw`
     .filter(Boolean).filter((value, index, values) => values.indexOf(value) === index)
     .map((value) => "[selected] " + value).join("\n");
   const measurementNamePattern =
-    /gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
+    /gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|sirt genisligi|back width|kol genisligi|arm width|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
   const panelText = (panel) => clean(panel?.innerText || panel?.textContent || "");
   const ownText = (element) => clean([...element.childNodes]
     .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -479,15 +486,16 @@ const scannerBootstrap = String.raw`
     if (!panel) return [];
     const result = [];
     const seen = new Set();
-    const candidates = [panel, ...panel.querySelectorAll(
-      "button, [role='radio'], [role='option'], [role='button'], li, label, span"
+    const candidates = [...panel.querySelectorAll(
+      "button, [role='radio'], [role='option'], [role='button'], [role='tab'], input, li, label"
     )];
     for (const element of candidates) {
       if (!visible(element)) continue;
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
       const target = clickable(element);
-       if (!target || (panel !== document && !panel.contains(target)) || seen.has(target)) continue;
+      if (!target || !target.matches("button, a, input, [role='button'], [role='radio'], [role='option'], [role='tab'], li, label") ||
+          (panel !== document && !panel.contains(target)) || seen.has(target)) continue;
       seen.add(target);
       result.push(target);
     }
@@ -546,25 +554,126 @@ const scannerBootstrap = String.raw`
     }
     return null;
   };
+  const verifiedChart = () => {
+    const chart = tableChart() || geometryChart() || visiblePanelChart();
+    if (chart?.found && chart.rows?.some((row) =>
+      row.cells?.slice(1).some((cell) => /\d/.test(String(cell || ""))))) return chart;
+    const panel = findMeasurePanel();
+    return panel && extractMeasurements(panel).length > 0 ? panel : null;
+  };
+  const exactBrandControl = (patterns) => all(
+    "button, a, [role='button'], [role='tab'], summary, [data-testid], [data-qa], span, div"
+  ).filter(visible).map((element) => {
+    const text = fold(clean(ownText(element) || controlText(element)));
+    const target = clickable(element);
+    const rect = target?.getBoundingClientRect?.() || element.getBoundingClientRect();
+    return { element: target, text, area: rect.width * rect.height, children: element.childElementCount };
+  }).filter(({ element, text }) => element && patterns.some((pattern) => pattern.test(text)))
+    .sort((left, right) => left.children - right.children || left.area - right.area)[0]?.element || null;
+  const scrollFindBrandControl = async (patterns, maxSteps = 12) => {
+    let trigger = exactBrandControl(patterns);
+    for (let step = 0; !trigger && step < maxSteps; step += 1) {
+      window.scrollBy?.({ top: Math.max(260, innerHeight * .68), behavior: "auto" });
+      await sleep(95);
+      trigger = exactBrandControl(patterns);
+    }
+    if (!trigger && window.scrollY > innerHeight) {
+      window.scrollTo?.({ top: 0, behavior: "auto" });
+      await sleep(80);
+      for (let step = 0; !trigger && step < maxSteps; step += 1) {
+        window.scrollBy?.({ top: Math.max(260, innerHeight * .68), behavior: "auto" });
+        await sleep(95);
+        trigger = exactBrandControl(patterns);
+      }
+    }
+    return trigger;
+  };
+  const openZaraMeasurements = async () => {
+    const patterns = [/^olculer$/i, /^urun boyutlari$/i, /^product measurements?$/i, /^measurements?$/i];
+    guideStage = "Zara ölçüler sekmesi aranıyor";
+    progress(guideStage);
+    let trigger = await scrollFindBrandControl(patterns, 14);
+    if (!trigger) {
+      guideStage = "Zara ölçüler sekmesi bulunamadı";
+      return false;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(80);
+    guideStage = "Zara ölçüler sekmesi açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Zara ölçü tablosu okundu" : "Zara ölçüler sekmesi açıldı ancak tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const openPullAndBearMeasurements = async () => {
+    const patterns = [
+      /^olculeri goruntule$/i, /^olculeri gor$/i, /^view measurements?$/i,
+      /^product measurements?$/i, /^size guide$/i
+    ];
+    // Pull&Bear iki farklı mobil şablon kullanıyor. Yeni şablonda ölçü düğmesi
+    // ürün sayfasında doğrudan görünür; eski şablonda önce Ekle çekmecesi açılır.
+    // Önce doğrudan düğmeyi denemek, Ekle çekmecesinin mevcut düğmeyi örtmesini önler.
+    let trigger = await scrollFindBrandControl(patterns, 5);
+    if (!trigger) {
+      const drawer = await activatePullSizeDrawer();
+      if (!drawer) {
+        guideStage = "Pull&Bear Ekle düğmesi açılmadı";
+        return false;
+      }
+      guideStage = "Pull&Bear beden paneli açıldı";
+      progress(guideStage);
+      const panel = findSizePanel() || drawer;
+      panel?.scrollTo?.({ top: panel.scrollHeight, behavior: "auto" });
+      trigger = await waitFor(() => exactBrandControl(patterns), 5000, 55);
+    }
+    if (!trigger) {
+      guideStage = "Pull&Bear Ölçüleri görüntüle bağlantısı bulunamadı";
+      return false;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(70);
+    guideStage = "Pull&Bear ölçü paneli açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Pull&Bear ölçü tablosu okundu" : "Pull&Bear ölçü paneli açıldı ancak sayısal tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const activateMeasurementChain = async (maxSteps, timeoutMs) => {
+    const clicked = new WeakSet();
+    const deadline = Date.now() + timeoutMs;
+    for (let step = 0; step < maxSteps && Date.now() < deadline; step += 1) {
+      const ready = tableChart() || geometryChart() || visiblePanelChart();
+      if (ready?.found) return true;
+      let trigger = findMeasurementTrigger(clicked);
+      if (!trigger) {
+        trigger = await waitFor(() => findMeasurementTrigger(clicked), Math.min(3500, deadline - Date.now()), 80);
+      }
+      if (!trigger) break;
+      clicked.add(trigger);
+      guideStage = "Ölçü adımı " + (step + 1) + " açılıyor";
+      progress(guideStage);
+      await clickElement(trigger);
+      await sleep(450);
+      roots(true);
+      const chart = await waitFor(() => tableChart() || geometryChart() || visiblePanelChart(), 1800, 90);
+      if (chart?.found) return true;
+    }
+    return Boolean(tableChart() || geometryChart() || visiblePanelChart());
+  };
   const openSizeGuide = async () => {
-    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
-    if (tableChart() || geometryChart() || visiblePanelChart() || (() => {
-      const panel = findMeasurePanel();
-      return panel && extractMeasurements(panel).length > 0;
-    })()) {
+    const scanHost = location.hostname || document.documentElement.getAttribute("data-fitmemory-test-host") || "";
+    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(scanHost);
+    const isZara = /(?:^|\.)zara\.com$/i.test(scanHost);
+    if (verifiedChart()) {
       guideStage = "Ölçü paneli açık";
       return true;
     }
+    if (isPullAndBear) return await openPullAndBearMeasurements();
+    if (isZara) return await openZaraMeasurements();
     let measurement = isPullAndBear ? null : findMeasurementTrigger();
-    if (!isPullAndBear && measurement && await clickElement(measurement)) {
-      guideStage = "Ölçüleri görüntüle tıklandı";
-      progress(guideStage);
-       const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
-        const found = findMeasurePanel();
-        return found && extractMeasurements(found).length > 0;
-       })(), 10000, 500);
-      if (panel) return true;
-    }
+    if (!isPullAndBear && measurement && await activateMeasurementChain(3, 12000)) return true;
     const addControl = isPullAndBear
       ? null
       : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
@@ -573,32 +682,6 @@ const scannerBootstrap = String.raw`
     const sizeControl = findExactVisibleTextControl(
       /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^beden$|^size$/i
     );
-    if (isPullAndBear) {
-      const drawer = await activatePullSizeDrawer();
-      if (drawer) {
-        guideStage = "Pull&Bear beden paneli açıldı";
-        progress(guideStage);
-        measurement = await waitFor(() => findMeasurementTrigger(), 6500, 70);
-        if (measurement && await clickElement(measurement)) {
-          guideStage = "Ölçüleri görüntüle tıklandı";
-          progress(guideStage);
-          const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
-            const found = findMeasurePanel();
-            return found && extractMeasurements(found).length > 0;
-          })(), 8500, 260);
-          if (panel) return true;
-        }
-        guideStage = measurement
-          ? "Ölçü bağlantısı açıldı ancak sayısal tablo oluşmadı"
-          : "Beden paneli açıldı ancak Ölçüleri görüntüle bulunamadı";
-      } else {
-        guideStage = "Pull&Bear Ekle düğmesi açılmadı";
-      }
-      return Boolean(tableChart() || geometryChart() || visiblePanelChart() || (() => {
-        const panel = findMeasurePanel();
-        return panel && extractMeasurements(panel).length > 0;
-      })());
-    }
     const opener = sizeControl || addControl;
     if (opener) {
       guideStage = "Beden seçici bulundu";
@@ -607,15 +690,7 @@ const scannerBootstrap = String.raw`
       guideStage = "Beden paneli açılıyor";
       progress(guideStage);
       measurement = await waitFor(() => findMeasurementTrigger(), 6000, 180);
-      if (measurement && await clickElement(measurement)) {
-        guideStage = "Ölçüleri görüntüle tıklandı";
-        progress(guideStage);
-         const panel = await waitForStable(() => tableChart() || geometryChart() || visiblePanelChart() || (() => {
-          const found = findMeasurePanel();
-          return found && extractMeasurements(found).length > 0;
-         })(), 14000, 600);
-        if (panel) return true;
-      }
+      if (measurement && await activateMeasurementChain(3, 14000)) return true;
       guideStage = measurement
         ? "Ölçü bağlantısı tıklandı ancak tablo oluşmadı"
         : "Ekle açıldı ancak Ölçüleri görüntüle bulunamadı";
@@ -671,6 +746,8 @@ const scannerBootstrap = String.raw`
     const text = fold(value);
     if (/gogus|chest|bust/.test(text)) return "Göğüs eni";
     if (/on uzunluk|front length/.test(text)) return "Ön uzunluk";
+    if (/sirt genisligi|back width/.test(text)) return "Sırt genişliği";
+    if (/kol genisligi|arm width/.test(text)) return "Kol genişliği";
     if (/kol|sleeve/.test(text)) return "Kol uzunluğu";
     if (/bel|waist/.test(text)) return "Bel eni";
     if (/kalca|basen|hip/.test(text)) return "Kalça eni";
@@ -739,7 +816,7 @@ const scannerBootstrap = String.raw`
       if (cmValue) add(cells[0], cmValue);
     }
     const text = fold(panelText(panel));
-    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
+    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|sirt\s*genisligi|back\s*width|kol\s*genisligi|arm\s*width|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
     for (const match of text.matchAll(pattern)) add(match[1], match[2]);
     if (measurements.length < 2) {
       const labels = [...panel.querySelectorAll("th, td, dt, dd, p, span, div")]
@@ -810,8 +887,8 @@ const scannerBootstrap = String.raw`
       if (button && !selectedSizeButton(button)) {
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 1100, 55);
-        await waitForStable(() => measureSignature(), 1500, 220);
+        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 650, 40);
+        await waitForStable(() => measureSignature(), 800, 140);
       }
       panel = findMeasurePanel() || findSizePanel() || panel;
       const measurements = extractMeasurements(panel);

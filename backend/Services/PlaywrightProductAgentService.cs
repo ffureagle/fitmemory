@@ -11,8 +11,6 @@ public sealed partial class PlaywrightProductAgentService(
     GeminiProductScanClient visionClient,
     ILogger<PlaywrightProductAgentService> logger) : IAsyncDisposable
 {
-    private static readonly HashSet<string> AllowedDomains =
-        ["pullandbear.com", "zara.com"];
     private static readonly string[] SizeLabels =
         ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
     private readonly SemaphoreSlim _browserGate = new(1, 1);
@@ -25,7 +23,7 @@ public sealed partial class PlaywrightProductAgentService(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        if (!TryValidateUrl(request.Url, out var target, out var domain))
+        if (!ProductAgentUrlPolicy.TryValidateProductUrl(request.Url, out var target, out var domain))
         {
             return Failure(request, stopwatch, 201,
                 "Bu ajan yalnız Pull&Bear ve Zara ürün adreslerini kabul eder.");
@@ -44,7 +42,11 @@ public sealed partial class PlaywrightProductAgentService(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Playwright product agent failed for {Domain}", domain);
-            return Failure(request, stopwatch, 500, "Ürün sayfası güvenli biçimde işlenemedi.");
+            return Failure(
+                request,
+                stopwatch,
+                500,
+                $"Ürün sayfası güvenli biçimde işlenemedi. Tanı: {SafeDiagnostic(exception)}");
         }
         finally
         {
@@ -60,28 +62,43 @@ public sealed partial class PlaywrightProductAgentService(
         Stopwatch stopwatch,
         CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Clamp(request.MaxWaitMs, 8000, 30000)));
+        var trace = new List<AgentScanTraceStep>();
+        var interaction = new ProductAgentInteraction(trace, stopwatch);
+        var adapter = ProductPageAdapterFactory.Create(domain);
+        interaction.Add("queued", "success", $"{adapter.Brand} ürün taraması başlatıldı.",
+            [$"requestId={request.RequestId}", "locale=tr-TR", "viewport=390x844"]);
+        // Chromium'un ilk kurulumu/başlatılması ürün çıkarma bütçesini tüketmemeli.
+        // Özellikle uyuyan Render örneklerinde bu başlangıç birkaç saniye sürebilir.
         var browser = await EnsureBrowserAsync();
-        var userAgent = SafeUserAgent(request.UserAgentHint);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Clamp(request.MaxWaitMs, 15000, 120000)));
         await using var context = await browser.NewContextAsync(new BrowserNewContextOptions
         {
-            Locale = request.Language == "en" ? "en-US" : "tr-TR",
-            UserAgent = userAgent,
+            Locale = "tr-TR",
+            UserAgent = SafeUserAgent(request.UserAgentHint),
             ViewportSize = new ViewportSize { Width = 390, Height = 844 },
             JavaScriptEnabled = true,
-            ServiceWorkers = ServiceWorkerPolicy.Block
+            ServiceWorkers = ServiceWorkerPolicy.Block,
+            ExtraHTTPHeaders = new Dictionary<string, string>
+            {
+                ["Accept-Language"] = "tr-TR,tr;q=0.9,en;q=0.7"
+            }
         });
         await context.ClearCookiesAsync();
         var xhrBodies = new ConcurrentQueue<string>();
         var xhrUrls = new ConcurrentQueue<string>();
         var page = await context.NewPageAsync();
-        page.SetDefaultTimeout(Math.Clamp(request.MaxWaitMs, 8000, 30000));
+        page.SetDefaultTimeout(Math.Clamp(request.MaxWaitMs, 15000, 120000));
 
         await page.RouteAsync("**/*", async route =>
         {
-            var method = route.Request.Method.ToUpperInvariant();
-            if (method is not ("GET" or "HEAD" or "OPTIONS"))
+            if (!ProductAgentUrlPolicy.IsReadOnlyMethod(route.Request.Method))
+            {
+                await route.AbortAsync();
+                return;
+            }
+            if (!ProductAgentUrlPolicy.TryValidateProductUrl(route.Request.Url, out _, out _) &&
+                route.Request.IsNavigationRequest)
             {
                 await route.AbortAsync();
                 return;
@@ -99,14 +116,33 @@ public sealed partial class PlaywrightProductAgentService(
         await page.GotoAsync(target.AbsoluteUri, new PageGotoOptions
         {
             WaitUntil = WaitUntilState.DOMContentLoaded,
-            Timeout = Math.Clamp(request.MaxWaitMs, 8000, 30000)
+            Timeout = Math.Clamp(request.MaxWaitMs, 15000, 30000)
         });
+        if (!ProductAgentUrlPolicy.TryValidateProductUrl(page.Url, out _, out var redirectedDomain) ||
+            !redirectedDomain.Equals(domain, StringComparison.OrdinalIgnoreCase))
+        {
+            interaction.Add("preparing-page", "failed", "Redirect sonrası güvenli mağaza alan adı doğrulanamadı.");
+            return Failure(request, stopwatch, 203,
+                "Redirect sonrası güvenli mağaza alan adı doğrulanamadı.", trace, adapter.Brand);
+        }
         try
         {
             await page.WaitForLoadStateAsync(LoadState.NetworkIdle,
                 new PageWaitForLoadStateOptions { Timeout = 4500 });
         }
-        catch (TimeoutException) { }
+        catch (TimeoutException exception)
+        {
+            interaction.Add("preparing-page", "skipped", "Network idle beklemesi doldu; DOM hazırlığı sürdürüldü.",
+                [exception.GetType().Name]);
+        }
+
+        await adapter.PrepareAsync(page, interaction, timeout.Token);
+        if (ProductAgentUrlPolicy.IsForbiddenFlow(new Uri(page.Url)))
+        {
+            interaction.Add("preparing-page", "failed", "Güvenli olmayan sepet/hesap akışı algılandı.");
+            return Failure(request, stopwatch, 203,
+                "Ürün sayfası güvenli olmayan bir akışa yöneldi.", trace, adapter.Brand);
+        }
 
         var evidence = await ReadPageEvidenceAsync(page);
         if (!HasUsableSizeTable(evidence))
@@ -114,13 +150,21 @@ public sealed partial class PlaywrightProductAgentService(
             await WaitForDynamicContentAsync(page, 2400, timeout.Token);
             evidence = await ReadPageEvidenceAsync(page);
         }
+        var sizeUiOpened = false;
         if (!HasUsableSizeTable(evidence))
         {
-            await OpenSizeUiAsync(page, domain, timeout.Token);
+            sizeUiOpened = await adapter.OpenSizeUiAsync(page, interaction, timeout.Token);
+            if (!ProductAgentUrlPolicy.TryValidateProductUrl(page.Url, out _, out _) ||
+                ProductAgentUrlPolicy.IsForbiddenFlow(new Uri(page.Url)))
+            {
+                interaction.Add("opening-size-ui", "failed", "Ölçü etkileşimi güvenli ürün URL'sinden ayrıldı.");
+                return Failure(request, stopwatch, 203,
+                    "Ölçü paneli güvenli biçimde açılamadı.", trace, adapter.Brand);
+            }
             evidence = await ReadPageEvidenceAsync(page);
         }
 
-        var interactiveRows = await CollectInteractiveSizeRowsAsync(page, timeout.Token);
+        var interactiveRows = await CollectInteractiveSizeRowsAsync(page, interaction, timeout.Token);
         if (interactiveRows.Count > evidence.SizeTable.Count)
         {
             evidence.SizeTable = interactiveRows;
@@ -130,15 +174,13 @@ public sealed partial class PlaywrightProductAgentService(
                 .ToList();
         }
 
+        var pageHadTable = HasUsableSizeTable(evidence);
         var xhrEvidence = ParseXhrEvidence(xhrBodies.ToArray());
+        var xhrHadTable = HasUsableSizeTable(xhrEvidence);
         evidence = MergeEvidence(evidence, xhrEvidence);
         var usedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (evidence.JsonLdDocuments > 0) usedSources.Add("JSON-LD");
-        if (evidence.DomTextLength > 0) usedSources.Add("DOM");
-        if (xhrEvidence.AvailableSizes.Count > 0 ||
-            !string.IsNullOrWhiteSpace(xhrEvidence.FitDescription)) usedSources.Add("XHR");
-        if (evidence.OpenShadowRoots > 0) usedSources.Add("SHADOW");
-        if (evidence.SameOriginFrames > 0) usedSources.Add("IFRAME");
+        if (pageHadTable) usedSources.Add("DOM");
+        if (xhrHadTable) usedSources.Add("XHR");
 
         var visionUsed = false;
         if (!HasUsableSizeTable(evidence))
@@ -172,7 +214,23 @@ public sealed partial class PlaywrightProductAgentService(
             catch (Exception exception)
             {
                 logger.LogInformation(exception, "Vision fallback found no verified size table for {Domain}", domain);
+                interaction.Add("vision-fallback", "failed",
+                    "Vision fallback doğrulanmış ölçü tablosu üretemedi.", [exception.GetType().Name]);
             }
+        }
+
+        evidence.SizeTable = evidence.SizeTable
+            .Select(ProductScanEvidenceValidator.NormalizeRow)
+            .Where(row => row is not null)
+            .Select(row => row!)
+            .GroupBy(row => row.Size, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        if (evidence.AvailableSizes.Any(size => SizeLabels.Contains(size, StringComparer.OrdinalIgnoreCase)))
+        {
+            evidence.SizeTable = evidence.SizeTable
+                .Where(row => SizeLabels.Contains(row.Size, StringComparer.OrdinalIgnoreCase))
+                .ToList();
         }
 
         var confidence = CalculateConfidence(usedSources, visionUsed, HasUsableSizeTable(evidence));
@@ -184,14 +242,27 @@ public sealed partial class PlaywrightProductAgentService(
             : 201;
         var source = SelectPrimarySource(usedSources, visionUsed);
         var hints = xhrUrls.Select(MaskUrl).Distinct().Take(4).ToArray();
+        interaction.Add("extracting-size-table", HasUsableSizeTable(evidence) ? "success" : "failed",
+            HasUsableSizeTable(evidence)
+                ? $"{evidence.SizeTable.Count} geçerli beden ölçü satırı doğrulandı."
+                : "Bedenle eşleşen sayısal ürün ölçüsü doğrulanamadı.",
+            [$"title={(string.IsNullOrWhiteSpace(evidence.ProductName) ? "missing" : "found")}",
+             $"availableSizes={evidence.AvailableSizes.Count}", $"xhrSources={xhrBodies.Count}",
+             $"sizeGuide={(sizeUiOpened ? "found" : pageHadTable ? "already-visible" : "missing")}",
+             $"visionUsed={visionUsed}", $"source={source}", $"confidence={confidence:0.00}"]);
 
         return new AgentProductScanResponse(
-            request.RequestId, target.AbsoluteUri, evidence.Brand, evidence.ProductName,
+            request.RequestId, page.Url, string.IsNullOrWhiteSpace(evidence.Brand) ? adapter.Brand : evidence.Brand,
+            evidence.ProductName,
             evidence.AvailableSizes, evidence.UnavailableSizes, evidence.SizeChartUrl,
             evidence.SizeTable, evidence.FitDescription, confidence, source,
             notes.Distinct().Take(8).ToArray(), stopwatch.ElapsedMilliseconds, status,
             new AgentRawSourcesMeta(evidence.JsonLdDocuments, evidence.DomTextLength,
-                xhrBodies.Count, evidence.SameOriginFrames, evidence.OpenShadowRoots, hints));
+                xhrBodies.Count, evidence.SameOriginFrames, evidence.OpenShadowRoots, hints),
+            new AgentScanTrace(request.RequestId, page.Url, adapter.Brand, DateTimeOffset.UtcNow - stopwatch.Elapsed,
+                trace.ToArray()),
+            new AgentProductMetadata(evidence.Reference, evidence.Price, evidence.Currency,
+                evidence.Color, evidence.Material, evidence.ImageUrl));
     }
 
     private async Task<IBrowser> EnsureBrowserAsync()
@@ -202,93 +273,13 @@ public sealed partial class PlaywrightProductAgentService(
         _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
         {
             Headless = true,
-            Args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--single-process"]
+            Args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"]
         });
         return _browser;
     }
 
-    private static async Task OpenSizeUiAsync(IPage page, string domain, CancellationToken token)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(9);
-        if (domain == "zara.com")
-        {
-            var measurementsTab = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions
-            {
-                Name = "Ölçüler",
-                Exact = true
-            }).Last;
-            if (await SafeVisibleAsync(measurementsTab))
-            {
-                await SafeActivateAsync(measurementsTab);
-                await Task.Delay(650, token);
-            }
-        }
-
-        var addPatterns = domain == "pullandbear.com"
-            ? new[] { "Ekle", "Sepete ekle", "Add", "Add to bag" }
-            : new[] { "Ekle", "Add", "Choose size", "Beden seç" };
-        foreach (var pattern in addPatterns)
-        {
-            token.ThrowIfCancellationRequested();
-            var locator = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions
-            {
-                Name = pattern,
-                Exact = true
-            }).Last;
-            if (!await SafeVisibleAsync(locator))
-                locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
-            if (await SafeVisibleAsync(locator))
-            {
-                await SafeActivateAsync(locator);
-                await Task.Delay(500, token);
-                break;
-            }
-        }
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            token.ThrowIfCancellationRequested();
-            foreach (var pattern in new[]
-            {
-                "Ölçüleri görüntüle", "Ölçüleri gör", "Ürün boyutları", "Ölçüler", "ÖLÇÜLERİ GÖR",
-                "Size guide", "Product measurements", "Measurements"
-            })
-            {
-                var locator = page.GetByRole(AriaRole.Tab, new PageGetByRoleOptions
-                {
-                    Name = pattern,
-                    Exact = true
-                }).Last;
-                if (!await SafeVisibleAsync(locator))
-                    locator = page.GetByText(pattern, new PageGetByTextOptions { Exact = true }).Last;
-                if (!await SafeVisibleAsync(locator)) continue;
-                await SafeActivateAsync(locator);
-                await Task.Delay(700, token);
-                return;
-            }
-            await Task.Delay(100, token);
-        }
-    }
-
-    private static async Task SafeActivateAsync(ILocator locator)
-    {
-        try { await locator.ClickAsync(new LocatorClickOptions { Timeout = 1200 }); return; }
-        catch (PlaywrightException) { }
-        try
-        {
-            await locator.DispatchEventAsync("click", new { bubbles = true, cancelable = true });
-            return;
-        }
-        catch (PlaywrightException) { }
-        try
-        {
-            await locator.DispatchEventAsync("touchstart", new { bubbles = true, cancelable = true });
-            await locator.DispatchEventAsync("touchend", new { bubbles = true, cancelable = true });
-        }
-        catch (PlaywrightException) { }
-    }
-
     private static async Task<List<AgentSizeTableRow>> CollectInteractiveSizeRowsAsync(
-        IPage page, CancellationToken token)
+        IPage page, ProductAgentInteraction interaction, CancellationToken token)
     {
         string[] labels;
         try
@@ -304,8 +295,10 @@ public sealed partial class PlaywrightProductAgentService(
                 }
                 """);
         }
-        catch (PlaywrightException)
+        catch (PlaywrightException exception)
         {
+            interaction.Add("extracting-size-table", "failed",
+                "Beden seçenekleri etkileşimli panelden okunamadı.", [exception.GetType().Name]);
             return [];
         }
         var rows = new List<AgentSizeTableRow>();
@@ -330,21 +323,60 @@ public sealed partial class PlaywrightProductAgentService(
                     }
                     """, label);
             }
-            catch (PlaywrightException)
+            catch (PlaywrightException exception)
             {
+                interaction.Add("extracting-size-table", "failed",
+                    $"{label} bedeni seçilemedi.", [exception.GetType().Name]);
                 clicked = false;
             }
             if (!clicked) continue;
             await Task.Delay(800, token);
-            var current = await ReadPageEvidenceAsync(page);
-            var measurements = current.SizeTable
-                .SelectMany(row => row.Measurements)
-                .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Last().Value,
-                    StringComparer.OrdinalIgnoreCase);
+            var measurements = await ReadCurrentMeasurementsAsync(page);
+            if (measurements.Count == 0)
+            {
+                var current = await ReadPageEvidenceAsync(page);
+                measurements = current.SizeTable
+                    .SelectMany(row => row.Measurements)
+                    .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.Last().Value,
+                        StringComparer.OrdinalIgnoreCase);
+            }
             if (measurements.Count > 0) rows.Add(new AgentSizeTableRow(label, measurements));
         }
         return rows;
+    }
+
+    private static async Task<Dictionary<string, string>> ReadCurrentMeasurementsAsync(IPage page)
+    {
+        try
+        {
+            return await page.EvaluateAsync<Dictionary<string, string>>("""
+                () => {
+                  const clean=v=>String(v||'').replace(/\s+/g,' ').trim();
+                  const fold=v=>clean(v).toLocaleLowerCase('tr-TR').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+                  const visible=e=>{if(!e?.getBoundingClientRect)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=='none'&&s.visibility!=='hidden'};
+                  const metric=/gogus|göğüs|chest|bust|on uzunluk|ön uzunluk|front length|kol uzunlugu|kol uzunluğu|sleeve length|sirt genisligi|sırt genişliği|back width|kol genisligi|kol genişliği|arm width|bel|waist|kalca|kalça|basen|hip|omuz|shoulder|ic bacak|iç bacak|inseam|uyluk|thigh|paca|paça|rise/i;
+                  const result={};
+                  const labels=[...document.querySelectorAll('th,td,dt,dd,p,span,div,li')].filter(visible).filter(e=>{const t=clean(e.innerText||e.textContent);return t.length>1&&t.length<60&&metric.test(fold(t))});
+                  for(const label of labels){
+                    const labelText=clean(label.innerText||label.textContent).replace(/\d{1,3}(?:[.,]\d+)?(?:\s*(?:cm|in|inç))?/gi,'').trim();
+                    if(!labelText)continue;
+                    let row=label;
+                    for(let depth=0;row&&depth<5;depth++,row=row.parentElement){
+                      const text=clean(row.innerText||row.textContent);
+                      if(text.length>180)continue;
+                      const values=(text.match(/\b\d{1,3}(?:[.,]\d+)?\b/g)||[]).filter(v=>{const n=Number(v.replace(',','.'));return n>=5&&n<=250});
+                      if(values.length){result[labelText]=values[0].replace(',','.');break;}
+                    }
+                  }
+                  return result;
+                }
+                """) ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (PlaywrightException)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private static async Task<bool> SafeVisibleAsync(ILocator locator)
@@ -394,7 +426,7 @@ public sealed partial class PlaywrightProductAgentService(
             if (Array.isArray(v)) { for(const x of v){const y=findProduct(x);if(y)return y;} return null; }
             const t=v['@type']; if(t==='Product'||(Array.isArray(t)&&t.includes('Product')))return v;
             for(const x of Object.values(v)){const y=findProduct(x);if(y)return y;} return null; };
-          for(const s of scripts){try{product=findProduct(JSON.parse(s.textContent||''))||product;}catch{}}
+          for(const s of scripts){try{product=findProduct(JSON.parse(s.textContent||''))||product;}catch(error){void error;}}
           const sizeRx=/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)$/i;
           const normalizeSize = value => {
             const v=clean(value).toUpperCase();
@@ -457,10 +489,18 @@ public sealed partial class PlaywrightProductAgentService(
             if(selected&&Object.keys(measurements).length)sizeTable.push({size:selected,measurements});
           }
           const fit=(text.match(/(?:super\s+baggy|baggy|boxy|oversized?|relaxed|straight|regular|slim|skinny|muscle|wide\s+leg)\s*(?:fit)?/i)||[])[0]||'';
-          const sameOriginFrames=[...document.querySelectorAll('iframe')].filter(f=>{try{return f.contentDocument&&new URL(f.src||location.href,location.href).origin===location.origin}catch{return false}}).length;
+          const sameOriginFrames=[...document.querySelectorAll('iframe')].filter(f=>{try{return f.contentDocument&&new URL(f.src||location.href,location.href).origin===location.origin}catch(error){void error;return false}}).length;
           const crossOriginFrames=Math.max(0,document.querySelectorAll('iframe').length-sameOriginFrames);
+          const offers=Array.isArray(product?.offers)?product.offers[0]:(product?.offers||{});
+          const image=Array.isArray(product?.image)?product.image[0]:product?.image;
+          const material=clean(product?.material||((text.match(/(?:%\s*\d+|\d+\s*%)[^.;\n]{0,100}(?:pamuk|cotton|keten|linen|viskoz|viscose|polyester|yün|wool)/i)||[])[0]||''));
           return { brand:clean(product?.brand?.name||product?.brand||document.querySelector('meta[property="og:site_name"]')?.content||location.hostname.split('.')[1]),
             productName:clean(product?.name||document.querySelector('meta[property="og:title"]')?.content||document.querySelector('h1')?.innerText||document.title),
+            reference:clean(product?.sku||product?.productID||document.querySelector('meta[property="product:retailer_item_id"]')?.content),
+            price:clean(offers?.price||document.querySelector('meta[property="product:price:amount"]')?.content),
+            currency:clean(offers?.priceCurrency||document.querySelector('meta[property="product:price:currency"]')?.content),
+            color:clean(product?.color||document.querySelector('meta[property="product:color"]')?.content),
+            material, imageUrl:clean(image?.url||image||document.querySelector('meta[property="og:image"]')?.content),
             availableSizes:[...new Set(sizes)], unavailableSizes:[...new Set(unavailable)], sizeChartUrl:'', sizeTable,
             fitDescription:clean(fit), visibleText:text, notes:[], jsonLdDocuments:scripts.length, domTextLength:text.length,
             sameOriginFrames, crossOriginFrames, openShadowRoots:shadows };
@@ -475,9 +515,13 @@ public sealed partial class PlaywrightProductAgentService(
             try
             {
                 using var document = JsonDocument.Parse(body);
+                result.SizeTable.AddRange(ProductJsonSizeEvidenceExtractor.ExtractRows(document.RootElement));
                 WalkJson(document.RootElement, result, "");
             }
-            catch (JsonException) { }
+            catch (JsonException exception)
+            {
+                result.Notes.Add($"XHR JSON ayrıştırılamadı: {exception.GetType().Name}");
+            }
         }
         return result;
     }
@@ -509,6 +553,7 @@ public sealed partial class PlaywrightProductAgentService(
     private static PageEvidence MergeEvidence(PageEvidence page, PageEvidence xhr)
     {
         page.AvailableSizes = page.AvailableSizes.Concat(xhr.AvailableSizes).Distinct().ToList();
+        page.SizeTable = page.SizeTable.Concat(xhr.SizeTable).ToList();
         if (string.IsNullOrWhiteSpace(page.FitDescription)) page.FitDescription = xhr.FitDescription;
         return page;
     }
@@ -523,7 +568,8 @@ public sealed partial class PlaywrightProductAgentService(
             for (var index = 1; index < cells.Count && index < chart.Headers.Count; index++)
                 measurements[chart.Headers[index]] = cells[index];
             return new AgentSizeTableRow(cells.FirstOrDefault() ?? "", measurements);
-        }).Where(row => IsSize(row.Size) && row.Measurements.Values.Any(HasNumericValue)).ToList();
+        }).Select(ProductScanEvidenceValidator.NormalizeRow)
+          .Where(row => row is not null).Select(row => row!).ToList();
         return evidence;
     }
 
@@ -539,7 +585,10 @@ public sealed partial class PlaywrightProductAgentService(
                 urls.Enqueue(response.Url);
             }
         }
-        catch (PlaywrightException) { }
+        catch (PlaywrightException exception)
+        {
+            urls.Enqueue("capture-error:" + exception.GetType().Name);
+        }
     }
 
     private async Task ThrottleHostAsync(string domain, CancellationToken token)
@@ -573,26 +622,7 @@ public sealed partial class PlaywrightProductAgentService(
     }
 
     private static bool HasUsableSizeTable(PageEvidence evidence) =>
-        evidence.SizeTable.Any(row =>
-            IsSize(row.Size) && row.Measurements.Values.Any(HasNumericValue));
-
-    private static bool HasNumericValue(string value) =>
-        Regex.IsMatch(value ?? "", @"\d{1,3}(?:[.,]\d+)?");
-
-    private static bool TryValidateUrl(string value, out Uri uri, out string domain)
-    {
-        domain = "";
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed) || parsed.Scheme != Uri.UriSchemeHttps)
-        {
-            uri = null!;
-            return false;
-        }
-        uri = parsed;
-        domain = AllowedDomains.FirstOrDefault(item =>
-            parsed.Host.Equals(item, StringComparison.OrdinalIgnoreCase) ||
-            parsed.Host.EndsWith("." + item, StringComparison.OrdinalIgnoreCase)) ?? "";
-        return domain.Length > 0;
-    }
+        evidence.SizeTable.Any(ProductScanEvidenceValidator.IsValidRow);
 
     private static string SafeUserAgent(string hint)
     {
@@ -608,14 +638,36 @@ public sealed partial class PlaywrightProductAgentService(
         return uri.GetLeftPart(UriPartial.Authority) + "/…";
     }
 
+    private static string SafeDiagnostic(Exception exception)
+    {
+        var label = exception.GetType().Name;
+        var message = exception.GetBaseException().Message;
+        message = Regex.Replace(
+            message,
+            @"https?://[^\s]+",
+            "[url]",
+            RegexOptions.IgnoreCase);
+        message = Regex.Replace(
+            message,
+            @"[\r\n]+.*",
+            "",
+            RegexOptions.Singleline);
+        var diagnostic = $"{label}: {message}";
+        return diagnostic[..Math.Min(diagnostic.Length, 240)];
+    }
+
     private static bool IsSize(string value) =>
         SizeLabels.Contains(value) || NumericSize().IsMatch(value);
 
     private static AgentProductScanResponse Failure(
-        AgentProductScanRequest request, Stopwatch stopwatch, int status, string note) =>
+        AgentProductScanRequest request, Stopwatch stopwatch, int status, string note,
+        IReadOnlyList<AgentScanTraceStep>? trace = null, string brand = "Unknown") =>
         new(request.RequestId, request.Url, "", "", [], [], "", [], "", 0,
             "DOM", [note, "Ön doğrulama gerektirir."], stopwatch.ElapsedMilliseconds, status,
-            new AgentRawSourcesMeta(0, 0, 0, 0, 0, []));
+            new AgentRawSourcesMeta(0, 0, 0, 0, 0, []),
+            new AgentScanTrace(request.RequestId, request.Url, brand,
+                DateTimeOffset.UtcNow - stopwatch.Elapsed,
+                trace ?? [new AgentScanTraceStep("server-agent", "failed", note, stopwatch.ElapsedMilliseconds)]));
 
     public async ValueTask DisposeAsync()
     {
@@ -636,6 +688,12 @@ public sealed partial class PlaywrightProductAgentService(
     {
         public string Brand { get; set; } = "";
         public string ProductName { get; set; } = "";
+        public string Reference { get; set; } = "";
+        public string Price { get; set; } = "";
+        public string Currency { get; set; } = "";
+        public string Color { get; set; } = "";
+        public string Material { get; set; } = "";
+        public string ImageUrl { get; set; } = "";
         public List<string> AvailableSizes { get; set; } = [];
         public List<string> UnavailableSizes { get; set; } = [];
         public string SizeChartUrl { get; set; } = "";

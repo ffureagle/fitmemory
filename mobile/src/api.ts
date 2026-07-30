@@ -11,6 +11,7 @@ import type {
   StyleBoardItem,
   FavoriteOutfit,
   WardrobeOutfit,
+  ProductAgentResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -28,6 +29,7 @@ type ApiOptions = {
   token?: string | null;
   allowNotFound?: boolean;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 export class FitMemoryApi {
@@ -38,6 +40,8 @@ export class FitMemoryApi {
 
   async request<T>(path: string, options: ApiOptions = {}): Promise<T> {
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    options.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
     let response: Response;
     try {
@@ -64,6 +68,7 @@ export class FitMemoryApi {
       throw reason;
     } finally {
       clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abortFromCaller);
     }
 
     if (options.allowNotFound && response.status === 404) {
@@ -75,6 +80,7 @@ export class FitMemoryApi {
     if (!response.ok) {
       const fallback = `Sunucu isteği başarısız oldu (${response.status}).`;
       let message = fallback;
+      const textResponse = response.clone();
       try {
         const problem = (await response.json()) as {
           detail?: string;
@@ -88,17 +94,19 @@ export class FitMemoryApi {
           problem.title ||
           problem.message ||
           fallback;
-      } catch {
-        message = (await response.text().catch(() => "")) || fallback;
+      } catch (parseError) {
+        console.warn("API problem response was not JSON", parseError);
+        message = (await textResponse.text()) || fallback;
       }
       throw new ApiError(message, response.status);
     }
     return (await response.json()) as T;
   }
 
-  health() {
+  health(timeoutMs = 45_000) {
     return this.request<{ status: string; databaseHealthy: boolean }>(
       "/health",
+      { timeoutMs },
     );
   }
 
@@ -246,6 +254,27 @@ export class FitMemoryApi {
           ocrText,
           language: this.language,
         },
+    });
+  }
+
+  extractProductWithAgent(
+    token: string,
+    url: string,
+    requestId: string,
+    signal?: AbortSignal,
+  ) {
+    return this.request<ProductAgentResult>("/api/product-scans/agent", {
+      method: "POST",
+      token,
+      signal,
+      timeoutMs: 190_000,
+      body: {
+        url,
+        requestId,
+        sourcePlatform: "mobile-webview",
+        language: this.language,
+        maxWaitMs: 110_000,
+      },
     });
   }
 
