@@ -2,7 +2,6 @@ import { captureRef } from "react-native-view-shot";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   BackHandler,
   Image,
   Keyboard,
@@ -23,15 +22,12 @@ import {
   SectionTitle,
 } from "../components/Ui";
 import { createScanScript } from "../injectedScanner";
-import { agentResultToSnapshot, hasVerifiedNumericChart } from "../scanValidation";
+import { hasVerifiedNumericChart } from "../scanValidation";
 import { isCurrentScanResponse, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
 import {
   chartFromRecognizedText,
   collectNativeScanEvidence,
   nativeSizeOptions,
-  nativeAccessibilityEnabled,
-  openNativeAccessibilitySettings,
-  prepareNativeMeasurementPanel,
   selectNativeSize,
   snapshotWithChart,
 } from "../nativeScanner";
@@ -41,6 +37,7 @@ import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
 import type {
   ProductSnapshot,
+  OrderSnapshot,
   Recommendation,
   ScannerMessage,
   WardrobeOutfit,
@@ -95,7 +92,6 @@ export function ScanScreen({
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanOriginRef = useRef<string | null>(null);
   const activeScanRef = useRef<{ scanId: string; url: string; controller: AbortController } | null>(null);
-  const accessibilityPromptedRef = useRef(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -119,6 +115,8 @@ export function ScanScreen({
   const [outfitBusy, setOutfitBusy] = useState(false);
   const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
   const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
+  const [pendingOrders, setPendingOrders] = useState<OrderSnapshot | null>(null);
+  const [orderImportBusy, setOrderImportBusy] = useState(false);
 
   const createWardrobeOutfit = async () => {
     if (!session.token || !session.account || outfitPrompt.trim().length < 3) return;
@@ -173,6 +171,7 @@ export function ScanScreen({
 
   const closeBrowser = () => {
     stopScan();
+    setPendingOrders(null);
     setSnapshot(null);
     setRecommendation(null);
     setNote("");
@@ -251,7 +250,7 @@ export function ScanScreen({
     setScanTrace([{ stage: "webview", status: "started", message: "Mağaza sayfası hazırlanıyor" }]);
     setStatus(
       mode === "product"
-        ? "Beden tablosu ve kalıp okunuyor"
+        ? "Açık ölçü tablosu okunuyor"
         : "Görünür siparişler hazırlanıyor",
     );
     setScanMode(mode);
@@ -269,26 +268,7 @@ export function ScanScreen({
         "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
       );
     }, SCAN_TIMEOUT_MS);
-    if (mode === "product") {
-      if (!accessibilityPromptedRef.current) {
-        accessibilityPromptedRef.current = true;
-        void nativeAccessibilityEnabled().then((enabled) => {
-          if (enabled !== false) return;
-          Alert.alert(
-            "Beden okuyucuyu etkinleştir",
-            "FitMemory yalnızca kendi mağaza tarayıcısındaki beden panellerini otomatik açmak için Android erişilebilirlik iznine ihtiyaç duyar. İzin verilmezse cihaz içi OCR ile devam eder.",
-            [
-              { text: "OCR ile devam", style: "cancel" },
-              { text: "Ayarları aç", onPress: openNativeAccessibilitySettings },
-            ],
-          );
-        });
-      }
-      void prepareNativeMeasurementPanel().then((opened) => {
-        if (opened) setStatus("Beden paneli erişilebilirlik katmanıyla açıldı");
-      });
-    }
-    webViewRef.current?.injectJavaScript(createScanScript(mode));
+    webViewRef.current?.injectJavaScript(createScanScript(mode, mode === "product"));
   };
 
   const analyzeSnapshot = async (nextSnapshot: ProductSnapshot) => {
@@ -321,31 +301,32 @@ export function ScanScreen({
     >["snapshot"],
   ) => {
     if (!session.token || !session.account) return;
-    setStatus("Siparişler araştırılıyor ve dolabına ekleniyor");
-    let base64 = "";
+    setOrderImportBusy(true);
+    setStatus("Onayladığın siparişler arşive ekleniyor");
     try {
-      base64 = await captureRef(captureViewRef, {
-        format: "jpg",
-        quality: 0.58,
-        result: "base64",
-      });
+      const result = await session.api.importOrders(session.account.userId, session.token, orderSnapshot, "");
+      session.updateOrders(result.orders);
+      feedback.success();
+      setStatus(`${result.importedCount} yeni parça eklendi, ${result.updatedCount} parça güncellendi.`);
+      setTimeout(() => setStatus(""), 5000);
+      setPendingOrders(null);
     } finally {
-      webViewRef.current?.injectJavaScript(
-        "window.__fitmemoryRestoreRedactions?.();true;",
-      );
+      setOrderImportBusy(false);
     }
-    const result = await session.api.importOrders(
-      session.account.userId,
-      session.token,
-      orderSnapshot,
-      `data:image/jpeg;base64,${base64}`,
-    );
-    session.updateOrders(result.orders);
-    feedback.success();
-    setStatus(
-      `${result.importedCount} yeni parça eklendi, ${result.updatedCount} parça güncellendi.`,
-    );
-    setTimeout(() => setStatus(""), 5000);
+  };
+
+  const updatePendingOrder = (clientKey: string, field: "productName" | "purchasedSize", value: string) => {
+    setPendingOrders((current) => current ? {
+      ...current,
+      orderCards: current.orderCards.map((card) => card.clientKey === clientKey ? { ...card, [field]: value } : card),
+    } : current);
+  };
+
+  const removePendingOrder = (clientKey: string) => {
+    setPendingOrders((current) => current ? {
+      ...current,
+      orderCards: current.orderCards.filter((card) => card.clientKey !== clientKey),
+    } : current);
   };
 
   const analyzeVisualFallback = async (
@@ -354,34 +335,11 @@ export function ScanScreen({
     if (!session.token || !session.account) return;
       const active = activeScanRef.current;
       if (!active || !isCurrentScanResponse(active, active.scanId, fallback.product.url)) return;
-    if (/^https:\/\/(?:[^/]+\.)?(?:pullandbear|zara)\.com(?:\/|$)/i.test(fallback.product.url)) {
-      try {
-        setScanStage("warming-api");
-        setStatus("Sunucu hazırlanıyor");
-        await session.api.health(60_000);
-        if (activeScanRef.current?.scanId !== active.scanId) return;
-        setScanStage("server-agent");
-        setStatus("Ürün bilgileri okunuyor");
-        setScanTrace((steps) => [...steps, { stage: "server-agent", status: "started", message: "Marka adaptörü ürün ve beden panelini okuyor" }]);
-        const agent = await session.api.extractProductWithAgent(
-          session.token, fallback.product.url, active.scanId, active.controller.signal,
-        );
-        if (!isCurrentScanResponse(activeScanRef.current, active.scanId, fallback.product.url, agent.requestId)) return;
-        const agentSnapshot = agentResultToSnapshot(agent, fallback.product);
-        if (agentSnapshot) {
-          setScanTrace((steps) => [...steps, ...(agent.trace?.steps ?? []),
-            { stage: "server-agent", status: "success", message: `${agentSnapshot.sizeChart.rows.length} geçerli beden ölçü satırı bulundu` }]);
-          await analyzeSnapshot(agentSnapshot);
-          return;
-        }
-        setScanTrace((steps) => [...steps, ...(agent.trace?.steps ?? []),
-          { stage: "server-agent", status: "failed", message: "Sunucu ajanı doğrulanmış ölçü tablosu döndürmedi", details: agent.notes }]);
-      } catch (reason) {
-        if (active.controller.signal.aborted) return;
-        setScanTrace((steps) => [...steps, { stage: "server-agent", status: "failed",
-          message: reason instanceof Error ? reason.message : "Sunucu ajanı başarısız" }]);
-      }
-    }
+    setScanTrace((steps) => [...steps, {
+      stage: "webview",
+      status: "failed",
+      message: "Açık ölçü tablosu görünür DOM'da doğrulanamadı; ekran okuyucuya geçiliyor",
+    }]);
     if (activeScanRef.current?.scanId !== active.scanId) return;
     setScanStage("native-ocr");
     setStatus("Görsel ölçü okuyucu tabloyu doğruluyor");
@@ -450,7 +408,7 @@ export function ScanScreen({
     );
     if (!hasVerifiedNumericChart(extracted)) {
       setScanStage("failed");
-      throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
+      throw new Error("Ölçü tablosu okunamadı. Mağazada ölçü ekranını açık bırakıp tekrar Açık ölçüleri oku düğmesine bas.");
     }
     await analyzeSnapshot(extracted);
   };
@@ -499,7 +457,10 @@ export function ScanScreen({
       } else if (message.type === "fitmemory-product-fallback") {
         await analyzeVisualFallback(message.snapshot);
       } else {
-        await importOrderSnapshot(message.snapshot);
+        setPendingOrders(message.snapshot);
+        setStatus("");
+        setScanStage("completed");
+        webViewRef.current?.injectJavaScript("window.__fitmemoryRestoreRedactions?.();true;");
       }
     } catch (reason) {
       setScanStage("failed");
@@ -894,6 +855,37 @@ export function ScanScreen({
             </View>
           ) : null}
 
+          {pendingOrders ? (
+            <View style={styles.orderReview}>
+              <View style={styles.orderReviewHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.orderReviewEyebrow}>SİPARİŞ ONAYI</Text>
+                  <Text style={styles.orderReviewTitle}>Bulunan: {pendingOrders.orderCards.length} ürün</Text>
+                </View>
+                <Pressable onPress={() => setPendingOrders(null)} style={styles.orderReviewClose}>
+                  <Text style={styles.orderReviewCloseText}>×</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.orderReviewCopy}>Ürün adını ve satın aldığın bedeni kontrol et. Yanlış kaydı düzenleyebilir veya silebilirsin.</Text>
+              <ScrollView style={styles.orderReviewList} keyboardShouldPersistTaps="handled">
+                {pendingOrders.orderCards.map((card) => (
+                  <View key={card.clientKey} style={styles.orderReviewCard}>
+                    {card.imageUrl ? <Image source={{ uri: card.imageUrl }} style={styles.orderReviewImage} /> : null}
+                    <View style={styles.orderReviewFields}>
+                      <Text style={styles.orderReviewBrand}>{card.brand}</Text>
+                      <TextInput value={card.productName} onChangeText={(value) => updatePendingOrder(card.clientKey, "productName", value)} style={styles.orderReviewInput} />
+                      <TextInput autoCapitalize="characters" value={card.purchasedSize} onChangeText={(value) => updatePendingOrder(card.clientKey, "purchasedSize", value.toUpperCase())} placeholder="Beden" style={styles.orderReviewSize} />
+                    </View>
+                    <Pressable onPress={() => removePendingOrder(card.clientKey)} style={styles.orderReviewDelete}>
+                      <Text style={styles.orderReviewDeleteText}>Sil</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+              <Button busy={orderImportBusy} disabled={!pendingOrders.orderCards.length || pendingOrders.orderCards.some((card) => !card.productName.trim() || !card.purchasedSize.trim())} label="Arşive ekle" onPress={() => void importOrderSnapshot(pendingOrders)} tone="blue" />
+            </View>
+          ) : null}
+
           <View style={styles.browserBottom}>
             <Pressable
               disabled={!canGoBack}
@@ -916,7 +908,7 @@ export function ScanScreen({
               ) : (
                 <Text style={styles.scanSpark}>✦</Text>
               )}
-              <Text style={styles.scanPrimaryText}>Ürünü tara</Text>
+              <Text style={styles.scanPrimaryText}>Açık ölçüleri oku</Text>
             </Pressable>
             <Pressable
               disabled={Boolean(scanMode)}
@@ -964,6 +956,22 @@ export function ScanScreen({
 }
 
 const styles = StyleSheet.create({
+  orderReview: { backgroundColor: colors.card, bottom: 74, left: 10, maxHeight: "78%", padding: 16, position: "absolute", right: 10, zIndex: 30, ...shadow },
+  orderReviewHeader: { alignItems: "center", flexDirection: "row", gap: 10 },
+  orderReviewEyebrow: { color: colors.blue, fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  orderReviewTitle: { color: colors.ink, fontSize: 21, fontWeight: "900", marginTop: 3 },
+  orderReviewCopy: { color: colors.muted, fontSize: 11, lineHeight: 17, marginVertical: 10 },
+  orderReviewClose: { alignItems: "center", backgroundColor: "#EEECE6", borderRadius: 18, height: 36, justifyContent: "center", width: 36 },
+  orderReviewCloseText: { color: colors.ink, fontSize: 22 },
+  orderReviewList: { marginBottom: 12 },
+  orderReviewCard: { alignItems: "center", borderTopColor: colors.line, borderTopWidth: 1, flexDirection: "row", gap: 9, paddingVertical: 10 },
+  orderReviewImage: { backgroundColor: "#EEECE6", borderRadius: 8, height: 64, width: 48 },
+  orderReviewFields: { flex: 1, gap: 5 },
+  orderReviewBrand: { color: colors.blue, fontSize: 8, fontWeight: "900", textTransform: "uppercase" },
+  orderReviewInput: { borderColor: colors.line, borderRadius: 7, borderWidth: 1, color: colors.ink, fontSize: 11, paddingHorizontal: 8, paddingVertical: 6 },
+  orderReviewSize: { borderColor: colors.line, borderRadius: 7, borderWidth: 1, color: colors.ink, fontSize: 11, fontWeight: "800", paddingHorizontal: 8, paddingVertical: 6, width: 82 },
+  orderReviewDelete: { padding: 8 },
+  orderReviewDeleteText: { color: "#B23A35", fontSize: 10, fontWeight: "800" },
   diagnostics: {
     backgroundColor: "#F4F2ED",
     borderTopColor: "#D8D4CC",

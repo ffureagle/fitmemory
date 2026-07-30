@@ -8,6 +8,9 @@ public sealed class OrderHistoryItem
 
     public int UserProfileId { get; set; }
 
+    [MaxLength(64)]
+    public string? ImportFingerprint { get; set; }
+
     public required UserProfile UserProfile { get; set; }
 
     [MaxLength(100)]

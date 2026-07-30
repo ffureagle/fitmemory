@@ -261,6 +261,8 @@ export type OrderCardImage = {
 };
 
 export type OrderCard = {
+  clientKey: string;
+  orderReference: string;
   text: string;
   brand: string;
   productName: string;

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using FitMemory.Api.Contracts;
 using FitMemory.Api.Data;
@@ -116,6 +118,7 @@ public sealed class OrderImportsController(
             .Where(order => order.UserProfileId == profile.Id)
             .ToListAsync(cancellationToken);
         var existingByKey = existing
+            .Where(order => string.IsNullOrWhiteSpace(order.ImportFingerprint))
             .GroupBy(
                 order => BuildKey(
                     order.Brand,
@@ -126,7 +129,12 @@ public sealed class OrderImportsController(
                 group => group.Key,
                 group => group.First(),
                 StringComparer.Ordinal);
+        var existingByFingerprint = existing
+            .Where(order => !string.IsNullOrWhiteSpace(order.ImportFingerprint))
+            .GroupBy(order => order.ImportFingerprint!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var responseItems = new List<ImportedOrderItemResponse>();
+        var consumedCards = new HashSet<string>(StringComparer.Ordinal);
         var now = DateTimeOffset.UtcNow;
 
         foreach (var item in analysis.Items.Where(item => item.IsApparel))
@@ -145,9 +153,24 @@ public sealed class OrderImportsController(
             }
 
             var imageUrl = ResolveProductImage(item, request);
-            var key = BuildKey(item.Brand, item.ProductName, item.PurchasedSize);
-            if (existingByKey.TryGetValue(key, out var existingOrder))
+            var sourceCard = request.OrderCards.FirstOrDefault(card =>
+                !consumedCards.Contains(card.ClientKey) &&
+                ProductNamesMatch(card.ProductName, item.ProductName) &&
+                card.PurchasedSize.Equals(item.PurchasedSize, StringComparison.OrdinalIgnoreCase));
+            if (sourceCard is not null)
             {
+                consumedCards.Add(sourceCard.ClientKey);
+            }
+            var fingerprint = BuildImportFingerprint(item, sourceCard);
+            var key = BuildKey(item.Brand, item.ProductName, item.PurchasedSize);
+            if (existingByFingerprint.TryGetValue(fingerprint, out var existingOrder) ||
+                existingByKey.TryGetValue(key, out existingOrder))
+            {
+                if (string.IsNullOrWhiteSpace(existingOrder.ImportFingerprint))
+                {
+                    existingOrder.ImportFingerprint = fingerprint;
+                    existingByKey.Remove(key);
+                }
                 var updated = EnrichExistingOrder(
                     existingOrder,
                     item,
@@ -176,6 +199,7 @@ public sealed class OrderImportsController(
             {
                 UserProfileId = profile.Id,
                 UserProfile = profile,
+                ImportFingerprint = fingerprint,
                 Brand = item.Brand,
                 ProductName = item.ProductName,
                 Category = item.Category,
@@ -209,7 +233,7 @@ public sealed class OrderImportsController(
             fitAssessmentService.Apply(profile, order);
             db.OrderHistoryItems.Add(order);
             existing.Add(order);
-            existingByKey[key] = order;
+            existingByFingerprint[fingerprint] = order;
             responseItems.Add(ToResponseItem(
                 item,
                 true,
@@ -506,6 +530,26 @@ public sealed class OrderImportsController(
         }
 
         return $"{Normalize(brand)}|{Normalize(productName)}|{Normalize(size)}";
+    }
+
+    private static string BuildImportFingerprint(
+        ResearchedOrder item,
+        OrderCardDto? card)
+    {
+        static string Normalize(string? value) => string.Concat(
+            (value ?? "").Trim().ToUpperInvariant().Where(char.IsLetterOrDigit));
+
+        var reference = Normalize(card?.OrderReference);
+        if (reference.Length == 0)
+        {
+            reference = Normalize(card?.ClientKey);
+        }
+        var canonical = string.Join('|',
+            Normalize(item.Brand),
+            reference,
+            Normalize(item.ProductName),
+            Normalize(item.PurchasedSize));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
     private static string BuildProviderErrorDetail(

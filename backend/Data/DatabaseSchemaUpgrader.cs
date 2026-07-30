@@ -22,6 +22,7 @@ public static class DatabaseSchemaUpgrader
             ["ReturnConfirmedByUser"] = "INTEGER NOT NULL DEFAULT 0"
             , ["MaterialSummary"] = "TEXT NULL"
             , ["MaterialEvidence"] = "TEXT NULL"
+            , ["ImportFingerprint"] = "TEXT NULL"
         };
 
     private static readonly IReadOnlyDictionary<string, string> ProfileColumns =
@@ -108,6 +109,7 @@ public static class DatabaseSchemaUpgrader
             await CreateStyleBoardIndexesAsync(
                 connection,
                 cancellationToken);
+            await CreateOrderImportIndexesAsync(connection, cancellationToken);
             await CreateFavoriteOutfitsTableAsync(connection, cancellationToken);
             await MigrateLegacyReturnsAsync(
                 connection,
@@ -120,6 +122,19 @@ public static class DatabaseSchemaUpgrader
                 await connection.CloseAsync();
             }
         }
+    }
+
+    private static async Task CreateOrderImportIndexesAsync(
+        System.Data.Common.DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_OrderHistoryItems_UserProfileId_ImportFingerprint"
+            ON "OrderHistoryItems" ("UserProfileId", "ImportFingerprint");
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task CreateFavoriteOutfitsTableAsync(

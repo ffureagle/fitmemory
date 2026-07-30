@@ -23,7 +23,7 @@ public sealed class AnalyzeOrderHistoryRequest : IValidatableObject
     [StringLength(6_500_000)]
     public string? ScreenshotDataUrl { get; init; }
 
-    [MaxLength(25)]
+    [MaxLength(300)]
     public IReadOnlyList<OrderCardDto> OrderCards { get; init; } = [];
 
     [MaxLength(6)]
@@ -41,11 +41,11 @@ public sealed class AnalyzeOrderHistoryRequest : IValidatableObject
                 [nameof(OrderCards)]);
         }
 
-        if (string.IsNullOrWhiteSpace(ScreenshotDataUrl) ||
+        if (!string.IsNullOrWhiteSpace(ScreenshotDataUrl) &&
             !ScreenshotDataUrl.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal))
         {
             yield return new ValidationResult(
-                "Kırpılmış JPEG ekran görüntüsü gereklidir.",
+                "Ekran görüntüsü gönderildiyse JPEG veri adresi olmalıdır.",
                 [nameof(ScreenshotDataUrl)]);
         }
     }
@@ -53,6 +53,12 @@ public sealed class AnalyzeOrderHistoryRequest : IValidatableObject
 
 public sealed class OrderCardDto
 {
+    [StringLength(160)]
+    public string ClientKey { get; init; } = "";
+
+    [StringLength(160)]
+    public string OrderReference { get; init; } = "";
+
     [Required, StringLength(4_000, MinimumLength = 3)]
     public required string Text { get; init; }
 

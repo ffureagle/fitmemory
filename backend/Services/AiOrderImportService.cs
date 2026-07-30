@@ -13,6 +13,12 @@ public sealed class AiOrderImportService(
         AnalyzeOrderHistoryRequest request,
         CancellationToken cancellationToken)
     {
+        var structured = BuildStructuredDomAnalysis(request);
+        if (request.OrderCards.Count > 0)
+        {
+            return structured;
+        }
+
         OrderImportAnalysis analysis;
         if (providerOptions.Value.IsGemini)
         {
@@ -34,6 +40,42 @@ public sealed class AiOrderImportService(
         }
 
         return MergeStructuredDomEvidence(analysis, request);
+    }
+
+    private static OrderImportAnalysis BuildStructuredDomAnalysis(
+        AnalyzeOrderHistoryRequest request)
+    {
+        var items = request.OrderCards
+            .Where(card =>
+                !string.IsNullOrWhiteSpace(card.Brand) &&
+                !string.IsNullOrWhiteSpace(card.ProductName) &&
+                !string.IsNullOrWhiteSpace(card.PurchasedSize))
+            .Select(card => new ResearchedOrder(
+                true,
+                card.Brand.Trim(),
+                card.ProductName.Trim(),
+                DetectCategory(card.ProductName),
+                card.PurchasedSize.Trim().ToUpperInvariant(),
+                OrderOutcome.PurchasedUnknownFit,
+                "Mağazanın sipariş kartındaki ürün adı ve satın alınan beden DOM üzerinden kullanıcı onayıyla doğrulandı.",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                card.ProductLinks.FirstOrDefault() ?? "",
+                "",
+                DetectFitLabel(card.ProductName),
+                "",
+                false,
+                70))
+            .ToArray();
+
+        return new OrderImportAnalysis(
+            items,
+            $"Kullanıcının onayladığı {items.Length} sipariş ürünü kayda hazırlandı.",
+            "confirmed-order-dom");
     }
 
     private static OrderImportAnalysis MergeStructuredDomEvidence(

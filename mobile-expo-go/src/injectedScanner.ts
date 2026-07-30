@@ -918,8 +918,8 @@ const scannerBootstrap = String.raw`
       rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
     };
   };
-  const scrapeProduct = async () => {
-    await openSizeGuide();
+  const scrapeProduct = async (visibleMeasurementsOnly = false) => {
+    if (!visibleMeasurementsOnly) await openSizeGuide();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -947,17 +947,19 @@ const scannerBootstrap = String.raw`
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
     let chart = null;
-    for (let attempt = 0; attempt < 2 && !chart?.found; attempt += 1) {
+    for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 1 : 2) && !chart?.found; attempt += 1) {
       chart = tableChart() || geometryChart() || await panelChart() || visiblePanelChart();
       if (chart?.found) break;
-      await openSizeGuide();
+      if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
     }
     const material = await materialDetails();
     if (!chart?.found) {
       return {
         fallback: true,
-        reason: "Beden tablosu DOM üzerinden okunamadı: " + guideStage + ".",
+        reason: visibleMeasurementsOnly
+          ? "Açık ölçü panelinde bedenle eşleşen sayısal ürün ölçüleri okunamadı."
+          : "Beden tablosu DOM üzerinden okunamadı: " + guideStage + ".",
         pageText: (selectedSizeEvidence() + "\n" + pageText).slice(0, 20000),
         product: {
           url: location.href.slice(0, 1000), brand, name: title,
@@ -1086,6 +1088,30 @@ const scannerBootstrap = String.raw`
     return start.closest("article, li, [role='listitem']") || start.parentElement;
   };
   const scrapeOrders = async () => {
+    const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
+    const orderCountHint = () => all("[class*='order-item' i], [class*='order-product' i], [data-testid*='order' i] img, main img").length;
+    const loadAllOrderHistory = async () => {
+      let stableRounds = 0;
+      let previousCount = -1;
+      for (let round = 0; round < 30 && stableRounds < 3; round += 1) {
+        postOrderProgress("Sipariş geçmişi yükleniyor · " + Math.max(0, orderCountHint()) + " öğe görüldü");
+        const controls = all("button, a[href], [role='button']").filter(visible)
+          .filter((element) => /daha\s*fazla|daha\s*fazlasını\s*gör|tümünü\s*gör|load\s*more|show\s*more|sonraki|next/i.test(clean(element.innerText || element.textContent)))
+          .filter((element) => !/sepet|cart|checkout|ödeme|payment|giriş|login/i.test(clean(element.innerText || element.textContent) + " " + (element.getAttribute("href") || "")));
+        if (controls[0]) await clickElement(controls[0]);
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+        await sleep(controls[0] ? 900 : 550);
+        const currentCount = orderCountHint();
+        stableRounds = currentCount === previousCount ? stableRounds + 1 : 0;
+        previousCount = currentCount;
+      }
+      window.scrollTo({ top: 0, behavior: "instant" });
+      await sleep(200);
+    };
+    const zaraOrderScanner = () => all("[data-qa-qualifier*='order' i] [data-qa-qualifier*='product' i], [class*='order-detail' i] [class*='product' i], [class*='purchase' i] [class*='product' i]");
+    const bershkaOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-item' i]");
+    const pullAndBearOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-product' i], [class*='order-item' i]");
+    await loadAllOrderHistory();
     const orderImageUrl = (image) => {
       const candidates = [
         image.currentSrc,
@@ -1108,14 +1134,16 @@ const scannerBootstrap = String.raw`
       await clickElement(control);
       await sleep(350);
     }
-    const candidates = [];
-    for (const image of all("main img, img").filter(visible)) {
+    const host = location.hostname.toLowerCase();
+    const adapterCandidates = host.includes("zara.com") ? zaraOrderScanner() : host.includes("bershka.com") ? bershkaOrderScanner() : pullAndBearOrderScanner();
+    const candidates = adapterCandidates;
+    for (const image of all("main img, img")) {
       const rect = image.getBoundingClientRect();
       if (rect.width < 55 || rect.height < 65) continue;
       const container = closestProductContainer(image);
       if (container && !candidates.includes(container)) candidates.push(container);
     }
-    for (const element of all("span, p, div, li").filter(visible)) {
+    for (const element of all("span, p, div, li")) {
       const own = clean(element.innerText || element.textContent);
       if (!/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|2[4-9]|3\d|4\d|5[0-9])$/i.test(own)) continue;
       const container = closestProductContainer(element);
@@ -1127,7 +1155,7 @@ const scannerBootstrap = String.raw`
       "[data-testid*='order' i] [data-testid*='product' i]",
       "[data-qa*='order' i] [data-qa*='product' i]"
     ]) {
-      for (const element of all(selector).filter(visible)) {
+      for (const element of all(selector)) {
         if (!candidates.includes(element)) candidates.push(element);
       }
     }
@@ -1139,7 +1167,6 @@ const scannerBootstrap = String.raw`
         .filter((value, index, values) => values.indexOf(value) === index)
         .slice(0, 8);
       const images = [...element.querySelectorAll("img")]
-        .filter(visible)
         .map((image) => {
           const link = image.closest("a[href]");
           return {
@@ -1154,6 +1181,8 @@ const scannerBootstrap = String.raw`
         ).slice(0, 12);
       const lines = String(element.innerText || "")
         .split(/\n+/).map(clean).filter(Boolean);
+      const ancestryText = safeText(element.closest("[class*='order' i], [data-testid*='order' i], article, li") || element);
+      const orderReference = clean(ancestryText.match(/(?:sipariş|order)\s*(?:no|numarası|number|id)?\s*[:.#-]?\s*([A-Z0-9-]{5,})/i)?.[1] || location.href.match(/[?&#](?:orderId|orderNumber)=([^&#]+)/i)?.[1] || "").slice(0, 160);
       const size = lines.find((line) =>
         /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{2})$/i.test(line)
       ) || text.match(/\b(?:beden|size)\s*[:.]?\s*(XXS|XS|S|M|L|XL|XXL|\d{2})\b/i)?.[1] ||
@@ -1163,7 +1192,12 @@ const scannerBootstrap = String.raw`
         .find((line) =>
           /(jean|pantolon|tişört|t-?shirt|shirt|sweat|hoodie|ceket|jacket|mont|coat|etek|skirt|elbise|dress|kazak|hırka|ayakkabı|shoe|sneaker|fit)/i.test(line)
         ) || clean(images[0]?.alt);
+      const clientKeySource = [orderReference, name, size, links[0] || ""].join("|").toUpperCase();
+      let clientHash = 2166136261;
+      for (let index = 0; index < clientKeySource.length; index += 1) { clientHash ^= clientKeySource.charCodeAt(index); clientHash = Math.imul(clientHash, 16777619); }
       return {
+        clientKey: "order-" + (clientHash >>> 0).toString(16),
+        orderReference,
         text,
         brand: clean(meta("og:site_name") ||
           location.hostname.replace(/^www\./, "").split(".")[0]).slice(0, 100),
@@ -1177,12 +1211,13 @@ const scannerBootstrap = String.raw`
     }).filter((card) =>
       card.text.length >= 8 &&
       (card.productName || card.purchasedSize || card.images.length)
-    ).slice(0, 25);
+    ).filter((card, index, cards) => cards.findIndex((candidate) => candidate.clientKey === card.clientKey) === index).slice(0, 300);
     if (!orderCards.length) {
       throw new Error(
         "Görünür sipariş ürünü bulunamadı. Sipariş ayrıntısını açıp ürün görseli ve bedeni ekranda tutun."
       );
     }
+    postOrderProgress("Bulunan: " + orderCards.length + " ürün");
     redactSensitiveVisible();
     return {
       pageUrl: location.href.slice(0, 1000),
@@ -1195,11 +1230,11 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScan = async (mode) => {
+  window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
         ? await scrapeOrders()
-        : await scrapeProduct();
+        : await scrapeProduct(Boolean(visibleMeasurementsOnly));
       if (mode === "orders") {
         await new Promise((resolve) =>
           requestAnimationFrame(() =>
@@ -1227,8 +1262,11 @@ const scannerBootstrap = String.raw`
 })();true;
 `;
 
-export function createScanScript(mode: "product" | "orders") {
+export function createScanScript(
+  mode: "product" | "orders",
+  visibleMeasurementsOnly = false,
+) {
   return `${scannerBootstrap}
-window.__fitmemoryScan(${JSON.stringify(mode)});
+window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }
