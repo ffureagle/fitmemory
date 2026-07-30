@@ -218,6 +218,10 @@ builder.Services.AddHttpClient<StyleBoardAnalysisService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(90);
 });
+builder.Services.AddHttpClient<WardrobeAiOutfitService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(90);
+});
 builder.Services.AddSingleton<ProductIdentityService>();
 builder.Services.AddSingleton<ProductCategoryService>();
 builder.Services.AddSingleton<ProductFitTaxonomyService>();

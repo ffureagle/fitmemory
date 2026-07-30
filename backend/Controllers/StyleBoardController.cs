@@ -17,7 +17,9 @@ public sealed class StyleBoardController(
     FitMemoryDbContext db,
     StyleBoardAnalysisService analysisService,
     ProductCategoryService categoryService,
-    WardrobeStylistService wardrobeStylistService) : ControllerBase
+    WardrobeStylistService wardrobeStylistService,
+    WardrobeAiOutfitService wardrobeAiOutfitService,
+    ILogger<StyleBoardController> logger) : ControllerBase
 {
     private const int MaxItems = 12;
     private const int MaxFavorites = 30;
@@ -473,6 +475,40 @@ public sealed class StyleBoardController(
             .OrderByDescending(item => item.FitScore)
             .ThenByDescending(item => item.UpdatedAt)
             .ToListAsync(cancellationToken);
+        WardrobeAiOutfitResult? aiOutfit;
+        try
+        {
+            aiOutfit = await wardrobeAiOutfitService.CreateAsync(
+                profile,
+                wardrobe,
+                request.Prompt,
+                request.Language,
+                cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "Görsel AI stilist kullanılamadı; yerel güvenli akışa dönülüyor.");
+            aiOutfit = null;
+        }
+        if (aiOutfit is not null)
+        {
+            if (!aiOutfit.IsValidRequest || aiOutfit.Analysis is null)
+            {
+                return Problem(
+                    statusCode: StatusCodes.Status422UnprocessableEntity,
+                    title: "Kombin isteğini biraz daha açık yaz",
+                    detail: aiOutfit.Message);
+            }
+            return Ok(new WardrobeOutfitResponse(
+                aiOutfit.Analysis,
+                aiOutfit.Pieces.Select(order => new WardrobeOutfitPieceResponse(
+                    order.Id,
+                    order.Brand,
+                    order.ProductName,
+                    order.Category,
+                    order.PurchasedSize,
+                    order.ImageUrl)).ToArray()));
+        }
         var chosen = wardrobeStylistService
             .SelectRequestedOutfit(profile, wardrobe, request.Prompt)
             .ToArray();
