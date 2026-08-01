@@ -30,7 +30,7 @@ const scannerBootstrap = String.raw`
     if (!refresh && rootCache) return rootCache;
     const result = [document];
     const queue = [document];
-    while (queue.length && result.length < 100) {
+    while (queue.length && result.length < 1200) {
       const root = queue.shift();
       for (const element of root.querySelectorAll("*")) {
         if (element.shadowRoot && !result.includes(element.shadowRoot)) {
@@ -341,6 +341,7 @@ const scannerBootstrap = String.raw`
   };
   const selectedSizeEvidence = () => all(
     "[aria-selected='true'], [aria-checked='true'], [aria-pressed='true'], " +
+    "input[type='radio']:checked, input[type='checkbox']:checked, " +
     "[data-state='selected'], [data-state='checked'], [data-selected='true'], .selected, .active"
   ).filter(visible).map((element) => sizeLabelFromText(controlText(element)))
     .filter(Boolean).filter((value, index, values) => values.indexOf(value) === index)
@@ -508,6 +509,48 @@ const scannerBootstrap = String.raw`
     const firstLooksHeader = first.some((cell) =>
       /(beden|size|ölçü|measurement|cm|inch|göğüs|chest|bel|waist)/i.test(cell)
     );
+    const headerSizes = first.slice(1).map(sizeLabelFromText);
+    const bodyRows = firstLooksHeader ? rows.slice(1) : rows;
+    const regionHeader = /^(?:bölge|bolge|region|ölçü|olcu|measurement)$/i.test(fold(first[0]));
+    const centimeterIndex = first.findIndex((cell) => /^cm$/i.test(clean(cell)));
+    if (firstLooksHeader && regionHeader && centimeterIndex > 0) {
+      const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
+      const size = sizeLabelFromText(selected);
+      const metricRows = bodyRows.filter((cells) =>
+        cells.length > centimeterIndex && measurementNamePattern.test(fold(cells[0])) &&
+        /^\d{1,3}(?:[.,]\d+)?$/.test(clean(cells[centimeterIndex])));
+      if (size && metricRows.length) {
+        const headers = ["Beden", ...metricRows.map((cells) => normalizeMeasurementLabel(cells[0]))];
+        const resultRows = [{ cells: [size, ...metricRows.map((cells) => clean(cells[centimeterIndex]).replace(",", "."))] }];
+        return {
+          found: true,
+          title: clean(table.querySelector("caption")?.textContent) || "Ürün ölçüleri",
+          unit: "Centimeters",
+          headers,
+          rows: resultRows,
+          rawText: [headers.join(" | "), resultRows[0].cells.join(" | ")].join("\n").slice(0, 8000)
+        };
+      }
+    }
+    if (firstLooksHeader && regionHeader &&
+        headerSizes.length > 0 && headerSizes.every(Boolean)) {
+      const metricRows = bodyRows.filter((cells) =>
+        cells.length >= 2 && measurementNamePattern.test(fold(cells[0])));
+      const headers = ["Beden", ...metricRows.map((cells) => normalizeMeasurementLabel(cells[0]))];
+      const transposedRows = headerSizes.map((size, columnIndex) => ({
+        cells: [size, ...metricRows.map((cells) => clean(cells[columnIndex + 1] || "").replace(",", "."))]
+      })).filter((row) => row.cells.slice(1).some((cell) => /^\d{1,3}(?:\.\d+)?$/.test(cell)));
+      if (metricRows.length && transposedRows.length) {
+        return {
+          found: true,
+          title: clean(table.querySelector("caption")?.textContent) || "Ürün ölçüleri",
+          unit: /\bcm\b/i.test(candidates[0].text) ? "Centimeters" : "Unknown",
+          headers,
+          rows: transposedRows.slice(0, 30),
+          rawText: [headers.join(" | "), ...transposedRows.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
+        };
+      }
+    }
     const headers = (firstLooksHeader
       ? first
       : first.map((_, index) => index === 0 ? "Beden" : "Ölçü " + index)
@@ -538,6 +581,89 @@ const scannerBootstrap = String.raw`
     if (/yukseklik|rise/.test(text)) return "Ağ yüksekliği";
     if (/uzunluk|length/.test(text)) return "Uzunluk";
     return clean(value).slice(0, 80);
+  };
+  const verifiedMeasurementChart = (chart) => Boolean(chart?.found &&
+    chart.headers?.length > 1 && chart.rows?.some((row) =>
+      sizePattern.test(clean(row.cells?.[0])) && row.cells.slice(1).some((cell, index) =>
+        measurementNamePattern.test(fold(chart.headers[index + 1] || "")) &&
+        /^\d{1,3}(?:[.,]\d+)?$/.test(clean(cell))
+      )));
+  const firstVerifiedChart = (...charts) => charts.find(verifiedMeasurementChart) || null;
+  const visibleLayoutChart = () => {
+    const nodes = all("th, td, dt, dd, [role='cell'], [role='columnheader'], [role='rowheader'], button, label, li, span, p, div")
+      .filter(visible).map((element) => {
+        const text = clean(ownText(element) || (element.childElementCount === 0 ? element.textContent : ""));
+        return { text, folded: fold(text), rect: element.getBoundingClientRect() };
+      }).filter((item) => item.text && item.text.length <= 60);
+    const numericNodes = nodes.filter((item) => /^\d{1,3}(?:[.,]\d+)?$/.test(item.text))
+      .filter((item) => {
+        const value = Number(item.text.replace(",", "."));
+        return value > 0 && value <= 300;
+      });
+    const metricNodes = nodes.filter((item) => measurementNamePattern.test(item.folded) &&
+      !/nasil|how|model|fiyat|price|stok|stock/.test(item.folded));
+    const byMetric = new Map();
+    for (const metric of metricNodes) {
+      const y = metric.rect.top + metric.rect.height / 2;
+      const values = numericNodes.filter((candidate) => {
+        const candidateY = candidate.rect.top + candidate.rect.height / 2;
+        return Math.abs(candidateY - y) <= Math.max(32, metric.rect.height) &&
+          candidate.rect.left > metric.rect.left + 16;
+      }).sort((left, right) => left.rect.left - right.rect.left)
+        .filter((candidate, index, list) => index === 0 ||
+          Math.abs(candidate.rect.left - list[index - 1].rect.left) > 4 || candidate.text !== list[index - 1].text);
+      if (!values.length) continue;
+      const label = normalizeMeasurementLabel(metric.text);
+      const previous = byMetric.get(label);
+      if (!previous || values.length > previous.values.length) byMetric.set(label, { metric, values });
+    }
+    const metricRows = [...byMetric.values()];
+    if (metricRows.length < 2) return null;
+    const firstMetricTop = Math.min(...metricRows.map((row) => row.metric.rect.top));
+    const sizeCandidates = nodes.filter((item) => sizeLabelFromText(item.text) &&
+      item.rect.bottom <= firstMetricTop + 30 && item.rect.bottom >= firstMetricTop - 700);
+    const sizeBands = [];
+    for (const candidate of sizeCandidates) {
+      const y = candidate.rect.top + candidate.rect.height / 2;
+      let band = sizeBands.find((item) => Math.abs(item.y - y) < 28);
+      if (!band) { band = { y, items: [] }; sizeBands.push(band); }
+      if (!band.items.some((item) => sizeLabelFromText(item.text) === sizeLabelFromText(candidate.text) &&
+          Math.abs(item.rect.left - candidate.rect.left) < 8)) band.items.push(candidate);
+    }
+    const sizeNodes = sizeBands.sort((left, right) =>
+      right.items.length - left.items.length || Math.abs(firstMetricTop - right.y) - Math.abs(firstMetricTop - left.y))[0]?.items
+      ?.sort((left, right) => left.rect.left - right.rect.left) || [];
+    if (!sizeNodes.length) return null;
+    const maxValues = Math.max(...metricRows.map((row) => row.values.length));
+    const dualUnitLayout = nodes.some((item) => /^cm$/i.test(item.text)) &&
+      nodes.some((item) => /^(?:in|inc|inch)$/i.test(item.folded));
+    const anchor = metricRows.find((row) => row.values.length === maxValues)?.values || [];
+    const columnSizes = anchor.map((value) => {
+      const x = value.rect.left + value.rect.width / 2;
+      return sizeNodes.map((candidate) => ({ candidate, distance: Math.abs(candidate.rect.left + candidate.rect.width / 2 - x) }))
+        .sort((left, right) => left.distance - right.distance)[0];
+    });
+    const headers = ["Beden", ...metricRows.map((row) => normalizeMeasurementLabel(row.metric.text))];
+    let rows = [];
+    if (!dualUnitLayout && maxValues > 1 && columnSizes.length === maxValues && columnSizes.every((item) => item?.distance < 85) &&
+        new Set(columnSizes.map((item) => sizeLabelFromText(item.candidate.text))).size === maxValues) {
+      rows = columnSizes.map((item, index) => ({
+        cells: [sizeLabelFromText(item.candidate.text), ...metricRows.map((row) => clean(row.values[index]?.text).replace(",", "."))]
+      }));
+    } else {
+      const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
+      const size = sizeLabelFromText(selected) || sizeLabelFromText(sizeNodes[0]?.text);
+      if (size) rows = [{ cells: [size, ...metricRows.map((row) => clean(row.values[0]?.text).replace(",", "."))] }];
+    }
+    const chart = {
+      found: rows.length > 0,
+      title: "Ürün ölçüleri",
+      unit: "Centimeters",
+      headers,
+      rows,
+      rawText: [headers.join(" | "), ...rows.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
+    };
+    return verifiedMeasurementChart(chart) ? chart : null;
   };
   const visibleOpenChart = () => {
     const metricElements = all("th, td, dt, dd, [role='rowheader'], span, p, div")
@@ -797,7 +923,7 @@ const scannerBootstrap = String.raw`
     ).slice(0, 120);
     let chart = null;
     for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 1 : 2) && !chart?.found; attempt += 1) {
-      chart = tableChart() || visibleOpenChart() || geometryChart() || await panelChart();
+      chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), await panelChart());
       if (chart?.found) break;
       if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
