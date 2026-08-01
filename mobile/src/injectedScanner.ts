@@ -26,6 +26,15 @@ const scannerBootstrap = String.raw`
       rect.height > 2;
   };
   let rootCache = null;
+  const observedRoots = new WeakSet();
+  const observeRoot = (root) => {
+    if (!root || observedRoots.has(root) || typeof MutationObserver === "undefined") return;
+    try {
+      const observer = new MutationObserver(() => { rootCache = null; });
+      observer.observe(root, { subtree: true, childList: true, attributes: true });
+      observedRoots.add(root);
+    } catch (error) { recordDiagnostic("root-observer", error); }
+  };
   const roots = (refresh = false) => {
     if (!refresh && rootCache) return rootCache;
     const result = [document];
@@ -48,6 +57,7 @@ const scannerBootstrap = String.raw`
         }
       }
     }
+    for (const root of result) observeRoot(root);
     rootCache = result;
     return result;
   };
@@ -282,13 +292,20 @@ const scannerBootstrap = String.raw`
     target.scrollIntoView?.({ block: "center", inline: "center" });
     await sleep(100);
     try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+    for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
       try {
-        target.dispatchEvent(new MouseEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        }));
+        const event = type.startsWith("pointer") && typeof PointerEvent !== "undefined"
+          ? new PointerEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              pointerId: 1,
+              pointerType: "touch",
+              isPrimary: true
+            })
+          : type.startsWith("touch")
+            ? new Event(type, { bubbles: true, cancelable: true })
+            : new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
+        target.dispatchEvent(event);
       } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
@@ -400,18 +417,29 @@ const scannerBootstrap = String.raw`
       .sort((left, right) => right.score - left.score)[0]?.panel || null;
   };
   function findSizeButtons(panel) {
-    if (!panel) return [];
     const result = [];
     const seen = new Set();
-    const candidates = [panel, ...panel.querySelectorAll(
-      "button, [role='radio'], [role='option'], [role='button'], li, label, span"
-    )];
+    const candidates = all(
+      "button, [role='radio'], [role='option'], [role='button'], [role='tab'], " +
+      "input[type='radio'], li, label, span"
+    );
     for (const element of candidates) {
       if (!visible(element)) continue;
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
       const target = clickable(element);
-      if (!target || !panel.contains(target) || seen.has(target)) continue;
+      if (!target || seen.has(target)) continue;
+      if (panel) {
+        const panelRoot = panel.getRootNode?.();
+        const targetRoot = target.getRootNode?.();
+        const panelRect = panel.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const composedInside = panel.contains?.(target) ||
+          targetRoot?.host === panel || panel.contains?.(targetRoot?.host);
+        const sameSurface = panelRoot === targetRoot || composedInside ||
+          (targetRect.bottom >= panelRect.top - 720 && targetRect.top <= panelRect.bottom + 180);
+        if (!sameSurface) continue;
+      }
       seen.add(target);
       result.push(target);
     }
@@ -808,18 +836,24 @@ const scannerBootstrap = String.raw`
       seen.add(normalized);
       measurements.push({ label: normalized, value: numeric });
     };
-    for (const row of panel.querySelectorAll("tr, [role='row']")) {
+    for (const row of all("tr, [role='row']").filter(visible)) {
       const cells = [...row.querySelectorAll("th, td, [role='cell'], [role='rowheader']")]
         .map((cell) => clean(cell.innerText || cell.textContent)).filter(Boolean);
       if (cells.length < 2 || !measurementNamePattern.test(fold(cells[0]))) continue;
       const cmValue = cells.find((cell, index) => index > 0 && /\d/.test(cell));
       if (cmValue) add(cells[0], cmValue);
     }
-    const text = fold(panelText(panel));
+    const text = fold([
+      panelText(panel),
+      ...all("th, td, dt, dd, [role='cell'], [role='rowheader'], p, span, div")
+        .filter(visible)
+        .map((element) => ownText(element))
+        .filter((value) => value && value.length <= 90)
+    ].join("\n"));
     const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
     for (const match of text.matchAll(pattern)) add(match[1], match[2]);
     if (measurements.length < 2) {
-      const labels = [...panel.querySelectorAll("th, td, dt, dd, p, span, div")]
+      const labels = all("th, td, dt, dd, [role='rowheader'], p, span, div")
         .filter(visible).filter((element) => {
           const value = fold(element.innerText || element.textContent);
           return value.length > 0 && value.length <= 45 && measurementNamePattern.test(value);
@@ -845,9 +879,9 @@ const scannerBootstrap = String.raw`
     let panel = findMeasurePanel();
     if (!panel) return null;
     const initial = findSizeButtons(panel).find(selectedSizeButton);
-    const initialLabel = clean(initial?.innerText || initial?.textContent).toUpperCase();
+    const initialLabel = sizeLabelFromText(controlText(initial));
     const labels = findSizeButtons(panel)
-      .map((button) => clean(button.innerText || button.textContent).toUpperCase())
+      .map((button) => sizeLabelFromText(controlText(button)))
       .filter(size => sizePattern.test(size))
       .filter((size, index, values) => values.indexOf(size) === index);
     const records = [];
@@ -856,12 +890,12 @@ const scannerBootstrap = String.raw`
     for (const size of targets.slice(0, 10)) {
       panel = findMeasurePanel() || panel;
       const button = findSizeButtons(panel).find((candidate) =>
-        clean(candidate.innerText || candidate.textContent).toUpperCase() === size);
-      if (button && !selectedSizeButton(button)) {
+        sizeLabelFromText(controlText(candidate)) === size);
+      if (button) {
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 700, 70);
-        await sleep(80);
+        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 1300, 70);
+        await sleep(120);
       }
       panel = findMeasurePanel() || panel;
       const measurements = extractMeasurements(panel);
@@ -875,7 +909,7 @@ const scannerBootstrap = String.raw`
     if (initialLabel) {
       panel = findMeasurePanel() || panel;
       const restore = findSizeButtons(panel).find((button) =>
-        clean(button.innerText || button.textContent).toUpperCase() === initialLabel);
+        sizeLabelFromText(controlText(button)) === initialLabel);
       if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
     const finalText = panelText(findMeasurePanel() || panel);
@@ -922,7 +956,7 @@ const scannerBootstrap = String.raw`
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
     let chart = null;
-    for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 1 : 2) && !chart?.found; attempt += 1) {
+    for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 3 : 2) && !chart?.found; attempt += 1) {
       chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), await panelChart());
       if (chart?.found) break;
       if (!visibleMeasurementsOnly) await openSizeGuide();
@@ -1246,7 +1280,11 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `${scannerBootstrap}
+  return `if (typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
+}
+
+export function createScannerInstallScript() {
+  return scannerBootstrap;
 }

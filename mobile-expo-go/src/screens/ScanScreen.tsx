@@ -21,7 +21,7 @@ import {
   ErrorNotice,
   SectionTitle,
 } from "../components/Ui";
-import { createScanScript } from "../injectedScanner";
+import { createScannerInstallScript, createScanScript } from "../injectedScanner";
 import { useSession } from "../session";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
@@ -717,6 +717,7 @@ export function ScanScreen({
           >
             <WebView
               allowsBackForwardNavigationGestures
+              injectedJavaScript={createScannerInstallScript()}
               javaScriptEnabled
               onShouldStartLoadWithRequest={(request) => {
                 if (request.isTopFrame === false) return true;
