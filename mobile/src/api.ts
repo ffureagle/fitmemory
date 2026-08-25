@@ -409,10 +409,11 @@ export class FitMemoryApi {
     itemId: number,
     userId: string,
     token: string,
+    selected: boolean,
   ) {
     return this.request<StyleBoardItem>(
       `/api/style-board/items/${itemId}/select?userId=${encodeURIComponent(userId)}`,
-      { method: "PATCH", token },
+      { method: "PATCH", token, body: { selected } },
     );
   }
 

@@ -21,6 +21,11 @@ public sealed class SaveStyleBoardItemRequest
     public bool SaveToCloset { get; init; }
 }
 
+public sealed class SelectStyleBoardItemRequest
+{
+    public bool Selected { get; init; } = true;
+}
+
 public sealed class SaveFavoriteOutfitRequest
 {
     [Required, StringLength(128, MinimumLength = 8)]

@@ -128,42 +128,58 @@ const scannerBootstrap = String.raw`
     return "";
   };
   const chooseProductImage = (structured, title) => {
+    const fromSrcset = (image) => {
+      const srcset = image.getAttribute("srcset") || image.getAttribute("data-srcset") || "";
+      const parts = srcset.split(",").map((part) => part.trim().split(/\s+/)[0]).filter(Boolean);
+      return parts[parts.length - 1] || "";
+    };
+    const pickUrl = (image) => absoluteUrl(
+      image.currentSrc ||
+      image.src ||
+      image.getAttribute("data-src") ||
+      image.getAttribute("data-original") ||
+      fromSrcset(image) ||
+      ""
+    );
     const fixed = [
       firstImageValue(structured?.image),
       meta("og:image"),
+      meta("og:image:secure_url"),
       meta("twitter:image", false)
     ].map(absoluteUrl).find(Boolean);
     if (fixed) return fixed;
     const titleTokens = clean(title).toLocaleLowerCase("tr-TR")
       .split(" ").filter((part) => part.length > 3);
-    return all("main img, [class*='product' i] img, img")
-      .filter(visible)
-      .map((image) => {
-        const rect = image.getBoundingClientRect();
-        const context = clean([
-          image.alt,
-          image.className,
-          image.parentElement?.className
-        ].join(" "));
-        let score = Math.min(50, Math.sqrt(rect.width * rect.height) / 7);
-        if (image.closest("main")) score += 18;
-        if (/(gallery|product|pdp|carousel)/i.test(context)) score += 20;
-        if (/(logo|icon|avatar|payment|size.?guide)/i.test(context)) score -= 80;
-        if (titleTokens.some((token) =>
-          clean(image.alt).toLocaleLowerCase("tr-TR").includes(token))) {
-          score += 12;
-        }
-        return {
-          url: absoluteUrl(
-            image.currentSrc ||
-            image.src ||
-            image.getAttribute("data-src") ||
-            ""
-          ),
-          score
-        };
-      })
-      .filter((candidate) => candidate.url)
+    const scoreImage = (image, requireVisible) => {
+      if (requireVisible && !visible(image)) return null;
+      const rect = image.getBoundingClientRect();
+      const context = clean([
+        image.alt,
+        image.className,
+        image.parentElement?.className,
+        pickUrl(image)
+      ].join(" "));
+      if (/(logo|icon|avatar|payment|size.?guide|sprite|placeholder)/i.test(context)) return null;
+      let score = Math.min(50, Math.sqrt(Math.max(rect.width, 80) * Math.max(rect.height, 80)) / 7);
+      if (image.closest("main")) score += 18;
+      if (/(gallery|product|pdp|carousel|media)/i.test(context)) score += 20;
+      if (/(static\.(?:pullandbear|bershka|zara)|media\.|impolicy)/i.test(pickUrl(image))) score += 24;
+      if (titleTokens.some((token) =>
+        clean(image.alt).toLocaleLowerCase("tr-TR").includes(token))) {
+        score += 12;
+      }
+      const url = pickUrl(image);
+      if (!url) return null;
+      return { url, score };
+    };
+    const visiblePick = all("main img, [class*='product' i] img, picture img, img")
+      .map((image) => scoreImage(image, true))
+      .filter(Boolean)
+      .sort((left, right) => right.score - left.score)[0]?.url;
+    if (visiblePick) return visiblePick;
+    return all("img, picture source")
+      .map((image) => scoreImage(image, false))
+      .filter(Boolean)
       .sort((left, right) => right.score - left.score)[0]?.url || "";
   };
   const fitDetails = () => {
@@ -214,16 +230,22 @@ const scannerBootstrap = String.raw`
     };
   };
   const inferCategory = (...values) => {
-    const value = fold(values.filter(Boolean).join(" "));
-    if (/ayakkabi|shoe|sneaker|trainer|loafer|sandal|terlik|bot\b/.test(value)) return "Footwear";
-    if (/ceket|jacket|mont|coat|kaban|parka|trenc|outerwear|blazer/.test(value)) return "Outerwear";
-    if (/pantolon|jean|denim|trouser|pants|sort|short|bermuda|etek|skirt/.test(value)) return "Bottoms";
-    if (/elbise|dress|tulum|jumpsuit/.test(value)) return "Dresses";
-    if (/tisort|t.?shirt|tee\b|polo(?: yaka)?|jersey/.test(value)) return "Tees";
-    if (/gomlek|shirt|overshirt|bluz|blouse/.test(value)) return "Shirts";
-    if (/sweat|hoodie|kazak|triko|hirka|cardigan|knit/.test(value)) return "Knitwear";
-    if (/ust giyim|tops?|camisole|atlet/.test(value)) return "Tops";
-    return "Other";
+    const classify = (value) => {
+      if (!value) return "Other";
+      if (/ayakkabi|shoe|sneaker|trainer|loafer|sandal|terlik|bot\b/.test(value)) return "Footwear";
+      if (/ceket|jacket|mont|coat|kaban|parka|trenc|outerwear|blazer/.test(value)) return "Outerwear";
+      if (/tisort|t.?shirt|tee\b|polo(?: yaka)?|jersey/.test(value)) return "Tees";
+      if (/gomlek|overshirt|bluz|blouse/.test(value)) return "Shirts";
+      if (/sweat|hoodie|kazak|triko|hirka|cardigan|knit/.test(value)) return "Knitwear";
+      if (/elbise|dress|tulum|jumpsuit/.test(value)) return "Dresses";
+      if (/pantolon|jean|trouser|pants|sort|short|bermuda|etek|skirt/.test(value)) return "Bottoms";
+      if (/\bdenim\b/.test(value) && !/tisort|t.?shirt|tee\b|gomlek|shirt|sweat|hoodie/.test(value)) return "Bottoms";
+      if (/ust giyim|tops?|camisole|atlet/.test(value)) return "Tops";
+      return "Other";
+    };
+    const fromTitle = classify(fold(values[1] || ""));
+    if (fromTitle !== "Other") return fromTitle;
+    return classify(fold(values.filter(Boolean).join(" ")));
   };
   const materialDetails = async () => {
     const trigger = findShortTextControl(
@@ -791,12 +813,42 @@ const scannerBootstrap = String.raw`
       return panel && extractMeasurements(panel).length > 0;
     })());
   };
+  const findScrollableX = (element) => {
+    let node = element instanceof Element ? element : null;
+    while (node && node !== document.documentElement) {
+      try {
+        const style = getComputedStyle(node);
+        if ((style.overflowX === "auto" || style.overflowX === "scroll" || style.overflowX === "overlay") &&
+            node.scrollWidth > node.clientWidth + 12) {
+          return node;
+        }
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
+      node = node.parentElement;
+    }
+    return null;
+  };
+  const revealWideTables = async () => {
+    const tables = all("table, [role='table']");
+    for (const table of tables.slice(0, 12)) {
+      const scroller = findScrollableX(table) || findScrollableX(table.parentElement);
+      if (!scroller) continue;
+      const start = scroller.scrollLeft;
+      const step = Math.max(72, Math.floor(scroller.clientWidth * 0.65));
+      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      for (let x = 0; x <= max + 1; x += step) {
+        scroller.scrollLeft = x;
+        await sleep(80);
+      }
+      scroller.scrollLeft = 0;
+      await sleep(50);
+      scroller.scrollLeft = start;
+    }
+  };
   const tableChart = () => {
     const candidates = all("table, [role='table']")
-      .filter(visible)
       .map((table) => {
         const text = clean(table.innerText || table.textContent);
-        const signal = /(beden|size|göğüs|chest|omuz|shoulder|bel|waist|uzunluk|length|inseam|cm|inch)/i
+        const signal = /(beden|size|göğüs|chest|omuz|shoulder|bel|waist|uzunluk|length|inseam|cm|inch|bölge|bolge)/i
           .test(text);
         return { table, text, score: (signal ? 20 : 0) + (text.match(/\d/g) || []).length };
       })
@@ -966,6 +1018,8 @@ const scannerBootstrap = String.raw`
         new Set(columnSizes.map((item) => sizeLabelFromText(item.candidate.text))).size === maxValues) {
       rows = columnSizes.map((item, index) => ({ cells: [sizeLabelFromText(item.candidate.text), ...metricRows.map((row) => clean(row.values[index]?.text).replace(",", "."))] }));
     } else {
+      const sizeButtonCount = findSizeButtons(document).length;
+      if (maxValues <= 1 && (sizeNodes.length > 1 || sizeButtonCount > 1)) return null;
       const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
       const size = sizeLabelFromText(selected) || sizeLabelFromText(sizeNodes[0]?.text);
       if (size) rows = [{ cells: [size, ...metricRows.map((row) => clean(row.values[0]?.text).replace(",", "."))] }];
@@ -1239,9 +1293,6 @@ const scannerBootstrap = String.raw`
     };
   };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
-    const openMeasurementSurface = () =>
-      metricLabelsVisible() && findSizeButtons(document).length >= 2;
-    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1257,6 +1308,10 @@ const scannerBootstrap = String.raw`
       meta("og:site_name") ||
       location.hostname.replace(/^www\./, "").split(".")[0]
     ).slice(0, 120);
+    let imageUrl = chooseProductImage(structured, title);
+    const openMeasurementSurface = () =>
+      metricLabelsVisible() && findSizeButtons(document).length >= 2;
+    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
     const fit = fitDetails();
     const model = modelDetails();
     const offers = Array.isArray(structured?.offers)
@@ -1278,12 +1333,15 @@ const scannerBootstrap = String.raw`
       }
     };
     const collectChart = async () => {
+      await revealWideTables();
+      const table = await safeChart(() => tableChart());
+      if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
       if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
         const walked = await safeChart(() => panelChart());
         if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
       }
       return firstVerifiedChart(
-        await safeChart(() => tableChart()),
+        table,
         await safeChart(() => visibleLayoutChart()),
         await safeChart(() => visibleOpenChart()),
         await safeChart(() => geometryChart()),
@@ -1309,7 +1367,7 @@ const scannerBootstrap = String.raw`
           url: location.href.slice(0, 1000), brand, name: title,
           category: inferCategory(structured?.category, title, structured?.description, fit.label),
           price: clean([offers?.price || meta("product:price:amount"), offers?.priceCurrency || meta("product:price:currency")].filter(Boolean).join(" ")).slice(0, 80),
-          imageUrl: chooseProductImage(structured, title).slice(0, 1000),
+          imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
           productReference: reference, fitLabel: fit.label, fitEvidence: fit.evidence,
           description: clean(structured?.description || "").slice(0, 1200),
           materialSummary: material.summary, materialEvidence: material.evidence,
@@ -1336,7 +1394,7 @@ const scannerBootstrap = String.raw`
           offers?.price || meta("product:price:amount"),
           offers?.priceCurrency || meta("product:price:currency")
         ].filter(Boolean).join(" ")).slice(0, 80),
-        imageUrl: chooseProductImage(structured, title).slice(0, 1000),
+        imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
         productReference: reference,
         fitLabel: fit.label,
         fitEvidence: fit.evidence,

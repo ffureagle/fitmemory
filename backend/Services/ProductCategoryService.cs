@@ -32,11 +32,23 @@ public sealed class ProductCategoryService(
 
     public ProductCategoryGroup GetGroup(ProductDto product)
     {
+        var fromName = Classify(product.Name);
+        if (fromName != ProductCategoryGroup.Other)
+        {
+            return fromName;
+        }
+
         return Classify($"{product.Category} {product.Name}");
     }
 
     public ProductCategoryGroup GetGroup(OrderHistoryItem order)
     {
+        var fromName = Classify(order.ProductName);
+        if (fromName != ProductCategoryGroup.Other)
+        {
+            return fromName;
+        }
+
         return Classify($"{order.Category} {order.ProductName}");
     }
 
@@ -115,8 +127,9 @@ public sealed class ProductCategoryService(
                 normalized,
                 "gömlek",
                 "gomlek",
-                "shirt",
-                "overshirt"))
+                "overshirt") ||
+            (ContainsAny(normalized, "shirt") &&
+             !ContainsAny(normalized, "t-shirt", "t shirt", "sweatshirt")))
         {
             return ProductCategoryGroup.Shirts;
         }

@@ -31,21 +31,25 @@ const slotNames: Record<string, string> = {
 };
 
 function slot(item: StyleBoardItem) {
-  const value = `${item.category} ${item.productName} ${item.description} ${item.fitLabel}`
+  const name = `${item.productName} ${item.description} ${item.fitLabel}`
     .toLocaleLowerCase("tr-TR").normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i");
-  if (/(ayakkabi|shoe|sneaker|trainer|bot|loafer|sandal|terlik)/i.test(value)) return "shoe";
-  if (/(ceket|jacket|mont|coat|kaban|parka|trenc|outer|blazer)/i.test(value)) {
-    return "outer";
-  }
-  if (/(pantolon|jean|denim|trouser|pants|bottom|etek|sort|short|bermuda)/i.test(value)) {
-    return "bottom";
-  }
-  if (/(elbise|dress|tulum|jumpsuit)/i.test(value)) return "one";
-  if (/(tisort|t.?shirt|tee|polo(?: yaka)?|top|shirt|gomlek|bluz|sweat|hoodie|kazak|triko|hirka|jersey)/i.test(value)) {
-    return "upper";
-  }
-  return "other";
+  const category = `${item.category || ""}`
+    .toLocaleLowerCase("tr-TR").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i");
+  const pick = (value: string) => {
+    if (/(ayakkabi|shoe|sneaker|trainer|bot|loafer|sandal|terlik)/i.test(value)) return "shoe";
+    if (/(ceket|jacket|mont|coat|kaban|parka|trenc|outer|blazer)/i.test(value)) return "outer";
+    if (/(tisort|t.?shirt|tee|polo(?: yaka)?|jersey)/i.test(value)) return "upper";
+    if (/(gomlek|overshirt|bluz|blouse|sweat|hoodie|kazak|triko|hirka)/i.test(value)) return "upper";
+    if (/(elbise|dress|tulum|jumpsuit)/i.test(value)) return "one";
+    if (/(pantolon|jean|denim|trouser|pants|bottom|etek|sort|short|bermuda)/i.test(value)) {
+      return "bottom";
+    }
+    if (/(shirt|top|ust)/i.test(value)) return "upper";
+    return "";
+  };
+  return pick(name) || pick(category) || "other";
 }
 
 export function StudioScreen() {
@@ -98,10 +102,15 @@ export function StudioScreen() {
         item.id,
         session.account.userId,
         session.token,
+        nextSelected,
       );
-      if (selectionVersions.current.get(item.id) === version && updated.isSelected !== nextSelected) {
+      if (selectionVersions.current.get(item.id) === version) {
         session.updateStyleBoard(before.map((candidate) =>
-          candidate.id === item.id ? { ...candidate, isSelected: updated.isSelected } : candidate,
+          candidate.id === item.id
+            ? { ...candidate, isSelected: updated.isSelected }
+            : nextSelected && updated.isSelected && slot(candidate) === itemSlot
+              ? { ...candidate, isSelected: false }
+              : candidate,
         ));
       }
     } catch (reason) {

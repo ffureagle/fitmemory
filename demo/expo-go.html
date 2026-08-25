@@ -1,50 +1,47 @@
 <!doctype html>
 <html lang="tr">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FitMemory Expo Go 1.25.13</title>
-    <style>
-      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #111; color: #fff; }
-      main { max-width: 640px; margin: 0 auto; padding: 32px 20px 80px; }
-      h1 { font-size: 32px; line-height: 1.15; margin: 0 0 16px; }
-      p, li { font-size: 17px; line-height: 1.5; color: #ddd; }
-      .ver { font-size: 22px; font-weight: 800; color: #ffe14a; margin: 0 0 12px; }
-      .box { background: #1c1c1c; border: 1px solid #333; border-radius: 16px; padding: 18px; margin: 20px 0; word-break: break-all; }
-      .box code { color: #ffe14a; font-size: 16px; }
-      a { color: #ffe14a; }
-      .ok { background: #14301c; color: #c6f4d0; padding: 14px 16px; border-radius: 12px; }
-      .qr-wrap {
-        background: #fff;
-        border-radius: 20px;
-        padding: 18px;
-        width: min(100%, 360px);
-        margin: 20px 0;
-      }
-      .qr-wrap img { display: block; width: 100%; height: auto; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <p>FitMemory</p>
-      <p class="ver">Expo Go · 1.25.13 · SDK 54</p>
-      <h1>Kalıcı güncelleme yüklendi</h1>
-      <p class="ok">EAS Update production kanalına basıldı. Expo Go SDK 54 ile QR’ı tara; uygulama fstudio / fitmemory-go üzerinden açılır.</p>
-      <div class="qr-wrap">
-        <img src="./expo-qr.svg" width="518" height="518" alt="FitMemory Expo Go QR" />
-      </div>
-      <ol>
-        <li>Telefonda Expo Go <strong>SDK 54</strong> olsun</li>
-        <li>iPhone: Kamera veya Expo Go → Scan QR code</li>
-        <li>Android: Expo Go içinden tara</li>
-        <li>Açılmazsa Expo Go’da fstudio hesabıyla giriş yapıp <strong>FitMemory Go</strong> projesini aç</li>
-      </ol>
-      <div class="box">
-        <p>Adres:</p>
-        <p><code>exp://u.expo.dev/5a8a7507-726a-4c74-aab9-9482265fccb9?runtime-version=exposdk:54.0.0&amp;channel-name=production</code></p>
-        <p><a href="https://expo.dev/accounts/fstudio/projects/fitmemory-go/updates/3746ac62-4e8f-4277-8725-e90050436c95">EAS panelindeki bu güncelleme</a></p>
-      </div>
-      <p>API: <code>https://fitmemory-api.onrender.com</code></p>
-    </main>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FitMemory Expo Go 1.25.14</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: #111;
+      color: #fff;
+    }
+    main { max-width: 560px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 32px; line-height: 1.15; margin: 0 0 16px; }
+    p { font-size: 18px; line-height: 1.5; color: #ddd; }
+    .warn { background: #3a1c12; color: #ffd0c0; padding: 14px 16px; border-radius: 12px; }
+    .ok { background: #14301c; color: #c6f4d0; padding: 14px 16px; border-radius: 12px; }
+    .qr {
+      display: block;
+      width: min(100%, 320px);
+      margin: 28px auto;
+      background: #fff;
+      padding: 16px;
+      border-radius: 16px;
+    }
+    a { color: #ffe14a; }
+    ol { font-size: 18px; line-height: 1.6; color: #ddd; padding-left: 22px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p>FitMemory</p>
+    <h1>Expo Go · 1.25.14</h1>
+    <p class="warn">Bu sayfayı telefon tarayıcısına yazma. Cursor’daki <strong>Preview</strong> ile aç, karekodu telefonla tara.</p>
+    <img class="qr" src="./expo-go-qr.png" alt="FitMemory Expo Go karekodu">
+    <ol>
+      <li>Telefondaki Expo Go’yu tamamen kapat (görev listesinden kaydır).</li>
+      <li>Kamera veya Expo Go ile bu karekodu tara.</li>
+      <li>Profil en altta <strong>Mobil · 1.25.14</strong> yazmalı.</li>
+    </ol>
+    <p class="ok">Expo Go içinde hesap bölümünde SDK 54 görünmeli. Eski Expo Go 1.25.14’ü açmaz.</p>
+  </main>
+</body>
 </html>

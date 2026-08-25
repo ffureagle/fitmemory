@@ -16,8 +16,8 @@ type IntroSplashProps = {
 };
 
 const LINES = ["KALIBIN.", "DOLABIN.", "SENİN VERİN."] as const;
-const HOLD_AFTER_READY_MS = 2400;
-const EXIT_MS = 480;
+const HOLD_AFTER_READY_MS = 1800;
+const EXIT_MS = 420;
 
 export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
   const onFinishedRef = useRef(onFinished);
@@ -26,17 +26,12 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
   sessionReadyRef.current = sessionReady;
 
   const screen = useRef(new Animated.Value(1)).current;
-  const glow = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
   const logo = useRef(new Animated.Value(0)).current;
-  const line = useRef(new Animated.Value(0)).current;
-  const scan = useRef(new Animated.Value(0)).current;
+  const sweep = useRef(new Animated.Value(0)).current;
   const words = useRef(LINES.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     let cancelled = false;
-    let pulseLoop: Animated.CompositeAnimation | null = null;
-    let scanLoop: Animated.CompositeAnimation | null = null;
     let holdTimer: ReturnType<typeof setTimeout> | null = null;
     let readyPoll: ReturnType<typeof setInterval> | null = null;
 
@@ -73,86 +68,34 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
     void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
       if (cancelled) return;
       if (reduceMotion) {
-        glow.setValue(1);
         logo.setValue(1);
-        line.setValue(1);
         words.forEach((word) => word.setValue(1));
         waitForReady();
         return;
       }
 
-      pulseLoop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulse, {
-            duration: 1700,
-            easing: Easing.inOut(Easing.sin),
-            toValue: 1,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulse, {
-            duration: 1700,
-            easing: Easing.inOut(Easing.sin),
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-        ]),
-      );
-      scanLoop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(scan, {
-            duration: 1100,
-            easing: Easing.inOut(Easing.quad),
-            toValue: 1,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scan, {
-            duration: 1100,
-            easing: Easing.inOut(Easing.quad),
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-        ]),
-      );
-      pulseLoop.start();
-      scanLoop.start();
-
-      Animated.parallel([
-        Animated.timing(glow, {
-          duration: 760,
+      Animated.sequence([
+        Animated.timing(logo, {
+          duration: 520,
           easing: Easing.out(Easing.cubic),
           toValue: 1,
           useNativeDriver: true,
         }),
-        Animated.sequence([
-          Animated.delay(140),
-          Animated.timing(logo, {
-            duration: 720,
-            easing: Easing.out(Easing.cubic),
-            toValue: 1,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.sequence([
-          Animated.delay(620),
-          Animated.timing(line, {
-            duration: 560,
-            easing: Easing.out(Easing.cubic),
-            toValue: 1,
-            useNativeDriver: true,
-          }),
-        ]),
+        Animated.timing(sweep, {
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          toValue: 1,
+          useNativeDriver: true,
+        }),
         Animated.stagger(
-          260,
+          160,
           words.map((word) =>
-            Animated.sequence([
-              Animated.delay(480),
-              Animated.timing(word, {
-                duration: 420,
-                easing: Easing.out(Easing.cubic),
-                toValue: 1,
-                useNativeDriver: true,
-              }),
-            ]),
+            Animated.timing(word, {
+              duration: 360,
+              easing: Easing.out(Easing.cubic),
+              toValue: 1,
+              useNativeDriver: true,
+            }),
           ),
         ),
       ]).start(({ finished }) => {
@@ -165,10 +108,8 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
       cancelled = true;
       if (holdTimer) clearTimeout(holdTimer);
       if (readyPoll) clearInterval(readyPoll);
-      pulseLoop?.stop();
-      scanLoop?.stop();
     };
-  }, [glow, line, logo, pulse, scan, screen, words]);
+  }, [logo, screen, sweep, words]);
 
   return (
     <View style={styles.screen}>
@@ -178,56 +119,10 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
           styles.content,
           {
             opacity: screen,
-            transform: [
-              {
-                scale: screen.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.96, 1],
-                }),
-              },
-            ],
           },
         ]}
       >
         <View style={styles.mark}>
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.glowOuter,
-              {
-                opacity: Animated.multiply(
-                  glow,
-                  pulse.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.22, 0.45],
-                  }),
-                ),
-                transform: [
-                  {
-                    scale: pulse.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.9, 1.1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.glowInner,
-              {
-                opacity: Animated.multiply(
-                  glow,
-                  pulse.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.16, 0.32],
-                  }),
-                ),
-              },
-            ]}
-          />
           <Animated.Image
             resizeMode="contain"
             source={require("../../assets/fitmemory-logo.png")}
@@ -235,11 +130,23 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
               styles.logo,
               {
                 opacity: logo,
+              },
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.light,
+              {
+                opacity: sweep.interpolate({
+                  inputRange: [0, 0.18, 0.55, 1],
+                  outputRange: [0, 0.9, 0.55, 0],
+                }),
                 transform: [
                   {
-                    scale: logo.interpolate({
+                    translateX: sweep.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0.86, 1],
+                      outputRange: [-220, 220],
                     }),
                   },
                 ],
@@ -257,7 +164,7 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
                   {
                     translateY: words[index].interpolate({
                       inputRange: [0, 1],
-                      outputRange: [10, 0],
+                      outputRange: [8, 0],
                     }),
                   },
                 ],
@@ -266,33 +173,6 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
               <Text style={styles.word}>{lineText}</Text>
             </Animated.View>
           ))}
-          <View style={styles.lineTrack}>
-            <Animated.View
-              style={[
-                styles.lineFill,
-                {
-                  opacity: line,
-                  transform: [{ scaleX: line }],
-                },
-              ]}
-            />
-            <Animated.View
-              style={[
-                styles.scanDot,
-                {
-                  opacity: line,
-                  transform: [
-                    {
-                      translateX: scan.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [-54, 54],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            />
-          </View>
         </View>
         {!sessionReady ? (
           <View style={styles.loading}>
@@ -324,26 +204,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     height: 268,
     justifyContent: "center",
+    overflow: "hidden",
     width: "100%",
-  },
-  glowOuter: {
-    backgroundColor: "#F26B38",
-    borderRadius: 150,
-    height: 260,
-    position: "absolute",
-    width: 260,
-  },
-  glowInner: {
-    backgroundColor: "#2457F5",
-    borderRadius: 90,
-    height: 160,
-    position: "absolute",
-    width: 160,
   },
   logo: {
     height: 248,
     maxWidth: 400,
     width: "82%",
+  },
+  light: {
+    backgroundColor: "#FFFFFF",
+    height: 248,
+    opacity: 0.85,
+    position: "absolute",
+    width: 28,
   },
   copy: {
     alignItems: "center",
@@ -356,25 +230,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 3.2,
     textAlign: "center",
-  },
-  lineTrack: {
-    alignItems: "center",
-    height: 10,
-    justifyContent: "center",
-    marginTop: 14,
-    width: 120,
-  },
-  lineFill: {
-    backgroundColor: "#F26B38",
-    height: 1,
-    width: 120,
-  },
-  scanDot: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 3,
-    height: 5,
-    position: "absolute",
-    width: 5,
   },
   loading: {
     alignItems: "center",

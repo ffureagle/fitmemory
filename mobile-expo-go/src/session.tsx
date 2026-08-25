@@ -308,7 +308,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
         await writeLastEmail(email);
         setLastEmail(email.trim().toLowerCase());
         await api.health(90_000).catch(() => undefined);
-        await acceptSession(await api.login(email.trim(), password));
+        await acceptSession(await api.login(email.trim(), password.trim()));
       } finally {
         setBusy(false);
       }
@@ -324,7 +324,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
         setLastEmail(email.trim().toLowerCase());
         await api.health(90_000).catch(() => undefined);
         await acceptSession(
-          await api.register(name.trim(), email.trim(), password),
+          await api.register(name.trim(), email.trim(), password.trim()),
         );
       } finally {
         setBusy(false);

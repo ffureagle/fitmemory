@@ -273,11 +273,19 @@ public sealed class GeminiRecommendationClient(
                 youAreTheFinalSizeController = true,
                 localEngineIsDraftOnly = true,
                 mustReDecideUsingFitLabelCutConstructionAndChart = true,
+                productName = request.Product.Name,
                 productFitLabel = request.Product.FitLabel,
                 productFitEvidence = request.Product.FitEvidence,
+                titleCutHints = request.Product.Name,
+                howItSitsOnAPerson = request.Product.FitEvidence,
+                fabricStretch = request.Product.MaterialSummary,
                 materialSummary = request.Product.MaterialSummary,
                 materialEvidence = request.Product.MaterialEvidence,
-                description = request.Product.Description
+                description = request.Product.Description,
+                promptJob =
+                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: dolap geçmişi, " +
+                    "kullanıcı geri bildirimi, ürün başlığındaki kalıp (baggy/slim/boxy), " +
+                    "insan üzerindeki duruş, kumaş esnekliği ve beden tablosunu birlikte tart."
             },
             deterministicBaseline = new
             {
@@ -300,6 +308,13 @@ public sealed class GeminiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Baggy, Super Baggy,
+                  Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
+                  pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,
+                  modelWornSize, howItFit) ve dolaptaki aynı kesim geri bildirimini birlikte tartarak
+                  nihai bedeni seç. Esnemeyen dokuma + slim/straight ise taslağı küçültmeye daha yatkın ol;
+                  yüksek elastan + baggy/super baggy ise bel otururken hacmi koru, gereksiz büyütme.
+                  explanation'da kalıp + kumaş + duruşten en az birini somut söyle.
             -1.05 Sen son denetleyici ve karar vericisin. deterministicBaseline yerel ölçü motorunun
                   taslağıdır; nihai beden değildir. wardrobeSizeSupport dolaptaki aynı kesim deneyimidir
                   ("M almıştı, şöyle olmuştu") — destek atarsın, kopyalamazsın. Product.FitLabel,

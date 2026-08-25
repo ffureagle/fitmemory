@@ -206,6 +206,7 @@ public sealed class StyleBoardController(
     public async Task<ActionResult<StyleBoardItemResponse>> Select(
         int id,
         [FromQuery] string userId,
+        [FromBody] SelectStyleBoardItemRequest? request,
         CancellationToken cancellationToken)
     {
         if (!User.Owns(userId))
@@ -224,7 +225,7 @@ public sealed class StyleBoardController(
         }
 
         var slot = GetSlot(selected);
-        var shouldSelect = !selected.IsSelected;
+        var shouldSelect = request?.Selected ?? !selected.IsSelected;
         foreach (var item in items.Where(item =>
                      GetSlot(item) == slot))
         {

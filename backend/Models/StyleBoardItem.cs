@@ -51,7 +51,7 @@ public sealed class StyleBoardItem
 
     public int RecommendationConfidence { get; set; }
 
-    public bool IsSelected { get; set; } = true;
+    public bool IsSelected { get; set; }
 
     public bool IsInStudio { get; set; } = true;
 

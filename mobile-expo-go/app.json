@@ -3,7 +3,7 @@
     "name": "FitMemory Go",
     "slug": "fitmemory-go",
     "owner": "fstudio",
-    "version": "1.25.13",
+    "version": "1.25.14",
     "scheme": "fitmemorygo",
     "orientation": "portrait",
     "userInterfaceStyle": "light",

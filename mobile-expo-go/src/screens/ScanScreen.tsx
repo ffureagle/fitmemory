@@ -55,6 +55,44 @@ const allowedShopDomains = [
   "inditex.com",
 ];
 
+const allowedAuthDomains = [
+  "accounts.google.com",
+  "google.com",
+  "googleapis.com",
+  "gstatic.com",
+  "googleusercontent.com",
+  "appleid.apple.com",
+  "apple.com",
+  "facebook.com",
+  "fb.com",
+  "fbcdn.net",
+  "instagram.com",
+  "login.microsoftonline.com",
+  "live.com",
+  "microsoftonline.com",
+];
+
+function isAllowedShopUrl(value: string) {
+  if (value === "about:blank" || value === "about:srcdoc") return true;
+  if (/^(about|intent|fitmemorygo):/i.test(value)) return true;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    const host = url.hostname.replace(/^www\./, "");
+    return (
+      allowedShopDomains.some(
+        (domain) => host === domain || host.endsWith(`.${domain}`),
+      ) ||
+      allowedAuthDomains.some(
+        (domain) => host === domain || host.endsWith(`.${domain}`),
+      )
+    );
+  } catch (reason) {
+    void reason;
+    return false;
+  }
+}
+
 function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null {
   const selected = pageText.match(/\[selected\]\s*(XXXL|XXL|XL|L|M|S|XS|XXS|\d{2,3})\b/i)?.[1]?.toUpperCase();
   if (!selected) return null;
@@ -93,23 +131,6 @@ function hasVerifiedNumericChart(chart: ProductSnapshot["sizeChart"] | null | un
     );
     return validSize && numericMeasurements.length > 0 && !sizeIsMeasurement;
   });
-}
-
-function isAllowedShopUrl(value: string) {
-  if (value === "about:blank") return true;
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      allowedShopDomains.some(
-        (domain) =>
-          url.hostname === domain || url.hostname.endsWith(`.${domain}`),
-      )
-    );
-  } catch (reason) {
-    void reason;
-    return false;
-  }
 }
 
 function userFacingExplanation(
@@ -844,7 +865,7 @@ export function ScanScreen({
                 }
                 return allowed;
               }}
-              originWhitelist={["https://*", "about:blank", "about:srcdoc"]}
+              originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
               onLoadEnd={() => setPageLoading(false)}
               onLoadStart={(event) => {
                 setPageLoading(true);
@@ -867,9 +888,15 @@ export function ScanScreen({
                 setAddress(state.url);
                 setCanGoBack(state.canGoBack);
               }}
+              onOpenWindow={(event) => {
+                const url = event.nativeEvent.targetUrl;
+                if (url && isAllowedShopUrl(url)) {
+                  setBrowserUrl(url);
+                }
+              }}
               pullToRefreshEnabled
               ref={webViewRef}
-              setSupportMultipleWindows={false}
+              setSupportMultipleWindows={true}
               sharedCookiesEnabled
               source={{ uri: browserUrl }}
               startInLoadingState

@@ -33,7 +33,7 @@ const scannerBootstrap = String.raw`
       const observer = new MutationObserver(() => { rootCache = null; });
       observer.observe(root, { subtree: true, childList: true, attributes: true });
       observedRoots.add(root);
-    } catch (error) { recordDiagnostic("root-observer", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
   const roots = (refresh = false) => {
     if (!refresh && rootCache) return rootCache;
@@ -53,7 +53,7 @@ const scannerBootstrap = String.raw`
               result.push(frameDocument);
               queue.push(frameDocument);
             }
-      } catch (error) { recordDiagnostic("scanner-operation", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
         }
       }
     }
@@ -110,7 +110,7 @@ const scannerBootstrap = String.raw`
       try {
         const match = findTyped(JSON.parse(script.textContent || ""), "Product");
         if (match) return match;
-      } catch (error) { recordDiagnostic("scanner-operation", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     return null;
   };
@@ -128,42 +128,58 @@ const scannerBootstrap = String.raw`
     return "";
   };
   const chooseProductImage = (structured, title) => {
+    const fromSrcset = (image) => {
+      const srcset = image.getAttribute("srcset") || image.getAttribute("data-srcset") || "";
+      const parts = srcset.split(",").map((part) => part.trim().split(/\s+/)[0]).filter(Boolean);
+      return parts[parts.length - 1] || "";
+    };
+    const pickUrl = (image) => absoluteUrl(
+      image.currentSrc ||
+      image.src ||
+      image.getAttribute("data-src") ||
+      image.getAttribute("data-original") ||
+      fromSrcset(image) ||
+      ""
+    );
     const fixed = [
       firstImageValue(structured?.image),
       meta("og:image"),
+      meta("og:image:secure_url"),
       meta("twitter:image", false)
     ].map(absoluteUrl).find(Boolean);
     if (fixed) return fixed;
     const titleTokens = clean(title).toLocaleLowerCase("tr-TR")
       .split(" ").filter((part) => part.length > 3);
-    return all("main img, [class*='product' i] img, img")
-      .filter(visible)
-      .map((image) => {
-        const rect = image.getBoundingClientRect();
-        const context = clean([
-          image.alt,
-          image.className,
-          image.parentElement?.className
-        ].join(" "));
-        let score = Math.min(50, Math.sqrt(rect.width * rect.height) / 7);
-        if (image.closest("main")) score += 18;
-        if (/(gallery|product|pdp|carousel)/i.test(context)) score += 20;
-        if (/(logo|icon|avatar|payment|size.?guide)/i.test(context)) score -= 80;
-        if (titleTokens.some((token) =>
-          clean(image.alt).toLocaleLowerCase("tr-TR").includes(token))) {
-          score += 12;
-        }
-        return {
-          url: absoluteUrl(
-            image.currentSrc ||
-            image.src ||
-            image.getAttribute("data-src") ||
-            ""
-          ),
-          score
-        };
-      })
-      .filter((candidate) => candidate.url)
+    const scoreImage = (image, requireVisible) => {
+      if (requireVisible && !visible(image)) return null;
+      const rect = image.getBoundingClientRect();
+      const context = clean([
+        image.alt,
+        image.className,
+        image.parentElement?.className,
+        pickUrl(image)
+      ].join(" "));
+      if (/(logo|icon|avatar|payment|size.?guide|sprite|placeholder)/i.test(context)) return null;
+      let score = Math.min(50, Math.sqrt(Math.max(rect.width, 80) * Math.max(rect.height, 80)) / 7);
+      if (image.closest("main")) score += 18;
+      if (/(gallery|product|pdp|carousel|media)/i.test(context)) score += 20;
+      if (/(static\.(?:pullandbear|bershka|zara)|media\.|impolicy)/i.test(pickUrl(image))) score += 24;
+      if (titleTokens.some((token) =>
+        clean(image.alt).toLocaleLowerCase("tr-TR").includes(token))) {
+        score += 12;
+      }
+      const url = pickUrl(image);
+      if (!url) return null;
+      return { url, score };
+    };
+    const visiblePick = all("main img, [class*='product' i] img, picture img, img")
+      .map((image) => scoreImage(image, true))
+      .filter(Boolean)
+      .sort((left, right) => right.score - left.score)[0]?.url;
+    if (visiblePick) return visiblePick;
+    return all("img, picture source")
+      .map((image) => scoreImage(image, false))
+      .filter(Boolean)
       .sort((left, right) => right.score - left.score)[0]?.url || "";
   };
   const fitDetails = () => {
@@ -214,16 +230,22 @@ const scannerBootstrap = String.raw`
     };
   };
   const inferCategory = (...values) => {
-    const value = fold(values.filter(Boolean).join(" "));
-    if (/ayakkabi|shoe|sneaker|trainer|loafer|sandal|terlik|bot\b/.test(value)) return "Footwear";
-    if (/ceket|jacket|mont|coat|kaban|parka|trenc|outerwear|blazer/.test(value)) return "Outerwear";
-    if (/pantolon|jean|denim|trouser|pants|sort|short|bermuda|etek|skirt/.test(value)) return "Bottoms";
-    if (/elbise|dress|tulum|jumpsuit/.test(value)) return "Dresses";
-    if (/tisort|t.?shirt|tee\b|polo(?: yaka)?|jersey/.test(value)) return "Tees";
-    if (/gomlek|shirt|overshirt|bluz|blouse/.test(value)) return "Shirts";
-    if (/sweat|hoodie|kazak|triko|hirka|cardigan|knit/.test(value)) return "Knitwear";
-    if (/ust giyim|tops?|camisole|atlet/.test(value)) return "Tops";
-    return "Other";
+    const classify = (value) => {
+      if (!value) return "Other";
+      if (/ayakkabi|shoe|sneaker|trainer|loafer|sandal|terlik|bot\b/.test(value)) return "Footwear";
+      if (/ceket|jacket|mont|coat|kaban|parka|trenc|outerwear|blazer/.test(value)) return "Outerwear";
+      if (/tisort|t.?shirt|tee\b|polo(?: yaka)?|jersey/.test(value)) return "Tees";
+      if (/gomlek|overshirt|bluz|blouse/.test(value)) return "Shirts";
+      if (/sweat|hoodie|kazak|triko|hirka|cardigan|knit/.test(value)) return "Knitwear";
+      if (/elbise|dress|tulum|jumpsuit/.test(value)) return "Dresses";
+      if (/pantolon|jean|trouser|pants|sort|short|bermuda|etek|skirt/.test(value)) return "Bottoms";
+      if (/\bdenim\b/.test(value) && !/tisort|t.?shirt|tee\b|gomlek|shirt|sweat|hoodie/.test(value)) return "Bottoms";
+      if (/ust giyim|tops?|camisole|atlet/.test(value)) return "Tops";
+      return "Other";
+    };
+    const fromTitle = classify(fold(values[1] || ""));
+    if (fromTitle !== "Other") return fromTitle;
+    return classify(fold(values.filter(Boolean).join(" ")));
   };
   const materialDetails = async () => {
     const trigger = findShortTextControl(
@@ -260,7 +282,7 @@ const scannerBootstrap = String.raw`
         type: "fitmemory-progress",
         message
       }));
-      } catch (error) { recordDiagnostic("scanner-operation", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
   let guideStage = "Beden paneli aranıyor";
   const waitFor = async (predicate, timeout = 4000, interval = 80) => {
@@ -269,18 +291,48 @@ const scannerBootstrap = String.raw`
       try {
         const value = predicate();
         if (value) return value;
-      } catch (error) { recordDiagnostic("scanner-operation", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
       await sleep(interval);
+    }
+    return null;
+  };
+  const waitForStable = async (predicate, timeout = 10000, stableFor = 450) => {
+    const startedAt = Date.now();
+    let lastSignature = "";
+    let stableSince = 0;
+    while (Date.now() - startedAt < timeout) {
+      rootCache = null;
+      try {
+        const value = predicate();
+        if (value) {
+          const signature = typeof value === "string"
+            ? value
+            : clean(value.rawText || value.innerText || value.textContent || JSON.stringify(value));
+          if (signature && signature === lastSignature) {
+            if (Date.now() - stableSince >= stableFor) return value;
+          } else {
+            lastSignature = signature;
+            stableSince = Date.now();
+          }
+        }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
+      await sleep(120);
     }
     return null;
   };
   const controlText = (element) => {
     if (!element || typeof element.getAttribute !== "function") return "";
     return clean(
-      element.innerText || element.textContent || element.value ||
       element.getAttribute("aria-label") || element.getAttribute("title") ||
+      element.value || element.innerText || element.textContent ||
       element.getAttribute("data-testid") || ""
     );
+  };
+  const ownText = (element) => {
+    if (!element || !element.childNodes) return "";
+    return clean([...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || "").join(" "));
   };
   const clickable = (element) =>
     element?.closest?.(
@@ -296,7 +348,7 @@ const scannerBootstrap = String.raw`
           !href.toLowerCase().startsWith("javascript:")) return false;
     }
     target.scrollIntoView?.({ block: "center", inline: "center" });
-    await sleep(100);
+    await sleep(35);
     try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
     for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
       try {
@@ -312,14 +364,15 @@ const scannerBootstrap = String.raw`
             ? new Event(type, { bubbles: true, cancelable: true })
             : new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
         target.dispatchEvent(event);
-      } catch (error) { recordDiagnostic("scanner-operation", error); }
+    } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
+    await sleep(45);
     roots(true);
     return true;
   };
   const findShortTextControl = (pattern) => all(
-    "button, a, [role='button'], [role='radio'], [role='option'], summary, " +
+    "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
     "[data-testid], [data-qa], [aria-label], span, div"
   ).filter(visible).map((element) => ({
     element,
@@ -330,19 +383,56 @@ const scannerBootstrap = String.raw`
       left.element.childElementCount - right.element.childElementCount
     )[0]?.element || null;
   const findExactControl = (pattern) => all(
-    "button, [role='button'], input[type='button'], input[type='submit'], a"
+    "button, [role='button'], [role='tab'], input[type='button'], input[type='submit'], a, [data-testid], [data-qa]"
   ).filter(visible).map((element) => ({
     element,
-    text: clean(element.value || controlText(element))
-  })).filter(({ text }) => text && text.length <= 80 && pattern.test(fold(text)))
+    text: clean(element.value || element.getAttribute?.("aria-label") || ownText(element) || controlText(element))
+  })).filter(({ text }) => text && text.length <= 120 && pattern.test(fold(text)))
     .sort((left, right) => left.text.length - right.text.length)[0]?.element || null;
   const findExactVisibleTextControl = (pattern) =>
     findExactControl(pattern) || findShortTextControl(pattern);
+  const addPattern = /^(?:ekle|sepete ekle|add|add to bag|add to basket)(?:\s|$)/i;
+  const pullAddCandidates = () => {
+    const candidates = all(
+      "button, [role='button'], input[type='button'], input[type='submit'], " +
+      "[data-testid], [data-qa], [class*='add' i], [class*='cart' i]"
+    ).filter(visible).map((element) => {
+      const own = fold(clean(element.value || ownText(element)));
+      const full = fold(controlText(element));
+      const attributes = fold(clean([
+        element.getAttribute?.("data-testid"),
+        element.getAttribute?.("data-qa"),
+        element.getAttribute?.("name"),
+        element.id,
+        element.className
+      ].join(" ")));
+      const rect = element.getBoundingClientRect();
+      let score = 0;
+      if (/^(ekle|sepete ekle|add|add to bag|add to basket)$/.test(own)) score += 100;
+      if (addPattern.test(full)) score += 55;
+      if (/(add.to.cart|add.to.bag|add.product|product.add|add-button|addtocart)/.test(attributes)) score += 45;
+      if (rect.width > innerWidth * 0.45 && rect.height >= 34) score += 15;
+      if (/(stil|style|favori|favorite|wishlist|benzer)/.test(own + " " + full)) score -= 100;
+      return { element, score, top: rect.top };
+    }).filter((candidate) => candidate.score >= 45);
+    const textFallback = findExactVisibleTextControl(addPattern);
+    if (textFallback) {
+      candidates.push({
+        element: textFallback,
+        score: 90,
+        top: textFallback.getBoundingClientRect().top
+      });
+    }
+    candidates.sort((left, right) => right.score - left.score || right.top - left.top);
+    const seen = new Set();
+    return candidates.map((candidate) => clickable(candidate.element))
+      .filter((element) => element && !seen.has(element) && seen.add(element));
+  };
   const measurementPattern =
-    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
-  const findMeasurementTrigger = () =>
+    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|size chart|view measurements?|measurements?/i;
+  const measurementControls = () =>
     all(
-      "button, a, [role='button'], summary, [data-testid*='measure' i], " +
+      "button, a, [role='button'], [role='tab'], summary, [data-testid*='measure' i], " +
       "[data-qa*='measure' i], [aria-label*='ölç' i], " +
       "[aria-label*='size guide' i], [class*='measure' i], span, div"
     ).filter(visible).map((element) => ({
@@ -355,11 +445,14 @@ const scannerBootstrap = String.raw`
     ).sort((left, right) =>
       left.text.length - right.text.length ||
       left.element.childElementCount - right.element.childElementCount
-    )[0]?.element || null;
+    ).map(({ element }) => clickable(element));
+  const findMeasurementTrigger = (excluded) =>
+    measurementControls().find((element) => element && !excluded?.has(element)) || null;
   const sizePattern = /^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d(?:[/-][1-9]\d)?)$/i;
   const sizeLabelFromText = (value) => {
     const text = clean(value).toUpperCase();
     const label = text.match(/^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d(?:[/-][1-9]\d)?)(?:\s*\([^)]*\))?$/i)?.[1]?.toUpperCase() ||
+      text.match(/^EU\s*([1-9]\d)(?:\s*\([^)]*\))?$/i)?.[1] ||
       text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d)\)/i)?.[1]?.toUpperCase() || "";
     return sizePattern.test(label) ? label : "";
   };
@@ -371,14 +464,8 @@ const scannerBootstrap = String.raw`
     .filter(Boolean).filter((value, index, values) => values.indexOf(value) === index)
     .map((value) => "[selected] " + value).join("\n");
   const measurementNamePattern =
-    /gogus|chest|bust|cevre|circum|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
+    /gogus|chest|bust|cevre|circum|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|sirt genisligi|back width|kol genisligi|arm width|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
   const panelText = (panel) => clean(panel?.innerText || panel?.textContent || "");
-  const ownText = (element) => {
-    if (!element || !element.childNodes) return "";
-    return clean([...element.childNodes]
-      .filter((node) => node.nodeType === Node.TEXT_NODE)
-      .map((node) => node.textContent || "").join(" "));
-  };
   const openMetricPattern =
     /gogus|chest|bust|(?:^|\b)bel(?:\b|cevresi)|waist|kalca|basen|hip|omuz|shoulder|ic bacak|inseam|on uzunluk|front length/;
   const metricLabelsVisible = () => all("th, td, dt, dd, span, p, div, li, button, label")
@@ -460,7 +547,7 @@ const scannerBootstrap = String.raw`
       if (!label || !sizePattern.test(label)) continue;
       const target = clickable(element);
       if (!target || seen.has(target)) continue;
-      if (panel) {
+      if (panel && panel !== document && panel !== document.body) {
         const panelRoot = panel.getRootNode?.();
         const targetRoot = target.getRootNode?.();
         const panelRect = panel.getBoundingClientRect();
@@ -476,6 +563,26 @@ const scannerBootstrap = String.raw`
     }
     return result.slice(0, 24);
   }
+  const findSizePanel = () => {
+    const candidates = all(
+      "[role='dialog'], [role='tabpanel'], aside, " +
+      "[class*='drawer' i], [class*='sheet' i], [class*='modal' i], " +
+      "[class*='size-selector' i], [class*='sizeSelector' i], " +
+      "[class*='size-guide' i], [class*='sizeguide' i], [class*='product-size' i]"
+    ).filter(visible).map((panel) => {
+      const text = fold(panelText(panel));
+      const buttons = findSizeButtons(panel);
+      const signal = /beden sec|choose size|select size|olculer|measurements?|size guide/.test(text);
+      return {
+        panel,
+        buttons,
+        score: buttons.length * 12 + (signal ? 25 : 0) - Math.min(text.length / 4000, 4)
+      };
+    }).filter((candidate) => candidate.buttons.length >= 2)
+      .sort((left, right) => right.score - left.score);
+    if (candidates[0]) return candidates[0].panel;
+    return findSizeButtons(document).length >= 3 ? document.body : null;
+  };
   const selectedSizeButton = (button) => {
     if (!button || typeof button.getAttribute !== "function") return false;
     if (button.getAttribute("aria-checked") === "true" ||
@@ -487,79 +594,261 @@ const scannerBootstrap = String.raw`
       button.className
     ].join(" ")));
   };
+  const sizeDrawerVisible = () => {
+    return findSizePanel();
+  };
+  const activatePullSizeDrawer = async () => {
+    let candidates = pullAddCandidates();
+    if (!candidates.length) {
+      guideStage = "Pull&Bear ürün aksiyonları bekleniyor";
+      progress(guideStage);
+      await waitFor(() => {
+        candidates = pullAddCandidates();
+        return candidates.length ? candidates : null;
+      }, 8500, 100);
+    }
+    for (const candidate of candidates.slice(0, 4)) {
+      guideStage = "Pull&Bear Ekle düğmesi açılıyor";
+      progress(guideStage);
+      await clickElement(candidate);
+      const opened = await waitFor(() => sizeDrawerVisible(), 2400, 60);
+      if (opened) return opened;
+    }
+    return null;
+  };
+  const verifiedChart = () => {
+    try {
+      const chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), visiblePanelChart());
+      if (chart) return chart;
+      const panel = findMeasurePanel();
+      return panel && extractMeasurements(panel).length > 0 ? panel : null;
+    } catch (error) {
+      recordDiagnostic("verified-chart", error);
+      return null;
+    }
+  };
+  const exactBrandControl = (patterns) => all(
+    "button, a, [role='button'], [role='tab'], summary, [data-testid], [data-qa], span, div"
+  ).filter(visible).map((element) => {
+    const text = fold(clean(ownText(element) || controlText(element)));
+    const target = clickable(element);
+    const rect = target?.getBoundingClientRect?.() || element.getBoundingClientRect();
+    return { element: target, text, area: rect.width * rect.height, children: element.childElementCount };
+  }).filter(({ element, text }) => element && patterns.some((pattern) => pattern.test(text)))
+    .sort((left, right) => left.children - right.children || left.area - right.area)[0]?.element || null;
+  const scrollFindBrandControl = async (patterns, maxSteps = 12) => {
+    let trigger = exactBrandControl(patterns);
+    for (let step = 0; !trigger && step < maxSteps; step += 1) {
+      window.scrollBy?.({ top: Math.max(260, innerHeight * .68), behavior: "auto" });
+      await sleep(95);
+      trigger = exactBrandControl(patterns);
+    }
+    if (!trigger && window.scrollY > innerHeight) {
+      window.scrollTo?.({ top: 0, behavior: "auto" });
+      await sleep(80);
+      for (let step = 0; !trigger && step < maxSteps; step += 1) {
+        window.scrollBy?.({ top: Math.max(260, innerHeight * .68), behavior: "auto" });
+        await sleep(95);
+        trigger = exactBrandControl(patterns);
+      }
+    }
+    return trigger;
+  };
+  const openZaraMeasurements = async () => {
+    const patterns = [/^olculer$/i, /^urun boyutlari$/i, /^product measurements?$/i, /^measurements?$/i];
+    guideStage = "Zara ölçüler sekmesi aranıyor";
+    progress(guideStage);
+    let trigger = await scrollFindBrandControl(patterns, 14);
+    if (!trigger) {
+      guideStage = "Zara ölçüler sekmesi bulunamadı";
+      return false;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(80);
+    guideStage = "Zara ölçüler sekmesi açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Zara ölçü tablosu okundu" : "Zara ölçüler sekmesi açıldı ancak tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const openBershkaMeasurements = async () => {
+    const patterns = [
+      /^olculer$/i, /^urun olculeri$/i, /^urun boyutlari$/i, /^beden rehberi$/i,
+      /^product measurements?$/i, /^size guide$/i, /^measurements?$/i,
+      /^olculeri goruntule$/i, /^olculeri gor$/i
+    ];
+    guideStage = "Bershka ölçü paneli aranıyor";
+    progress(guideStage);
+    let trigger = await scrollFindBrandControl(patterns, 14);
+    if (!trigger) {
+      const addControl = findExactVisibleTextControl(addPattern) || pullAddCandidates()[0];
+      const sizeControl = findExactVisibleTextControl(
+        /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^ekle$|^sepete ekle$/i
+      );
+      const opener = addControl || sizeControl;
+      if (opener) {
+        guideStage = "Bershka beden seçici açılıyor";
+        progress(guideStage);
+        await clickElement(opener);
+        trigger = await waitFor(() => exactBrandControl(patterns), 6000, 80);
+      }
+    }
+    if (!trigger) {
+      guideStage = "Bershka ölçü bağlantısı bulunamadı";
+      return false;
+    }
+    if (metricLabelsVisible()) {
+      guideStage = "Bershka ölçü paneli zaten açık";
+      return true;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(80);
+    guideStage = "Bershka ölçü paneli açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Bershka ölçü tablosu okundu" : "Bershka ölçü paneli açıldı ancak tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const openPullAndBearMeasurements = async () => {
+    const patterns = [
+      /^olculeri goruntule$/i, /^olculeri gor$/i, /^view measurements?$/i,
+      /^product measurements?$/i, /^size guide$/i
+    ];
+    // Pull&Bear iki farklı mobil şablon kullanıyor. Yeni şablonda ölçü düğmesi
+    // ürün sayfasında doğrudan görünür; eski şablonda önce Ekle çekmecesi açılır.
+    // Önce doğrudan düğmeyi denemek, Ekle çekmecesinin mevcut düğmeyi örtmesini önler.
+    let trigger = await scrollFindBrandControl(patterns, 5);
+    if (!trigger) {
+      const drawer = await activatePullSizeDrawer();
+      if (!drawer) {
+        guideStage = "Pull&Bear Ekle düğmesi açılmadı";
+        return false;
+      }
+      guideStage = "Pull&Bear beden paneli açıldı";
+      progress(guideStage);
+      const panel = findSizePanel() || drawer;
+      panel?.scrollTo?.({ top: panel.scrollHeight, behavior: "auto" });
+      trigger = await waitFor(() => exactBrandControl(patterns), 5000, 55);
+    }
+    if (!trigger) {
+      guideStage = "Pull&Bear Ölçüleri görüntüle bağlantısı bulunamadı";
+      return false;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(70);
+    guideStage = "Pull&Bear ölçü paneli açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Pull&Bear ölçü tablosu okundu" : "Pull&Bear ölçü paneli açıldı ancak sayısal tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const activateMeasurementChain = async (maxSteps, timeoutMs) => {
+    const clicked = new WeakSet();
+    const deadline = Date.now() + timeoutMs;
+    for (let step = 0; step < maxSteps && Date.now() < deadline; step += 1) {
+      const ready = tableChart() || geometryChart() || visiblePanelChart();
+      if (ready?.found) return true;
+      let trigger = findMeasurementTrigger(clicked);
+      if (!trigger) {
+        trigger = await waitFor(() => findMeasurementTrigger(clicked), Math.min(3500, deadline - Date.now()), 80);
+      }
+      if (!trigger) break;
+      clicked.add(trigger);
+      guideStage = "Ölçü adımı " + (step + 1) + " açılıyor";
+      progress(guideStage);
+      await clickElement(trigger);
+      await sleep(450);
+      roots(true);
+      const chart = await waitFor(() => tableChart() || geometryChart() || visiblePanelChart(), 1800, 90);
+      if (chart?.found) return true;
+    }
+    return Boolean(tableChart() || geometryChart() || visiblePanelChart());
+  };
   const openSizeGuide = async () => {
-    const labelsOpen = all("th, td, dt, dd, span, p, div, li, button, label")
-      .filter(visible)
-      .some((element) => {
-        const text = fold(ownText(element) || element.textContent || "");
-        return text.length > 0 && text.length <= 42 && measurementNamePattern.test(text);
-      });
-    if (labelsOpen && findSizeButtons(document).length >= 2) {
+    const scanHost = location.hostname || document.documentElement.getAttribute("data-fitmemory-test-host") || "";
+    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(scanHost);
+    const isZara = /(?:^|\.)zara\.com$/i.test(scanHost);
+    const isBershka = /(?:^|\.)bershka\.com$/i.test(scanHost);
+    if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
       guideStage = "Ölçü paneli zaten açık";
       return true;
     }
-    if (tableChart() || geometryChart() || (() => {
-      const panel = findMeasurePanel();
-      return panel && extractMeasurements(panel).length > 0;
-    })()) {
+    if (verifiedChart()) {
       guideStage = "Ölçü paneli açık";
       return true;
     }
-    let measurement = findMeasurementTrigger();
-    if (measurement && await clickElement(measurement)) {
-      guideStage = "Ölçüleri görüntüle tıklandı";
-      progress(guideStage);
-      const panel = await waitFor(() => tableChart() || geometryChart() || (() => {
-        const found = findMeasurePanel();
-        return found && extractMeasurements(found).length > 0;
-      })(), 7000, 160);
-      if (panel) return true;
-    }
-    const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(location.hostname);
+    if (isPullAndBear) return await openPullAndBearMeasurements();
+    if (isZara) return await openZaraMeasurements();
+    if (isBershka) return await openBershkaMeasurements();
+    let measurement = isPullAndBear ? null : findMeasurementTrigger();
+    if (!isPullAndBear && measurement && await activateMeasurementChain(3, 12000)) return true;
     const addControl = isPullAndBear
-      ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+      ? null
       : /(?:^|\.)(bershka|zara)\.com$/i.test(location.hostname)
-        ? findExactVisibleTextControl(/^(ekle|sepete ekle|add|add to bag|add to basket)$/i)
+        ? findExactVisibleTextControl(addPattern)
         : null;
     const sizeControl = findExactVisibleTextControl(
       /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^beden$|^size$/i
     );
-    const opener = isPullAndBear ? addControl : (sizeControl || addControl);
+    const opener = sizeControl || addControl;
     if (opener) {
-      guideStage = isPullAndBear ? "Ekle düğmesi bulundu" : "Beden seçici bulundu";
+      guideStage = "Beden seçici bulundu";
       progress(guideStage);
       await clickElement(opener);
-      guideStage = isPullAndBear ? "Ekle tıklandı, ölçü bağlantısı bekleniyor" : "Beden paneli açılıyor";
+      guideStage = "Beden paneli açılıyor";
       progress(guideStage);
       measurement = await waitFor(() => findMeasurementTrigger(), 6000, 180);
-      if (measurement && await clickElement(measurement)) {
-        guideStage = "Ölçüleri görüntüle tıklandı";
-        progress(guideStage);
-        const panel = await waitFor(() => tableChart() || geometryChart() || (() => {
-          const found = findMeasurePanel();
-          return found && extractMeasurements(found).length > 0;
-        })(), 9000, 180);
-        if (panel) return true;
-      }
+      if (measurement && await activateMeasurementChain(3, 14000)) return true;
       guideStage = measurement
         ? "Ölçü bağlantısı tıklandı ancak tablo oluşmadı"
         : "Ekle açıldı ancak Ölçüleri görüntüle bulunamadı";
     } else {
-      guideStage = isPullAndBear
-        ? "Sayfadaki Ekle düğmesi bulunamadı"
-        : "Beden seçici bulunamadı";
+      guideStage = "Beden seçici bulunamadı";
     }
-    return Boolean(tableChart() || geometryChart() || (() => {
+    return Boolean(tableChart() || geometryChart() || visiblePanelChart() || (() => {
       const panel = findMeasurePanel();
       return panel && extractMeasurements(panel).length > 0;
     })());
   };
+  const findScrollableX = (element) => {
+    let node = element instanceof Element ? element : null;
+    while (node && node !== document.documentElement) {
+      try {
+        const style = getComputedStyle(node);
+        if ((style.overflowX === "auto" || style.overflowX === "scroll" || style.overflowX === "overlay") &&
+            node.scrollWidth > node.clientWidth + 12) {
+          return node;
+        }
+      } catch (error) { recordDiagnostic("scanner-operation", error); }
+      node = node.parentElement;
+    }
+    return null;
+  };
+  const revealWideTables = async () => {
+    const tables = all("table, [role='table']");
+    for (const table of tables.slice(0, 12)) {
+      const scroller = findScrollableX(table) || findScrollableX(table.parentElement);
+      if (!scroller) continue;
+      const start = scroller.scrollLeft;
+      const step = Math.max(72, Math.floor(scroller.clientWidth * 0.65));
+      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      for (let x = 0; x <= max + 1; x += step) {
+        scroller.scrollLeft = x;
+        await sleep(80);
+      }
+      scroller.scrollLeft = 0;
+      await sleep(50);
+      scroller.scrollLeft = start;
+    }
+  };
   const tableChart = () => {
     const candidates = all("table, [role='table']")
-      .filter(visible)
       .map((table) => {
         const text = clean(table.innerText || table.textContent);
-        const signal = /(beden|size|göğüs|chest|omuz|shoulder|bel|waist|uzunluk|length|inseam|cm|inch)/i
+        const signal = /(beden|size|göğüs|chest|omuz|shoulder|bel|waist|uzunluk|length|inseam|cm|inch|bölge|bolge)/i
           .test(text);
         return { table, text, score: (signal ? 20 : 0) + (text.match(/\d/g) || []).length };
       })
@@ -644,6 +933,8 @@ const scannerBootstrap = String.raw`
       return "Göğüs";
     }
     if (/on uzunluk|front length/.test(text)) return "Ön uzunluk";
+    if (/sirt genisligi|back width/.test(text)) return "Sırt genişliği";
+    if (/kol genisligi|arm width/.test(text)) return "Kol genişliği";
     if (/kol|sleeve/.test(text)) return "Kol uzunluğu";
     if (/bel|waist/.test(text)) {
       if (/cevre|circum/.test(text)) return "Bel çevresi";
@@ -682,10 +973,7 @@ const scannerBootstrap = String.raw`
         return { text, folded: fold(text), rect: element.getBoundingClientRect() };
       }).filter((item) => item.text && item.text.length <= 60);
     const numericNodes = nodes.filter((item) => /^\d{1,3}(?:[.,]\d+)?$/.test(item.text))
-      .filter((item) => {
-        const value = Number(item.text.replace(",", "."));
-        return value > 0 && value <= 300;
-      });
+      .filter((item) => { const value = Number(item.text.replace(",", ".")); return value > 0 && value <= 300; });
     const metricNodes = nodes.filter((item) => measurementNamePattern.test(item.folded) &&
       !/nasil|how|model|fiyat|price|stok|stock/.test(item.folded));
     const byMetric = new Map();
@@ -693,11 +981,9 @@ const scannerBootstrap = String.raw`
       const y = metric.rect.top + metric.rect.height / 2;
       const values = numericNodes.filter((candidate) => {
         const candidateY = candidate.rect.top + candidate.rect.height / 2;
-        return Math.abs(candidateY - y) <= Math.max(32, metric.rect.height) &&
-          candidate.rect.left > metric.rect.left + 16;
+        return Math.abs(candidateY - y) <= Math.max(32, metric.rect.height) && candidate.rect.left > metric.rect.left + 16;
       }).sort((left, right) => left.rect.left - right.rect.left)
-        .filter((candidate, index, list) => index === 0 ||
-          Math.abs(candidate.rect.left - list[index - 1].rect.left) > 4 || candidate.text !== list[index - 1].text);
+        .filter((candidate, index, list) => index === 0 || Math.abs(candidate.rect.left - list[index - 1].rect.left) > 4 || candidate.text !== list[index - 1].text);
       if (!values.length) continue;
       const label = normalizeMeasurementLabel(metric.text);
       const previous = byMetric.get(label);
@@ -706,18 +992,15 @@ const scannerBootstrap = String.raw`
     const metricRows = [...byMetric.values()];
     if (metricRows.length < 2) return null;
     const firstMetricTop = Math.min(...metricRows.map((row) => row.metric.rect.top));
-    const sizeCandidates = nodes.filter((item) => sizeLabelFromText(item.text) &&
-      item.rect.bottom <= firstMetricTop + 30 && item.rect.bottom >= firstMetricTop - 700);
+    const sizeCandidates = nodes.filter((item) => sizeLabelFromText(item.text) && item.rect.bottom <= firstMetricTop + 30 && item.rect.bottom >= firstMetricTop - 700);
     const sizeBands = [];
     for (const candidate of sizeCandidates) {
       const y = candidate.rect.top + candidate.rect.height / 2;
       let band = sizeBands.find((item) => Math.abs(item.y - y) < 28);
       if (!band) { band = { y, items: [] }; sizeBands.push(band); }
-      if (!band.items.some((item) => sizeLabelFromText(item.text) === sizeLabelFromText(candidate.text) &&
-          Math.abs(item.rect.left - candidate.rect.left) < 8)) band.items.push(candidate);
+      if (!band.items.some((item) => sizeLabelFromText(item.text) === sizeLabelFromText(candidate.text) && Math.abs(item.rect.left - candidate.rect.left) < 8)) band.items.push(candidate);
     }
-    const sizeNodes = sizeBands.sort((left, right) =>
-      right.items.length - left.items.length || Math.abs(firstMetricTop - right.y) - Math.abs(firstMetricTop - left.y))[0]?.items
+    const sizeNodes = sizeBands.sort((left, right) => right.items.length - left.items.length || Math.abs(firstMetricTop - right.y) - Math.abs(firstMetricTop - left.y))[0]?.items
       ?.sort((left, right) => left.rect.left - right.rect.left) || [];
     if (!sizeNodes.length) return null;
     const maxValues = Math.max(...metricRows.map((row) => row.values.length));
@@ -733,22 +1016,16 @@ const scannerBootstrap = String.raw`
     let rows = [];
     if (!dualUnitLayout && maxValues > 1 && columnSizes.length === maxValues && columnSizes.every((item) => item?.distance < 85) &&
         new Set(columnSizes.map((item) => sizeLabelFromText(item.candidate.text))).size === maxValues) {
-      rows = columnSizes.map((item, index) => ({
-        cells: [sizeLabelFromText(item.candidate.text), ...metricRows.map((row) => clean(row.values[index]?.text).replace(",", "."))]
-      }));
+      rows = columnSizes.map((item, index) => ({ cells: [sizeLabelFromText(item.candidate.text), ...metricRows.map((row) => clean(row.values[index]?.text).replace(",", "."))] }));
     } else {
+      const sizeButtonCount = findSizeButtons(document).length;
+      if (maxValues <= 1 && (sizeNodes.length > 1 || sizeButtonCount > 1)) return null;
       const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
       const size = sizeLabelFromText(selected) || sizeLabelFromText(sizeNodes[0]?.text);
       if (size) rows = [{ cells: [size, ...metricRows.map((row) => clean(row.values[0]?.text).replace(",", "."))] }];
     }
-    const chart = {
-      found: rows.length > 0,
-      title: "Ürün ölçüleri",
-      unit: "Centimeters",
-      headers,
-      rows,
-      rawText: [headers.join(" | "), ...rows.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
-    };
+    const chart = { found: rows.length > 0, title: "Ürün ölçüleri", unit: "Centimeters", headers, rows,
+      rawText: [headers.join(" | "), ...rows.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000) };
     return verifiedMeasurementChart(chart) ? chart : null;
   };
   const visibleOpenChart = () => {
@@ -790,7 +1067,6 @@ const scannerBootstrap = String.raw`
     const metrics = nodes.filter((item) => measurementNamePattern.test(item.folded) && !/nasil|how/.test(item.folded));
     const numbers = nodes.filter((item) => /^\d{1,3}(?:[.,]\d+)?$/.test(item.text));
     if (metrics.length < 2 || numbers.length < 2) return null;
-
     const metricRows = metrics.map((metric) => {
       const centerY = metric.rect.top + metric.rect.height / 2;
       const values = numbers.filter((candidate) => {
@@ -815,15 +1091,12 @@ const scannerBootstrap = String.raw`
     const canUseSizeColumns = !hasDualUnits && maxValues > 1 && uniqueSizeNodes.length >= maxValues;
     const headers = ["Beden", ...metricRows.map((row) => normalizeMeasurementLabel(row.metric.text))];
     let rows = [];
-
     if (canUseSizeColumns) {
       const anchor = metricRows.find((row) => row.values.length === maxValues)?.values || [];
       const columnSizes = anchor.map((value) => {
         const x = value.rect.left + value.rect.width / 2;
-        return uniqueSizeNodes.map((candidate) => ({
-          candidate,
-          distance: Math.abs(candidate.rect.left + candidate.rect.width / 2 - x)
-        })).sort((left, right) => left.distance - right.distance)[0];
+        return uniqueSizeNodes.map((candidate) => ({ candidate, distance: Math.abs(candidate.rect.left + candidate.rect.width / 2 - x) }))
+          .sort((left, right) => left.distance - right.distance)[0];
       });
       if (columnSizes.every((item) => item && item.distance < 90)) {
         rows = columnSizes.map((item, index) => ({
@@ -831,18 +1104,15 @@ const scannerBootstrap = String.raw`
         }));
       }
     }
-
     if (!rows.length) {
       const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
       const globalSizeNodes = all("button, [role='radio'], [role='option'], [role='tab'], label, li, span, div")
         .filter(visible).map((element) => ({ element, label: sizeLabelFromText(ownText(element)) }))
         .filter((item) => item.label);
-      const size = sizeLabelFromText(selected) ||
-        sizeLabelFromText(uniqueSizeNodes[0]?.text) || globalSizeNodes[0]?.label || "";
+      const size = sizeLabelFromText(selected) || sizeLabelFromText(uniqueSizeNodes[0]?.text) || globalSizeNodes[0]?.label || "";
       if (!size) return null;
       rows = [{ cells: [size, ...metricRows.map((row) => row.values[0]?.text.replace(",", ".") || "")] }];
     }
-
     rows = rows.filter((row) => sizePattern.test(row.cells[0]) && row.cells.slice(1).some((value) => /^\d{1,3}(?:\.\d+)?$/.test(value)));
     if (!rows.length) return null;
     const rawText = [headers.join(" | "), ...rows.map((row) => row.cells.join(" | "))].join("\n");
@@ -877,6 +1147,9 @@ const scannerBootstrap = String.raw`
       }).sort((a, b) => b.rect.bottom - a.rect.bottom);
       return sizeLabelFromText(candidates[0]?.text) || "Beden " + (index + 1);
     });
+    // Kolon basligi gercek bir beden degilse tabloyu uydurma etiketlerle kabul etme.
+    // Bu, Zara urun gridlerinde "Beden 1" gibi sahte satirlarin AI'a gitmesini engeller.
+    if (sizes.some((size) => /^Beden\s/i.test(size))) return null;
     const headers = ["Beden", ...metricRows.map((row) => normalizeMeasurementLabel(row.metric.text))];
     const rows = sizes.map((size, index) => ({ cells: [size, ...metricRows.map((row) => row.values[index]?.text.replace(",", ".") || "")] }))
       .filter((row) => row.cells.slice(1).some(Boolean));
@@ -891,7 +1164,8 @@ const scannerBootstrap = String.raw`
       const normalized = normalizeMeasurementLabel(label);
       const numeric = clean(value).replace(",", ".").match(/\d{1,3}(?:\.\d+)?/)?.[0] || "";
       if (!normalized || !numeric || seen.has(normalized)) return;
-      if (!/^\d{2,3}(?:\.\d+)?$/.test(numeric)) return;
+      if (!/^[1-9]\d(?:\.\d+)?$|^[1-9]\d{2}(?:\.\d+)?$/.test(numeric)) return;
+      if (Number(numeric) < 10) return;
       if (clean(value) === "-" || clean(value) === "–" || clean(value) === "—") return;
       seen.add(normalized);
       measurements.push({ label: normalized, value: numeric });
@@ -910,7 +1184,7 @@ const scannerBootstrap = String.raw`
         .map((element) => ownText(element))
         .filter((value) => value && value.length <= 90)
     ].join("\n"));
-    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
+    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|sirt\s*genisligi|back\s*width|kol\s*genisligi|arm\s*width|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
     for (const match of text.matchAll(pattern)) add(match[1], match[2]);
     if (measurements.length < 2) {
       const labels = all("th, td, dt, dd, [role='rowheader'], p, span, div")
@@ -924,6 +1198,7 @@ const scannerBootstrap = String.raw`
           const label = clean(labelElement.innerText || labelElement.textContent);
           const values = (clean(row.innerText || row.textContent).match(/\d{1,3}(?:[.,]\d+)?/g) || [])
             .filter((item) => /^\d{2,3}(?:[.,]\d+)?$/.test(item));
+          if (clean(row.innerText || "").length > 120) { row = row.parentElement; continue; }
           if (values.length) { add(label, values[0]); break; }
           row = row.parentElement;
         }
@@ -931,24 +1206,46 @@ const scannerBootstrap = String.raw`
     }
     return measurements;
   };
+  const visiblePanelChart = () => {
+    const selected = selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "";
+    const panel = findMeasurePanel();
+    const scope = panel;
+    if (!scope) return null;
+    const measurements = extractMeasurements(scope);
+    if (!measurements.length) return null;
+    const selectedButton = findSizeButtons(document).find(selectedSizeButton) || null;
+    const size = sizeLabelFromText(controlText(selectedButton)) ||
+      sizeLabelFromText(selected) ||
+      sizeLabelFromText(controlText(findSizeButtons(document)[0]));
+    if (!size) return null;
+    const headers = ["Beden", ...measurements.map((item) => item.label)];
+    const row = { cells: [size, ...measurements.map((item) => item.value)] };
+    return {
+      found: true,
+      title: "Urun olculeri",
+      unit: /\b(inch|inc)\b/i.test(fold(panelText(scope))) ? "Inches" : "Centimeters",
+      headers,
+      rows: [row],
+      rawText: [headers.join(" | "), row.cells.join(" | ")].join("\n")
+    };
+  };
   const measureSignature = () => {
-    const panel = findMeasurePanel() || document.body;
+    const panel = findMeasurePanel() || findSizePanel();
     if (!panel) return "";
     return extractMeasurements(panel).map((item) => item.label + ":" + item.value).join("|") || panelText(panel).slice(0, 1000);
   };
   const panelChart = async () => {
-    let panel = findMeasurePanel() || document.body;
+    let panel = findMeasurePanel() || findSizePanel() || document.body;
     if (!panel) return null;
-    const initial = findSizeButtons(panel).find(selectedSizeButton) ||
-      findSizeButtons(document).find(selectedSizeButton);
-    const initialLabel = sizeLabelFromText(controlText(initial));
-    const sizeButtons = () => {
+    const availableButtons = () => {
       const local = findSizeButtons(panel);
       return local.length ? local : findSizeButtons(document);
     };
-    const labels = sizeButtons()
+    const initial = availableButtons().find(selectedSizeButton);
+    const initialLabel = sizeLabelFromText(controlText(initial));
+    const labels = availableButtons()
       .map((button) => sizeLabelFromText(controlText(button)))
-      .filter(size => sizePattern.test(size))
+      .filter(Boolean)
       .filter((size, index, values) => values.indexOf(size) === index);
     const records = [];
     let headers = null;
@@ -957,16 +1254,17 @@ const scannerBootstrap = String.raw`
     for (const size of targets.slice(0, 10)) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
-      panel = findMeasurePanel() || panel;
-      const button = sizeButtons().find((candidate) =>
+      panel = findMeasurePanel() || findSizePanel() || panel;
+      const localButtons = findSizeButtons(panel);
+      const button = (localButtons.length ? localButtons : findSizeButtons(document)).find((candidate) =>
         sizeLabelFromText(controlText(candidate)) === size);
       if (button) {
         const before = measureSignature();
         await clickElement(button);
         await waitFor(() => selectedSizeButton(button) || extractMeasurements(findMeasurePanel() || panel).length >= 2 || measureSignature() !== before, 3200, 70);
-        await sleep(180);
+        await waitForStable(() => measureSignature() || extractMeasurements(findMeasurePanel() || document.body).map((item) => item.value).join("|"), 1600, 120);
       }
-      panel = findMeasurePanel() || panel;
+      panel = findMeasurePanel() || findSizePanel() || panel;
       const measurements = extractMeasurements(panel);
       if (!measurements.length) continue;
       headers ||= ["Beden", ...measurements.map((item) => item.label)];
@@ -976,12 +1274,13 @@ const scannerBootstrap = String.raw`
       });
     }
     if (initialLabel) {
-      panel = findMeasurePanel() || panel;
-      const restore = findSizeButtons(panel).find((button) =>
+      panel = findMeasurePanel() || findSizePanel() || panel;
+       const restoreButtons = findSizeButtons(panel);
+       const restore = (restoreButtons.length ? restoreButtons : findSizeButtons(document)).find((button) =>
         sizeLabelFromText(controlText(button)) === initialLabel);
       if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
-    const finalText = panelText(findMeasurePanel() || panel);
+    const finalText = panelText(findMeasurePanel() || findSizePanel() || panel);
     if (!records.length || !headers) return null;
     return {
       found: true,
@@ -994,10 +1293,6 @@ const scannerBootstrap = String.raw`
     };
   };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
-    const material = visibleMeasurementsOnly
-      ? { summary: "", evidence: "" }
-      : await materialDetails();
-    if (!visibleMeasurementsOnly || !metricLabelsVisible()) await openSizeGuide();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1013,6 +1308,10 @@ const scannerBootstrap = String.raw`
       meta("og:site_name") ||
       location.hostname.replace(/^www\./, "").split(".")[0]
     ).slice(0, 120);
+    let imageUrl = chooseProductImage(structured, title);
+    const openMeasurementSurface = () =>
+      metricLabelsVisible() && findSizeButtons(document).length >= 2;
+    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
     const fit = fitDetails();
     const model = modelDetails();
     const offers = Array.isArray(structured?.offers)
@@ -1025,30 +1324,38 @@ const scannerBootstrap = String.raw`
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
     let chart = null;
-    for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 3 : 2) && !chart?.found; attempt += 1) {
-      const safeChart = async (loader) => {
-        try { return await loader(); }
-        catch (error) { recordDiagnostic("chart-extract", error); return null; }
-      };
+    const safeChart = async (loader) => {
+      try {
+        return await loader();
+      } catch (error) {
+        recordDiagnostic("chart-extract", error);
+        return null;
+      }
+    };
+    const collectChart = async () => {
+      await revealWideTables();
+      const table = await safeChart(() => tableChart());
+      if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
       if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
         const walked = await safeChart(() => panelChart());
-        if (verifiedMeasurementChart(walked) && walked.rows?.length) {
-          chart = walked;
-        }
+        if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
       }
-      if (!chart?.found) {
-        chart = firstVerifiedChart(
-          await safeChart(() => tableChart()),
-          await safeChart(() => visibleLayoutChart()),
-          await safeChart(() => visibleOpenChart()),
-          await safeChart(() => geometryChart()),
-          await safeChart(() => panelChart())
-        );
-      }
+      return firstVerifiedChart(
+        table,
+        await safeChart(() => visibleLayoutChart()),
+        await safeChart(() => visibleOpenChart()),
+        await safeChart(() => geometryChart()),
+        await safeChart(() => panelChart()),
+        await safeChart(() => visiblePanelChart())
+      );
+    };
+    for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 3 : 2) && !chart?.found; attempt += 1) {
+      chart = await collectChart();
       if (chart?.found) break;
       if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
     }
+    const material = await materialDetails();
     if (!chart?.found) {
       return {
         fallback: true,
@@ -1060,7 +1367,7 @@ const scannerBootstrap = String.raw`
           url: location.href.slice(0, 1000), brand, name: title,
           category: inferCategory(structured?.category, title, structured?.description, fit.label),
           price: clean([offers?.price || meta("product:price:amount"), offers?.priceCurrency || meta("product:price:currency")].filter(Boolean).join(" ")).slice(0, 80),
-          imageUrl: chooseProductImage(structured, title).slice(0, 1000),
+          imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
           productReference: reference, fitLabel: fit.label, fitEvidence: fit.evidence,
           description: clean(structured?.description || "").slice(0, 1200),
           materialSummary: material.summary, materialEvidence: material.evidence,
@@ -1087,7 +1394,7 @@ const scannerBootstrap = String.raw`
           offers?.price || meta("product:price:amount"),
           offers?.priceCurrency || meta("product:price:currency")
         ].filter(Boolean).join(" ")).slice(0, 80),
-        imageUrl: chooseProductImage(structured, title).slice(0, 1000),
+        imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
         productReference: reference,
         fitLabel: fit.label,
         fitEvidence: fit.evidence,
@@ -1228,17 +1535,14 @@ const scannerBootstrap = String.raw`
     return cards;
   };
   const scrapeOrders = async () => {
-    const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(
-      JSON.stringify({ type: "fitmemory-progress", message })
-    );
+    const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
     const orderCountHint = () => all("[class*='order-item' i], [class*='order-product' i], [data-testid*='order' i] img, main img").length;
     const loadAllOrderHistory = async () => {
       let stableRounds = 0;
       let previousCount = -1;
       for (let round = 0; round < 30 && stableRounds < 3; round += 1) {
         postOrderProgress("Sipariş geçmişi yükleniyor · " + Math.max(0, orderCountHint()) + " öğe görüldü");
-        const controls = all("button, a[href], [role='button']")
-          .filter(visible)
+        const controls = all("button, a[href], [role='button']").filter(visible)
           .filter((element) => /daha\s*fazla|daha\s*fazlasını\s*gör|tümünü\s*gör|load\s*more|show\s*more|sonraki|next/i.test(clean(element.innerText || element.textContent)))
           .filter((element) => !/sepet|cart|checkout|ödeme|payment|giriş|login/i.test(clean(element.innerText || element.textContent) + " " + (element.getAttribute("href") || "")));
         if (controls[0]) await clickElement(controls[0]);
@@ -1337,10 +1641,7 @@ const scannerBootstrap = String.raw`
         ) || clean(images[0]?.alt);
       const clientKeySource = [orderReference, name, size, links[0] || ""].join("|").toUpperCase();
       let clientHash = 2166136261;
-      for (let index = 0; index < clientKeySource.length; index += 1) {
-        clientHash ^= clientKeySource.charCodeAt(index);
-        clientHash = Math.imul(clientHash, 16777619);
-      }
+      for (let index = 0; index < clientKeySource.length; index += 1) { clientHash ^= clientKeySource.charCodeAt(index); clientHash = Math.imul(clientHash, 16777619); }
       return {
         clientKey: "order-" + (clientHash >>> 0).toString(16),
         orderReference,
