@@ -9,6 +9,7 @@ assert.equal(
 );
 assert.match(docker, /aspnet:10\.0/);
 assert.match(docker, /DOTNET_EnableDiagnostics=0/);
+assert.match(docker, /SQLITE_PATH=\/app\/data\/fitmemory.db/);
 
 const render = readFileSync("render.yaml", "utf8");
 assert.match(render, /dockerfilePath: \.\/backend\/Dockerfile/);

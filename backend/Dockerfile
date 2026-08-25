@@ -28,9 +28,12 @@ WORKDIR /app/api
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV DOTNET_EnableDiagnostics=0
+ENV DOTNET_SYSTEM_NET_DISABLEIPV6=1
+ENV SQLITE_PATH=/app/data/fitmemory.db
 EXPOSE 8080
 
 COPY --from=build /app/api /app/api
 COPY --from=build /app/migrate /app/migrate
+RUN mkdir -p /app/data && chown "$APP_UID":"$APP_UID" /app/data
 USER $APP_UID
 ENTRYPOINT ["dotnet", "FitMemory.Api.dll"]

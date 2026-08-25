@@ -11,7 +11,9 @@ Proje üç istemci/servis katmanından oluşur:
   Stüdyosu'nu Android/iOS'a taşır; mağaza sayfalarını uygulama içi tarayıcıda
   açıp tarar.
 - ASP.NET Core API: hesapları, profilleri, uyum hafızasını, beden önerilerini
-  ve AI iletişimini yönetir. Yerelde SQLite, üretimde PostgreSQL kullanır.
+  ve AI iletişimini yönetir. Yerelde SQLite kullanır. Üretimde PostgreSQL
+  açıksa ona bağlanır; proje silinmiş veya ulaşılamıyorsa aynı API dosya
+  tabanına düşer ve beden önerisi çalışmayı sürdürür.
 
 AI anahtarları uzantıya veya mobil uygulamaya gömülmez. Yalnızca backend
 ortam değişkenlerinde tutulur.
@@ -125,6 +127,16 @@ geçmeyin.
 
 Ücretsiz Render örneği uykuya yatar; ilk istek 50 saniyeden uzun sürebilir.
 Kalıcı çözüm plan yükseltmektir. İstemciler önce `/health` ile uyandırır.
+
+`render.yaml` içindeki eski Supabase proje kimliği artık yok. Postgres
+yanıt vermezse API `/app/data/fitmemory.db` dosyasına yazar. Bu dosya
+ücretsiz örnek uyuyunca silinebilir; kalıcı dolap için canlı bir
+PostgreSQL adresi (`DATABASE_URL` veya `POSTGRES_HOST`) gerekir. Parolayı
+sohbete yapıştırmayın, Render Environment ekranına yazın.
+
+Eski kırmızı **Exited with status 139** kartı 1 Ağustos sürümüdür.
+Onu yeniden başlatmayın ve Rollback yapmayın. Güncel imaj
+`mcr.microsoft.com/dotnet/aspnet:10.0` kullanır.
 
 Kendi Linux sunucunuz için:
 

@@ -9,7 +9,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 var listenPort = Environment.GetEnvironmentVariable("PORT");
@@ -100,64 +99,20 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
-var configuredPostgresHost = builder.Configuration["POSTGRES_HOST"]?.Trim();
-var configuredPostgresPassword = builder.Configuration["POSTGRES_PASSWORD"];
-var connectionString = builder.Configuration.GetConnectionString("FitMemory")
-    ?? "Data Source=fitmemory.db";
-if (!string.IsNullOrWhiteSpace(configuredPostgresHost))
+var databaseOptions = FitMemoryDatabaseSelection.Resolve(builder.Configuration);
+if (!string.IsNullOrWhiteSpace(databaseOptions.FallbackReason))
 {
-    if (string.IsNullOrWhiteSpace(configuredPostgresPassword))
-    {
-        throw new InvalidOperationException(
-            "POSTGRES_HOST tanımlıyken POSTGRES_PASSWORD da tanımlanmalıdır.");
-    }
-
-    var postgresConnection = new NpgsqlConnectionStringBuilder
-    {
-        Host = configuredPostgresHost,
-        Port = int.TryParse(
-            builder.Configuration["POSTGRES_PORT"],
-            out var postgresPort)
-                ? postgresPort
-                : 5432,
-        Database = builder.Configuration["POSTGRES_DATABASE"]?.Trim()
-            ?? "postgres",
-        Username = builder.Configuration["POSTGRES_USERNAME"]?.Trim()
-            ?? "postgres",
-        Password = configuredPostgresPassword,
-        SslMode = SslMode.Require,
-        Timeout = 30,
-        CommandTimeout = 30,
-        IncludeErrorDetail = false
-    };
-    postgresConnection["GSS Encryption Mode"] = "Disable";
-    postgresConnection["Channel Binding"] = "Prefer";
-    connectionString = postgresConnection.ConnectionString;
+    Console.Error.WriteLine(
+        "Postgres unreachable; using local file store. " +
+        databaseOptions.FallbackReason);
 }
-var configuredDatabaseProvider = (
-        builder.Configuration["DB_PROVIDER"] ??
-        builder.Configuration["Database:Provider"] ??
-        "")
-    .Trim();
-var usePostgreSql =
-    configuredDatabaseProvider.Equals(
-        "postgres",
-        StringComparison.OrdinalIgnoreCase) ||
-    configuredDatabaseProvider.Equals(
-        "postgresql",
-        StringComparison.OrdinalIgnoreCase) ||
-    (
-        string.IsNullOrWhiteSpace(configuredDatabaseProvider) &&
-        connectionString.Contains(
-            "Host=",
-            StringComparison.OrdinalIgnoreCase)
-    );
+builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddDbContext<FitMemoryDbContext>(options =>
 {
-    if (usePostgreSql)
+    if (databaseOptions.UsePostgreSql)
     {
         options.UseNpgsql(
-            connectionString,
+            databaseOptions.ConnectionString,
             npgsql => npgsql.EnableRetryOnFailure(
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(5),
@@ -165,7 +120,7 @@ builder.Services.AddDbContext<FitMemoryDbContext>(options =>
         return;
     }
 
-    options.UseSqlite(connectionString);
+    options.UseSqlite(databaseOptions.ConnectionString);
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -306,6 +261,7 @@ app.MapGet(
     "/health",
     async (
         FitMemoryDbContext db,
+        FitMemoryDatabaseOptions dataStore,
         Microsoft.Extensions.Options.IOptions<AiProviderOptions> providerOptions,
         Microsoft.Extensions.Options.IOptions<GeminiOptions> geminiOptions,
         Microsoft.Extensions.Options.IOptions<OpenAiOptions> openAiOptions,
@@ -340,6 +296,8 @@ app.MapGet(
             service = "FitMemory.Api",
             database = db.Database.ProviderName,
             databaseHealthy,
+            databaseFallback = !string.IsNullOrWhiteSpace(dataStore.FallbackReason),
+            databaseFallbackReason = dataStore.FallbackReason,
             aiProvider = provider.Provider,
             aiConfigured = configured,
             aiModel = model,
