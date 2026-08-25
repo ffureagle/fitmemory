@@ -206,6 +206,51 @@ public sealed class OpenAiRecommendationClient(
             request.Product,
             request.SizeChart,
             availableSizes,
+            wardrobeSizeSupport = orders
+                .Where(order =>
+                    productIdentityService.IsSameFamily(
+                        order,
+                        request.Product) ||
+                    fitTaxonomy.Compatibility(
+                        order,
+                        request.Product) >= 0.95)
+                .Select(order =>
+                {
+                    var howItFit = order.Outcome.ToTurkishFitSummary();
+                    var theirNote = string.IsNullOrWhiteSpace(order.UserFitNotes)
+                        ? null
+                        : order.UserFitNotes.Trim();
+                    return new
+                    {
+                        useAs = "support_only_not_a_size_lock",
+                        sameProductFamily = productIdentityService.IsSameFamily(
+                            order,
+                            request.Product),
+                        brand = order.Brand,
+                        productName = order.ProductName,
+                        sizeTheyWore = order.PurchasedSize,
+                        outcome = order.Outcome.ToString(),
+                        howItFit,
+                        theirNote,
+                        fitLabel = order.FitLabel,
+                        fitAssessment = order.FitAssessment,
+                        briefing =
+                            $"Şu ürünü {order.PurchasedSize} almıştı: {order.ProductName}. Sonuç: {howItFit}." +
+                            (theirNote is null ? "" : $" Kullanıcı notu: {theirNote}")
+                    };
+                })
+                .ToArray(),
+            controllerRole = new
+            {
+                youAreTheFinalSizeController = true,
+                localEngineIsDraftOnly = true,
+                mustReDecideUsingFitLabelCutConstructionAndChart = true,
+                productFitLabel = request.Product.FitLabel,
+                productFitEvidence = request.Product.FitEvidence,
+                materialSummary = request.Product.MaterialSummary,
+                materialEvidence = request.Product.MaterialEvidence,
+                description = request.Product.Description
+            },
             deterministicBaseline = new
             {
                 localBaseline.RecommendedSize,
@@ -227,6 +272,14 @@ public sealed class OpenAiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.05 Sen son denetleyici ve karar vericisin. deterministicBaseline yerel ölçü motorunun
+                  taslağıdır; nihai beden değildir. wardrobeSizeSupport dolaptaki aynı kesim deneyimidir
+                  ("M almıştı, şöyle olmuştu") — destek atarsın, kopyalamazsın. Product.FitLabel,
+                  FitEvidence, Description, MaterialSummary, kesim/dikiş/kalıp anahtar kelimeleri,
+                  beden tablosu ve vücut ölçüleriyle taslağı yeniden tart. Kalıp, kumaş veya dikiş
+                  kanıtı taslağı çürütüyorsa availableSizes içinden doğru bedeni seç; yalnız yorum
+                  yazıp taslağı olduğu gibi bırakma. Beden değişiyorsa explanation'da tek somut
+                  gerekçe söyle. Emin değilsen taslağı koru ve güveni düşür.
             -1. sizeHistory dizisi backend tarafından yalnız aktif ürünün kanonik kategorisinden seçildi.
                 Aktif ürün tişörtse mont, gömlek, pantolon veya başka bir kategori hakkında hiçbir
                 beden açıklaması, örnek ya da çıkarım yazma. Dolaptaki başka kategorileri yalnız stil
@@ -245,8 +298,10 @@ public sealed class OpenAiRecommendationClient(
                   Notu arşivlenmiş bir deneme sonucu gibi sunma. Önceki kararı yeniden tart, beden değişiyorsa
                   aktif tablo ve kalıp semantiğiyle nedenini açıkla; değişmiyorsa notun neden sonucu
                   değiştirmediğini somut biçimde söyle.
-            -0.9 Göğüs eni ile omuz genişliği farklı ölçülerdir; birbirleriyle karşılaştırma. Giysi göğüs
-                 eni yalnız ChestCircumferenceCm/2 ve hareket payıyla ya da doğrulanmış giysi göğüs eniyle
+            -0.9 Göğüs eni ile omuz ölçüsü farklıdır; birbirleriyle karşılaştırma. Profildeki omuz
+                 değeri çevre ölçüsüdür (eski kayıtlarda 70 cm altı omuz eni olarak okunur). Giysi omuz
+                 eni yalnız omuz çevresi/2 ile karşılaştırılabilir. Giysi göğüs eni yalnız
+                 ChestCircumferenceCm/2 ve hareket payıyla ya da doğrulanmış giysi göğüs eniyle
                  karşılaştırılabilir. ChestCircumferenceCm null ise boy ve kilodan göğüs ölçüsü uydurma.
             -0.85 FitLabel ürünün bitmiş siluetini zaten anlatır; bu etikete ek olarak ikinci kez bolluk veya
                   beden artışı uygulama. Boxy, düz ve geniş gövdeli bir siluettir fakat Oversized ile aynı
@@ -254,14 +309,22 @@ public sealed class OpenAiRecommendationClient(
                   daha gevşek kesimdir. Düz göğüs eni varsa toplam bolluğu
                   (2 × giysi göğüs eni) - ChestCircumferenceCm formülüyle hesapla.
             -0.84 Aynı modelde doğrulanmış iyi uyum yoksa tişört/üst/gömlekte toplam göğüs bolluğu Boxy için
-                  17 cm'yi, Relaxed için 19 cm'yi, Regular için 14 cm'yi aşan bedeni seçme.
-                  Deterministik baseline bu fiziksel sınırı uygulamıştır; AI ile daha büyük bedene geçme.
-            -0.8 Deterministik sonuç "local-category-history", "local-model-reference", "local-body-label-estimate" veya "local-insufficient" ise ölçü kanıtı
-                 yetersizdir. Sırf kalıp tercihi nedeniyle bir beden büyütme.
+                  17 cm'yi, Relaxed için 19 cm'yi, Regular için 14 cm'yi gerekçesiz aşma.
+                  Bu tavan fiziksel kılavuzdur. Taslak tavanı aşıyorsa küçült. Taslak tavanın altındaysa
+                  ve FitLabel, kumaş esnemesi veya dikiş/kesim kanıtı başka bir komşu bedeni işaret ediyorsa
+                  o bedeni seç; tavanı gerekçesiz aşma.
+            -0.8 deterministicBaseline kaynak kodu taslağın zayıf olduğunu gösterir, seni o bedene kilitlemez.
+                 Sırf kullanıcı Relaxed/Oversized tercih ediyor diye gerekçesiz büyütme. FitLabel, kesim,
+                 kumaş veya tablo gerekçesi varsa bedeni değiştir.
             -0.79 Product.ModelHeightCm ve Product.ModelWornSize ürün açıklamasından doğrudan okunmuşsa
                   gerçek ürün kanıtıdır. Kullanıcı modelden daha kısa veya benzer boydaysa ve giysi ölçüsü
                   yoksa, yalnız genel vücut beden aralığına dayanarak model bedeninin üstüne çıkma.
-            0. UserFitNotes yalnız aynı ürün veya aktif kalıpla yeterince uyumlu kayıtlarda verilir.
+            0. wardrobeSizeSupport aynı kesim/model geçmişidir. Her taramada AI'ya sorulur; bu dizi
+               bedeni kilitlemez. "Şu ürünü M almıştı, sende şöyle olmuştu" şeklinde destek kanıtıdır.
+               Kullanıcı notunu ve howItFit cümlesini gerekçede kullan. Aktif ürünün tablosu, FitLabel'ı
+               veya kumaşı farklıysa başka beden seçebilirsin; o zaman neden önceki bedenin bu üründe
+               birebir taşınmadığını bir cümlede söyle.
+            0.1 UserFitNotes yalnız aynı ürün veya aktif kalıpla yeterince uyumlu kayıtlarda verilir.
                Bölgesel notu başka kalıp ailesine veya tüm kategoriye taşıma.
             1. İyi uyduğu doğrulanmış giysi ölçüleri en güçlü kanıttır. Aynı kategorideki ürünler daha önemlidir.
             2. KeptTooBaggy/KeptTooTight parçaları dolaptadır fakat bol/dar uyum sınırı oluşturur.
@@ -298,8 +361,8 @@ public sealed class OpenAiRecommendationClient(
             10. Write every user-facing field in {responseLanguage}.
             10.1 verdict tek ve kısa bir karar cümlesi olsun. explanation 2-4 kısa cümleyi geçmesin:
                  önce önerilen beden ve ana gerekçe, sonra yalnız kullanıcı için önemli kalıp/boy uyarısı.
-                 İç sistem adlarını, veri kaynağı kodlarını, hesap günlüğünü, aynı sayının tekrarını ve
-                 karar vermeye yardım etmeyen teknik ayrıntıları kullanıcıya yazma.
+                 Hedef, cm formülü, bolluk hesabı veya teknik karşılaştırma yazma. Kullanıcıyı ikna eden
+                 sade dil kullan. İç sistem adlarını ve hesap günlüğünü yazma.
             11. Güven puanı kesinlik değildir. Asla 100 verme; ölçülü ve doğrulanmış kategori kanıtı
                 sınırlıysa 50-70 aralığını kullan.
             """;
@@ -308,10 +371,12 @@ public sealed class OpenAiRecommendationClient(
         {
             model = settings.Model,
             instructions = $"""
-                You are FitMemory's evidence-led sizing analyst and personal wardrobe stylist. Write every user-facing field in {responseLanguage}.
-                Perakendecinin aktif beden tablosunu
-                kullanıcının açık vücut ölçüleri, doğrulanmış giysi ölçüleri, iade nedenleri ve kalıp tercihiyle
-                karşılaştır. Yalnız sağlanan kanıta dayalı, kısa ve kararlı bir öneri üret. Asla ölçü uydurma.
+                You are FitMemory's final size controller and wardrobe stylist. Write every user-facing field in {responseLanguage}.
+                Yerel ölçü motoru yalnızca bir taslak üretir. Nihai bedeni sen seçersin.
+                Perakendecinin aktif beden tablosunu kullanıcının açık vücut ölçüleri, doğrulanmış giysi
+                ölçüleri, iade nedenleri, kalıp tercihi ve ürünün FitLabel / kesim / dikiş / kumaş
+                etiketleriyle karşılaştır. Yalnız sağlanan kanıta dayalı, kısa ve kararlı bir beden
+                kararı üret. Asla ölçü uydurma. Kombin yorumu ikincildir; asıl işin doğru bedeni seçmektir.
                 Aynı beden etiketini farklı kalıplarda eşit sayma: Straight ile Super Baggy, Slim ile
                 Wide Leg, Boxy ile Oversized ayrı kanıt aileleridir. Boxy'yi Oversized sayma; ürün
                 kalıbının kendi bolluğunu kullanıcı tercihine ekleyerek iki kez büyütme.

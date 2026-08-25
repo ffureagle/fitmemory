@@ -14,6 +14,7 @@ public sealed partial class LocalFitRecommendationEngine(
     private const string Circumference = "circumference";
     private const string Linear = "linear";
     private const string Mass = "mass";
+    private const double ShoulderCircumferenceFloor = 70;
 
     private static readonly IReadOnlyDictionary<string, double> Tolerances =
         new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
@@ -36,13 +37,11 @@ public sealed partial class LocalFitRecommendationEngine(
         AnalyzeRecommendationRequest request)
     {
         var candidates = ParseCandidates(request.SizeChart);
-        var availableSizes = candidates.Select(candidate => candidate.Label).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (availableSizes.Length == 0)
-        {
-            availableSizes = ExtractTextSizes(
-                request.SizeChart.RawText,
-                request.Product);
-        }
+        var availableSizes = candidates
+            .Select(candidate => candidate.Label)
+            .Concat(ExtractTextSizes(request.SizeChart.RawText, request.Product))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         if (availableSizes.Length == 0)
         {
@@ -121,49 +120,6 @@ public sealed partial class LocalFitRecommendationEngine(
                     "local-personal-boundary");
             }
 
-            var historySize = FindConfirmedCategorySize(
-                relevantOrders,
-                availableSizes);
-            if (!string.IsNullOrWhiteSpace(historySize))
-            {
-                var historyCount = relevantOrders.Count(order =>
-                    order.Outcome == OrderOutcome.KeptGoodFit &&
-                    order.PurchasedSize.Equals(
-                        historySize,
-                        StringComparison.OrdinalIgnoreCase) &&
-                    !regionalFeedback.HasNegativeSignal(
-                        order.UserFitNotes));
-                return new RecommendationResult(
-                    historySize.ToUpperInvariant(),
-                    Math.Clamp(
-                        (hasComparableMeasurements ? 40 : 46) +
-                        historyCount * 4,
-                        40,
-                        58),
-                    $"{historySize.ToUpperInvariant()}, aynı kategoride sende doğrulanmış beden.",
-                    hasComparableMeasurements
-                        ? $"Aktif tablodaki ölçüler okundu; ancak ayrıştırılan bedenlerin hiçbiri göğüs veya omuz fiziksel uygunluk sınırından geçmedi. Bu nedenle FitMemory ölçüyü yok saymak veya güven uydurmak yerine, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini yalnız geçici referans olarak korudu."
-                        : $"Aktif tablodan beden etiketleri okundu fakat göğüs, omuz, bel veya uzunluk değerleri yapılandırılmış ölçüye dönüşmedi. Bu nedenle FitMemory, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini sınırlı güvenle korudu.",
-                    hasComparableMeasurements
-                        ? [
-                            "Tablo değerleri profilinle karşılaştırıldı; sorun profil eksikliği değil, ölçülerin fiziksel uygunluk sınırının dışında kalmasıdır.",
-                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
-                            "Relaxed/oversize tercihi tek başına bir beden büyütme gerekçesi sayılmadı."
-                        ]
-                        : [
-                            "Profilindeki göğüs çevresi mevcut; yeniden girmen gerekmiyor.",
-                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
-                            "Boy veya kilodan göğüs ölçüsü tahmin edilmedi."
-                        ],
-                    [
-                        new ComparisonDto(
-                            "Kategori geçmişi",
-                            $"{historyCount} iyi uyum kaydı · {historySize.ToUpperInvariant()}")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-category-history");
-            }
-
             var footwearEstimate = EstimateFootwearLabelSize(
                 profile,
                 request.Product,
@@ -223,6 +179,73 @@ public sealed partial class LocalFitRecommendationEngine(
                     "local-model-reference");
             }
 
+            var bottomEstimate = EstimateBottomLabelSize(
+                profile,
+                request.Product,
+                availableSizes);
+            if (bottomEstimate is not null)
+            {
+                return new RecommendationResult(
+                    bottomEstimate.SelectedSize,
+                    bottomEstimate.Confidence,
+                    $"{bottomEstimate.SelectedSize}, bel ölçüne göre en tutarlı beden.",
+                    $"{bottomEstimate.SelectedSize} beden {bottomEstimate.WaistCm:0.#} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.",
+                    [
+                        "Bel çevren ürün bel ölçüsüyle karşılaştırıldı.",
+                        "Tüm bedenlerin milimini açmak sonucu güçlendirir."
+                    ],
+                    [
+                        new ComparisonDto(
+                            "Bel",
+                            $"{bottomEstimate.WaistCm:0.#} cm bel · {bottomEstimate.TargetEu} EU aralığı")
+                    ],
+                    BuildEvidenceSummary(relevantOrders),
+                    "local-waist-label-estimate");
+            }
+
+            var historySize = FindConfirmedCategorySize(
+                relevantOrders,
+                availableSizes);
+            if (!string.IsNullOrWhiteSpace(historySize))
+            {
+                var historyCount = relevantOrders.Count(order =>
+                    order.Outcome == OrderOutcome.KeptGoodFit &&
+                    order.PurchasedSize.Equals(
+                        historySize,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !regionalFeedback.HasNegativeSignal(
+                        order.UserFitNotes));
+                return new RecommendationResult(
+                    historySize.ToUpperInvariant(),
+                    Math.Clamp(
+                        (hasComparableMeasurements ? 40 : 46) +
+                        historyCount * 4,
+                        40,
+                        58),
+                    $"{historySize.ToUpperInvariant()}, aynı kategoride sende doğrulanmış beden.",
+                    hasComparableMeasurements
+                        ? $"Aktif tablodaki ölçüler okundu; ancak ayrıştırılan bedenlerin hiçbiri fiziksel uygunluk sınırından geçmedi. Bu nedenle FitMemory ölçüyü yok saymak veya güven uydurmak yerine, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini yalnız geçici taslak olarak korudu."
+                        : $"Aktif tablodan beden etiketleri okundu fakat yapılandırılmış ölçüye dönüşmedi. Bu nedenle FitMemory, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini sınırlı güvenle taslak olarak korudu.",
+                    hasComparableMeasurements
+                        ? [
+                            "Tablo değerleri profilinle karşılaştırıldı; sorun profil eksikliği değil, ölçülerin fiziksel uygunluk sınırının dışında kalmasıdır.",
+                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
+                            "Relaxed/oversize tercihi tek başına bir beden büyütme gerekçesi sayılmadı."
+                        ]
+                        : [
+                            "Profilindeki göğüs çevresi mevcut; yeniden girmen gerekmiyor.",
+                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
+                            "Boy veya kilodan göğüs ölçüsü tahmin edilmedi."
+                        ],
+                    [
+                        new ComparisonDto(
+                            "Kategori geçmişi",
+                            $"{historyCount} iyi uyum kaydı · {historySize.ToUpperInvariant()}")
+                    ],
+                    BuildEvidenceSummary(relevantOrders),
+                    "local-category-history");
+            }
+
             var bodySizeEstimate = EstimateUpperBodyLabelSize(
                 profile,
                 request.Product,
@@ -275,7 +298,12 @@ public sealed partial class LocalFitRecommendationEngine(
             best.Candidate,
             targets,
             profile);
-        var explanation = BuildExplanation(best.Candidate, comparisons, profile, relevantOrders);
+        var explanation = BuildExplanation(
+            best.Candidate,
+            comparisons,
+            profile,
+            request.Product,
+            relevantOrders);
         var fitNotes = BuildFitNotes(
             profile,
             relevantOrders,
@@ -381,7 +409,7 @@ public sealed partial class LocalFitRecommendationEngine(
     {
         for (var index = 0; index < headers.Count; index++)
         {
-            var normalized = headers[index].ToLowerInvariant();
+            var normalized = headers[index].ToLower(CultureInfo.GetCultureInfo("tr-TR"));
             if (normalized.Contains("size", StringComparison.Ordinal) ||
                 normalized.Contains("beden", StringComparison.Ordinal) ||
                 normalized is "eu" or "uk" or "us")
@@ -394,7 +422,7 @@ public sealed partial class LocalFitRecommendationEngine(
 
     private static string? CanonicalMetric(string header)
     {
-        var normalized = header.ToLowerInvariant();
+        var normalized = header.ToLower(CultureInfo.GetCultureInfo("tr-TR"));
         if (normalized.Contains("foot length", StringComparison.Ordinal) ||
             normalized.Contains("feet length", StringComparison.Ordinal) ||
             normalized.Contains("insole length", StringComparison.Ordinal) ||
@@ -512,20 +540,35 @@ public sealed partial class LocalFitRecommendationEngine(
         {
             return Mass;
         }
-        if (metric is not ("Chest" or "Waist" or "Hip"))
+        if (metric is not ("Chest" or "Waist" or "Hip" or "Shoulder"))
         {
             return Linear;
         }
-        if (header.Contains("width", StringComparison.Ordinal) ||
+
+        var explicitCircumference =
+            header.Contains("circum", StringComparison.Ordinal) ||
+            header.Contains("body meas", StringComparison.Ordinal) ||
+            header.Contains("çevre", StringComparison.Ordinal) ||
+            header.Contains("cevre", StringComparison.Ordinal);
+        var explicitWidth =
+            header.Contains("width", StringComparison.Ordinal) ||
             header.Contains("flat", StringComparison.Ordinal) ||
             header.Contains("half", StringComparison.Ordinal) ||
-            header.Contains("1/2", StringComparison.Ordinal))
+            header.Contains("1/2", StringComparison.Ordinal) ||
+            header.Contains("eni", StringComparison.Ordinal) ||
+            header.Contains("genişlik", StringComparison.Ordinal) ||
+            header.Contains("genislik", StringComparison.Ordinal);
+        var circumferenceFloor = metric switch
         {
-            return Width;
+            "Chest" => 78,
+            "Shoulder" => ShoulderCircumferenceFloor,
+            _ => 60
+        };
+        if (explicitCircumference && !explicitWidth)
+        {
+            return Circumference;
         }
-        if (header.Contains("circum", StringComparison.Ordinal) ||
-            header.Contains("body", StringComparison.Ordinal) ||
-            value >= 78)
+        if (value >= circumferenceFloor)
         {
             return Circumference;
         }
@@ -542,7 +585,7 @@ public sealed partial class LocalFitRecommendationEngine(
 
         AddHistoryTarget(targets, "Chest", kept, order => order.ChestWidthCm, Width, profile.FitPreference);
         AddHistoryTarget(targets, "Waist", kept, order => order.WaistWidthCm, Width, profile.FitPreference);
-        AddHistoryTarget(targets, "Shoulder", kept, order => order.ShoulderWidthCm, Linear, profile.FitPreference);
+        AddHistoryTarget(targets, "Shoulder", kept, order => StoredShoulderWidth(order.ShoulderWidthCm), Width, profile.FitPreference);
         AddHistoryTarget(targets, "Length", kept, order => order.LengthCm, Linear, profile.FitPreference);
         AddHistoryTarget(targets, "Sleeve", kept, order => order.SleeveLengthCm, Linear, profile.FitPreference);
         AddHistoryTarget(targets, "Inseam", kept, order => order.InseamCm, Linear, profile.FitPreference);
@@ -554,7 +597,7 @@ public sealed partial class LocalFitRecommendationEngine(
                 .ToArray();
             AddUnverifiedTarget(targets, "Chest", unverified, order => order.ChestWidthCm, Width);
             AddUnverifiedTarget(targets, "Waist", unverified, order => order.WaistWidthCm, Width);
-            AddUnverifiedTarget(targets, "Shoulder", unverified, order => order.ShoulderWidthCm, Linear);
+            AddUnverifiedTarget(targets, "Shoulder", unverified, order => StoredShoulderWidth(order.ShoulderWidthCm), Width);
             AddUnverifiedTarget(targets, "Length", unverified, order => order.LengthCm, Linear);
             AddUnverifiedTarget(targets, "Sleeve", unverified, order => order.SleeveLengthCm, Linear);
             AddUnverifiedTarget(targets, "Inseam", unverified, order => order.InseamCm, Linear);
@@ -569,17 +612,16 @@ public sealed partial class LocalFitRecommendationEngine(
                 1.0));
         }
         targets.TryAdd("Shoulder", new TargetMetric(
-            (double)profile.ShoulderWidthCm,
-            Linear,
+            StoredShoulderCircumference(profile.ShoulderWidthCm),
+            Circumference,
             "Vücut profili",
             0.65));
         if (profile.ChestCircumferenceCm.HasValue)
         {
             targets.TryAdd("Chest", new TargetMetric(
-                (double)profile.ChestCircumferenceCm.Value / 2 +
-                ChestEaseWidth(product, profile.FitPreference),
-                Width,
-                "Göğüs çevresi + hareket payı",
+                (double)profile.ChestCircumferenceCm.Value,
+                Circumference,
+                "Göğüs çevresi",
                 0.90));
         }
         targets.TryAdd("Waist", new TargetMetric(
@@ -689,9 +731,24 @@ public sealed partial class LocalFitRecommendationEngine(
             }
 
             var targetValue = ConvertKind(target.Value, target.Kind, measurement.Kind);
+            if (metric.Equals("Chest", StringComparison.OrdinalIgnoreCase) &&
+                profile.ChestCircumferenceCm.HasValue)
+            {
+                targetValue = ChestTargetValue(profile, product, measurement.Kind);
+            }
             var tolerance = Tolerances.GetValueOrDefault(metric, 4.0);
             score += Math.Abs(measurement.Value - targetValue) / tolerance * target.Strength;
             matched++;
+        }
+
+        if (IsBottomProduct(product) && profile.WaistCircumferenceCm > 0)
+        {
+            var raw = (int)Math.Round((double)profile.WaistCircumferenceCm / 2);
+            var targetEu = raw % 2 == 0 ? raw : raw - 1;
+            if (int.TryParse(candidate.Label, out var sizeNum))
+            {
+                score += Math.Abs(sizeNum - targetEu) / 8.0;
+            }
         }
 
         var structuralFit = EvaluateStructuralFit(
@@ -724,7 +781,8 @@ public sealed partial class LocalFitRecommendationEngine(
                 out var shoulder))
         {
             var difference =
-                shoulder.Value - (double)profile.ShoulderWidthCm;
+                ConvertKind(shoulder.Value, shoulder.Kind, Width) -
+                StoredShoulderWidth(profile.ShoulderWidthCm);
             var shoulderBounds = fit switch
             {
                 ProductFitKind.Slim => (-1.5, 3.5),
@@ -744,18 +802,50 @@ public sealed partial class LocalFitRecommendationEngine(
         if (profile.ChestCircumferenceCm.HasValue &&
             candidate.Measurements.TryGetValue(
                 "Chest",
-                out var chest) &&
-            chest.Kind == Width)
+                out var chest))
         {
-            var bodyHalfChest =
-                (double)profile.ChestCircumferenceCm.Value / 2;
-            var garmentEase = chest.Value - bodyHalfChest;
-            var chestBounds = PreferredChestEaseBounds(
-                profile.FitPreference,
-                fit);
-            var categoryAllowance = IsOuterwear(product) ? 1.5 : 0.0;
-            if (garmentEase < chestBounds.Item1 ||
-                garmentEase > chestBounds.Item2 + categoryAllowance)
+            var body = (double)profile.ChestCircumferenceCm.Value;
+            if (chest.Kind == Circumference)
+            {
+                if (Math.Abs(chest.Value - body) > 10)
+                {
+                    return new StructuralFitResult(false, 100);
+                }
+            }
+            else if (chest.Kind == Width)
+            {
+                var garmentEase = chest.Value - body / 2;
+                var chestBounds = PreferredChestEaseBounds(
+                    profile.FitPreference,
+                    fit);
+                var categoryAllowance = IsOuterwear(product) ? 1.5 : 0.0;
+                if (garmentEase < chestBounds.Item1 ||
+                    garmentEase > chestBounds.Item2 + categoryAllowance)
+                {
+                    return new StructuralFitResult(false, 100);
+                }
+            }
+        }
+
+        if (profile.WaistCircumferenceCm > 0 &&
+            candidate.Measurements.TryGetValue("Waist", out var waist))
+        {
+            var body = (double)profile.WaistCircumferenceCm;
+            var garment = ConvertKind(waist.Value, waist.Kind, Circumference);
+            var ease = garment - body;
+            var waistBounds = PreferredWaistEaseBounds(profile.FitPreference, fit);
+            if (ease < waistBounds.Item1 || ease > waistBounds.Item2)
+            {
+                return new StructuralFitResult(false, 100);
+            }
+        }
+        else if (profile.WaistCircumferenceCm > 0 &&
+                 candidate.Measurements.TryGetValue("Hip", out var hip))
+        {
+            var body = (double)profile.WaistCircumferenceCm;
+            var garment = ConvertKind(hip.Value, hip.Kind, Circumference);
+            var ease = garment - body;
+            if (ease < -6 || ease > 22)
             {
                 return new StructuralFitResult(false, 100);
             }
@@ -1009,6 +1099,17 @@ public sealed partial class LocalFitRecommendationEngine(
         return Math.Max(0.75, preferredEase + fitAdjustment + outerwearAllowance);
     }
 
+    private static double ChestTargetValue(
+        UserProfile profile,
+        ProductDto product,
+        string measurementKind)
+    {
+        var body = (double)profile.ChestCircumferenceCm!.Value;
+        return measurementKind == Width
+            ? body / 2 + ChestEaseWidth(product, profile.FitPreference)
+            : body;
+    }
+
     private static (double Min, double Max) PreferredChestEaseBounds(
         FitPreference preference,
         ProductFitKind fit)
@@ -1027,6 +1128,84 @@ public sealed partial class LocalFitRecommendationEngine(
             _ => 0.0
         };
         return (bounds.Item1, bounds.Item2 + fitAllowance);
+    }
+
+    private static (double Min, double Max) PreferredWaistEaseBounds(
+        FitPreference preference,
+        ProductFitKind fit)
+    {
+        if (fit is ProductFitKind.Oversized or ProductFitKind.Relaxed or ProductFitKind.Boxy)
+        {
+            return (-2, 16);
+        }
+
+        if (fit == ProductFitKind.Slim || preference == FitPreference.Slim)
+        {
+            return (-3, 5);
+        }
+
+        if (preference is FitPreference.Relaxed or FitPreference.Oversized)
+        {
+            return (-2, 14);
+        }
+
+        return (-3, 8);
+    }
+
+    private static bool IsBottomProduct(ProductDto product)
+    {
+        var value = $" {product.Category} {product.Name} {product.FitLabel} "
+            .ToLowerInvariant();
+        return value.Contains("pantolon", StringComparison.Ordinal) ||
+               value.Contains("jean", StringComparison.Ordinal) ||
+               value.Contains("denim", StringComparison.Ordinal) ||
+               value.Contains("şort", StringComparison.Ordinal) ||
+               value.Contains("shorts", StringComparison.Ordinal) ||
+               value.Contains("etek", StringComparison.Ordinal) ||
+               value.Contains("skirt", StringComparison.Ordinal) ||
+               value.Contains("chino", StringComparison.Ordinal) ||
+               value.Contains("cargo", StringComparison.Ordinal);
+    }
+
+    private static BottomSizeEstimate? EstimateBottomLabelSize(
+        UserProfile profile,
+        ProductDto product,
+        IReadOnlyList<string> availableSizes)
+    {
+        if (!IsBottomProduct(product) || profile.WaistCircumferenceCm <= 0)
+        {
+            return null;
+        }
+
+        var raw = (int)Math.Round((double)profile.WaistCircumferenceCm / 2);
+        if (raw is < 32 or > 52)
+        {
+            return null;
+        }
+
+        var targetEu = raw % 2 == 0 ? raw : raw - 1;
+        var numeric = availableSizes
+            .Select(size => new
+            {
+                Label = size.Trim().ToUpperInvariant(),
+                Parsed = int.TryParse(size.Trim(), out var value) ? value : (int?)null
+            })
+            .Where(item => item.Parsed is >= 32 and <= 52 && item.Parsed % 2 == 0)
+            .ToArray();
+        if (numeric.Length == 0)
+        {
+            return null;
+        }
+
+        var selected = numeric
+            .OrderBy(item => Math.Abs(item.Parsed!.Value - targetEu))
+            .ThenBy(item => item.Parsed)
+            .First();
+        return new BottomSizeEstimate(
+            selected.Label,
+            targetEu,
+            (double)profile.WaistCircumferenceCm,
+            64);
     }
 
     private bool HasConfirmedNegativeSizeBoundary(OrderHistoryItem order)
@@ -1171,7 +1350,7 @@ public sealed partial class LocalFitRecommendationEngine(
         {
             penalty += BoundaryPenalty(candidate, "Chest", order.ChestWidthCm, Width, order.Outcome, 2.5);
             penalty += BoundaryPenalty(candidate, "Waist", order.WaistWidthCm, Width, order.Outcome, 2.5);
-            penalty += BoundaryPenalty(candidate, "Shoulder", order.ShoulderWidthCm, Linear, order.Outcome, 1.8);
+            penalty += BoundaryPenalty(candidate, "Shoulder", StoredShoulderWidth(order.ShoulderWidthCm), Width, order.Outcome, 1.8);
             penalty += BoundaryPenalty(candidate, "Length", order.LengthCm, Linear, order.Outcome, 1.0);
             penalty += BoundaryPenalty(candidate, "Sleeve", order.SleeveLengthCm, Linear, order.Outcome, 1.2);
             penalty += BoundaryPenalty(candidate, "Inseam", order.InseamCm, Linear, order.Outcome, 1.4);
@@ -1196,7 +1375,7 @@ public sealed partial class LocalFitRecommendationEngine(
                 {
                     "Chest" => BoundaryPenalty(candidate, "Chest", order.ChestWidthCm, Width, outcome.Value, 3.2),
                     "Waist" => BoundaryPenalty(candidate, "Waist", order.WaistWidthCm, Width, outcome.Value, 3.2),
-                    "Shoulder" => BoundaryPenalty(candidate, "Shoulder", order.ShoulderWidthCm, Linear, outcome.Value, 2.4),
+                    "Shoulder" => BoundaryPenalty(candidate, "Shoulder", StoredShoulderWidth(order.ShoulderWidthCm), Width, outcome.Value, 2.4),
                     "Length" => BoundaryPenalty(candidate, "Length", order.LengthCm, Linear, outcome.Value, 1.8),
                     "Sleeve" => BoundaryPenalty(candidate, "Sleeve", order.SleeveLengthCm, Linear, outcome.Value, 1.6),
                     "Inseam" => BoundaryPenalty(candidate, "Inseam", order.InseamCm, Linear, outcome.Value, 1.8),
@@ -1240,6 +1419,18 @@ public sealed partial class LocalFitRecommendationEngine(
         var severity = 1.0 + Math.Min(violation / tolerance, 2.5);
         return weight * severity;
     }
+
+    private static double StoredShoulderCircumference(decimal raw)
+    {
+        var value = (double)raw;
+        return value >= ShoulderCircumferenceFloor ? value : value * 2;
+    }
+
+    private static double StoredShoulderWidth(decimal raw) =>
+        StoredShoulderCircumference(raw) / 2;
+
+    private static decimal? StoredShoulderWidth(decimal? raw) =>
+        raw is null ? null : (decimal)StoredShoulderWidth(raw.Value);
 
     private static double ConvertKind(double value, string from, string to)
     {
@@ -1292,16 +1483,38 @@ public sealed partial class LocalFitRecommendationEngine(
                 if (item.Key.Equals(
                         "Chest",
                         StringComparison.OrdinalIgnoreCase) &&
-                    item.Value.Kind == Width &&
                     profile.ChestCircumferenceCm.HasValue)
                 {
                     var bodyCircumference =
                         (double)profile.ChestCircumferenceCm.Value;
-                    var garmentCircumference = item.Value.Value * 2;
+                    var garmentCircumference = ConvertKind(
+                        item.Value.Value,
+                        item.Value.Kind,
+                        Circumference);
                     var totalEase =
                         garmentCircumference - bodyCircumference;
+                    var label = item.Value.Kind == Circumference
+                        ? "Göğüs çevresi"
+                        : MetricLabel(item.Key);
                     return new ComparisonDto(
-                        MetricLabel(item.Key),
+                        label,
+                        $"Vücut {bodyCircumference:0.#} cm · {candidate.Label} giysi {garmentCircumference:0.#} cm · bolluk {totalEase:+0.#;-0.#;0} cm");
+                }
+
+                if (item.Key.Equals("Shoulder", StringComparison.OrdinalIgnoreCase))
+                {
+                    var bodyCircumference =
+                        StoredShoulderCircumference(profile.ShoulderWidthCm);
+                    var garmentCircumference = ConvertKind(
+                        item.Value.Value,
+                        item.Value.Kind,
+                        Circumference);
+                    var totalEase = garmentCircumference - bodyCircumference;
+                    var label = item.Value.Kind == Circumference
+                        ? "Omuz çevresi"
+                        : MetricLabel(item.Key);
+                    return new ComparisonDto(
+                        label,
                         $"Vücut {bodyCircumference:0.#} cm · {candidate.Label} giysi {garmentCircumference:0.#} cm · bolluk {totalEase:+0.#;-0.#;0} cm");
                 }
 
@@ -1335,18 +1548,24 @@ public sealed partial class LocalFitRecommendationEngine(
         ChartCandidate candidate,
         IReadOnlyList<ComparisonDto> comparisons,
         UserProfile profile,
+        ProductDto product,
         IReadOnlyList<OrderHistoryItem> orders)
     {
-        if (comparisons.Count > 0)
+        var size = candidate.Label;
+        var fitLabel = string.IsNullOrWhiteSpace(product.FitLabel)
+            ? ""
+            : $"{product.FitLabel} kesiminde ";
+        if (IsBottomProduct(product) && profile.WaistCircumferenceCm > 0)
         {
-            var primary = comparisons[0];
-            var evidence = orders.Any(order => order.Outcome == OrderOutcome.KeptGoodFit)
-                ? "iyi uyduğu doğrulanmış ürün tabanınıza"
-                : "vücut profilinize";
-            return $"{primary.Detail}. Bu değer, {PreferenceLabel(profile.FitPreference)} kalıp için {evidence} en yakın seçenektir.";
+            return $"{size} beden {fitLabel}bel ölçüne oturur. Daha dar beden bele sıkışır; daha bol beden belde boşluk bırakır.";
         }
 
-        return $"{candidate.Label}, kayıtlı profilinize ve {PreferenceLabel(profile.FitPreference)} tercihinize en yakın seçenektir.";
+        if (profile.ChestCircumferenceCm.HasValue)
+        {
+            return $"{size} beden {fitLabel}göğüs ve kalıp etiketine göre senin ölçülerinle uyumlu durur.";
+        }
+
+        return $"{size} beden kayıtlı ölçülerinle bu ürünün kalıbına en yakın duran seçenek.";
     }
 
     private static IReadOnlyList<string> BuildFitNotes(
@@ -1462,6 +1681,20 @@ public sealed partial class LocalFitRecommendationEngine(
         string rawText,
         ProductDto? product = null)
     {
+        if (product is not null && IsBottomProduct(product))
+        {
+            var jeanSizes = JeanSizeRegex()
+                .Matches(rawText)
+                .Select(match => match.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToArray();
+            if (jeanSizes.Length >= 2)
+            {
+                return jeanSizes;
+            }
+        }
+
         var letterSizes = TextSizeRegex()
             .Matches(rawText)
             .Select(match => match.Value.ToUpperInvariant())
@@ -1482,6 +1715,9 @@ public sealed partial class LocalFitRecommendationEngine(
             .Take(20)
             .ToArray();
     }
+
+    [GeneratedRegex(@"\b(?:3[02468]|4[02468]|5[02])\b", RegexOptions.CultureInvariant)]
+    private static partial Regex JeanSizeRegex();
 
     [GeneratedRegex(@"\d+(?:[.,]\d+)?", RegexOptions.CultureInvariant)]
     private static partial Regex DecimalNumberRegex();
@@ -1520,6 +1756,12 @@ public sealed partial class LocalFitRecommendationEngine(
         double ChestCm,
         double RangeLow,
         double RangeHigh,
+        int Confidence);
+
+    private sealed record BottomSizeEstimate(
+        string SelectedSize,
+        int TargetEu,
+        double WaistCm,
         int Confidence);
 
     private sealed record ModelReferenceEstimate(

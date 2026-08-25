@@ -268,14 +268,24 @@ public sealed partial class PlaywrightProductAgentService(
     private async Task<IBrowser> EnsureBrowserAsync()
     {
         if (_browser is { IsConnected: true }) return _browser;
-        _playwright?.Dispose();
-        _playwright = await Playwright.CreateAsync();
-        _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        try
         {
-            Headless = true,
-            Args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"]
-        });
-        return _browser;
+            _playwright?.Dispose();
+            _playwright = await Playwright.CreateAsync();
+            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = true,
+                Args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"]
+            });
+            return _browser;
+        }
+        catch (Exception exception) when (
+            exception is PlaywrightException or InvalidOperationException)
+        {
+            throw new InvalidOperationException(
+                "Sunucu tarafı tarayıcı bu planda yok; tarama telefonda veya uzantıda yapılır.",
+                exception);
+        }
     }
 
     private static async Task<List<AgentSizeTableRow>> CollectInteractiveSizeRowsAsync(

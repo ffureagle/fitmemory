@@ -12,6 +12,12 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+var listenPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(listenPort) &&
+    string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{listenPort}");
+}
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -65,6 +71,7 @@ builder.Services.AddCors(options =>
                 }
 
                 return uri.Scheme == "chrome-extension" ||
+                       uri.Scheme is "exp" or "exps" or "fitmemory" or "fitmemorygo" ||
                        uri.Host is "localhost" or "127.0.0.1" ||
                        configuredOrigins.Contains(origin.TrimEnd('/'));
             })
@@ -249,6 +256,7 @@ builder.Services.AddScoped<
     PasswordHasher<UserAccount>>();
 builder.Services.AddScoped<AiOrderImportService>();
 builder.Services.AddScoped<ISizeRecommendationService, SizeRecommendationService>();
+builder.Services.AddHostedService<ArchivedFitBackfillHostedService>();
 
 var app = builder.Build();
 
@@ -263,43 +271,34 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapGet("/", () => Results.Content(
-    """
-    <!doctype html>
-    <html lang="tr">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="color-scheme" content="light">
-      <title>FitMemory API</title>
-      <style>
-        *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f3ef;color:#111;font-family:Inter,system-ui,sans-serif}
-        main{width:min(720px,calc(100% - 32px));padding:38px;border:1px solid #deddd8;border-radius:4px;background:#fff;box-shadow:0 22px 70px #1112}
-        .brand{display:flex;align-items:center;gap:13px}.mark{display:grid;place-items:center;width:44px;height:44px;border-radius:2px;background:#111;color:#fff;font-weight:950}
-        .status{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:8px 12px;border:1px solid #deddd8;border-radius:999px;background:#f8f7f4;color:#31312f;font-size:12px;font-weight:800}
-        .dot{width:8px;height:8px;border-radius:50%;background:#25a65a;box-shadow:0 0 0 3px #25a65a1f}
-        h1{margin:28px 0 10px;font-size:clamp(30px,6vw,54px);letter-spacing:-.055em;line-height:1}p{color:#73736d;line-height:1.7}
-        ol{margin:25px 0 0;padding:0;list-style:none;counter-reset:step;display:grid;gap:12px}li{counter-increment:step;padding:14px 16px;border:1px solid #deddd8;border-radius:2px;background:#f8f7f4;color:#3e3e3a}
-        li:before{content:"0" counter(step);margin-right:12px;color:#315cf4;font-size:11px;font-weight:900;letter-spacing:.12em}a{color:#315cf4}code{color:#111}
-      </style>
-    </head>
-    <body>
-      <main>
-        <div class="brand"><span class="mark">FM</span><strong>FITMEMORY</strong></div>
-        <div class="status"><span class="dot"></span>API ÇALIŞIYOR</div>
-        <h1>Backend hazır.</h1>
-        <p>Bu adres uygulamanın API sunucusudur; asıl kullanıcı arayüzü Chrome uzantısının açılır penceresindedir.</p>
-        <ol>
-          <li><code>chrome://extensions</code> sayfasını açın.</li>
-          <li>Geliştirici modunu açıp <strong>extension</strong> klasörünü paketlenmemiş olarak yükleyin.</li>
-          <li>FitMemory simgesini sabitleyin, profilinizi kaydedin ve sipariş geçmişinizi tarayın.</li>
-        </ol>
-        <p>Servis kontrolü: <a href="/health">/health</a></p>
-      </main>
-    </body>
-    </html>
-    """,
-    "text/html; charset=utf-8"));
+app.MapGet("/FitMemory-yeni-dosyalar.zip", () =>
+{
+    var candidates = new[]
+    {
+        "/workspace/FitMemory-yeni-dosyalar.zip",
+        Path.Combine(AppContext.BaseDirectory, "FitMemory-yeni-dosyalar.zip"),
+        Path.Combine(Directory.GetCurrentDirectory(), "FitMemory-yeni-dosyalar.zip"),
+        Path.Combine(Directory.GetCurrentDirectory(), "..", "FitMemory-yeni-dosyalar.zip")
+    };
+    var path = candidates.FirstOrDefault(File.Exists);
+    return path is null
+        ? Results.NotFound()
+        : Results.File(path, "application/zip", "FitMemory-yeni-dosyalar.zip");
+});
+app.MapGet("/yapistir", GitHubPastePage.Page);
+app.MapGet("/", () =>
+{
+    var zipExists = new[]
+    {
+        "/workspace/FitMemory-yeni-dosyalar.zip",
+        Path.Combine(AppContext.BaseDirectory, "FitMemory-yeni-dosyalar.zip"),
+        Path.Combine(Directory.GetCurrentDirectory(), "FitMemory-yeni-dosyalar.zip"),
+        Path.Combine(Directory.GetCurrentDirectory(), "..", "FitMemory-yeni-dosyalar.zip")
+    }.Any(File.Exists);
+    return Results.Content(
+        zipExists ? HomePages.Download : HomePages.Api,
+        "text/html; charset=utf-8");
+});
 app.MapGet(
     "/health",
     async (
@@ -319,8 +318,16 @@ app.MapGet(
             : provider.IsOpenAi
                 ? openAiOptions.Value.Model
                 : "";
-        var databaseHealthy = await db.Database.CanConnectAsync(
-            cancellationToken);
+        bool databaseHealthy;
+        try
+        {
+            databaseHealthy = await db.Database.CanConnectAsync(
+                cancellationToken);
+        }
+        catch
+        {
+            databaseHealthy = false;
+        }
         return Results.Ok(new
         {
             status = databaseHealthy ? "healthy" : "degraded",
@@ -334,32 +341,88 @@ app.MapGet(
         });
     });
 
-await using (var scope = app.Services.CreateAsyncScope())
+try
 {
+    await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<FitMemoryDbContext>();
     await DatabaseInitializer.InitializeAsync(db);
     await DatabaseSeeder.SeedAsync(db, builder.Configuration);
-    var assessmentService =
-        scope.ServiceProvider.GetRequiredService<ArchivedFitAssessmentService>();
-    var productIdentityService =
-        scope.ServiceProvider.GetRequiredService<ProductIdentityService>();
-    var profiles = await db.UserProfiles
-        .Include(profile => profile.Orders)
-        .ToListAsync();
-    foreach (var profile in profiles)
-    {
-        foreach (var order in profile.Orders)
-        {
-            order.ProductFamilyKey = productIdentityService.BuildFamilyKey(
-                order.Brand,
-                order.ProductName,
-                order.ProductUrl);
-            assessmentService.Apply(profile, order);
-        }
-    }
-    await db.SaveChangesAsync();
+}
+catch (Exception exception)
+{
+    app.Logger.LogError(
+        exception,
+        "Startup database preparation failed; API will still listen.");
 }
 
 await app.RunAsync();
 
 public partial class Program;
+
+static class HomePages
+{
+    public const string Download =
+        """
+        <!doctype html>
+        <html lang="tr">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+        <meta name="color-scheme" content="light">
+          <title>FitMemory dosyalar</title>
+          <style>
+            body{margin:0;background:#111;color:#fff;font-family:ui-sans-serif,system-ui,sans-serif}
+            main{max-width:640px;margin:0 auto;padding:32px 20px 80px}
+            h1{font-size:32px;line-height:1.15;margin:0 0 16px}
+            p{font-size:18px;line-height:1.5;color:#ddd}
+            .warn{background:#3a1c12;color:#ffd0c0;padding:14px 16px;border-radius:12px}
+            .ok{background:#14301c;color:#c6f4d0;padding:14px 16px;border-radius:12px}
+            a.btn{display:block;text-align:center;margin:24px 0;background:#ffe14a;color:#111;text-decoration:none;padding:22px 18px;border-radius:18px;font-size:22px;font-weight:800}
+            code{color:#ffe14a}a{color:#ffe14a}
+          </style>
+        </head>
+        <body>
+          <main>
+            <p>FitMemory</p>
+            <h1>Klasör kopyalama. Yapıştır.</h1>
+            <p class="warn">Bu adresi kendi telefonunun tarayıcısına yazma. Cursor’daki <strong>Preview</strong> düğmesine bas.</p>
+            <a class="btn" href="/yapistir">GitHub’a yapıştır</a>
+            <a class="btn" href="/FitMemory-yeni-dosyalar.zip">Dosyayı indir</a>
+            <p class="ok">Klasör taşıman gerekmiyor. Sarı yapıştır düğmesi dokuz kutuyu açar; her kutuyu GitHub’daki aynı dosyanın üstüne yapıştırıp yeşil kaydet.</p>
+            <p>Zip inmezse Cursor’un sol listesinde <code>FitMemory-yeni-dosyalar.zip</code> yazısına tıkla.</p>
+          </main>
+        </body>
+        </html>
+        """;
+
+    public const string Api =
+        """
+        <!doctype html>
+        <html lang="tr">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+        <meta name="color-scheme" content="light">
+          <title>FitMemory API</title>
+          <style>
+            *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f3ef;color:#111;font-family:Inter,system-ui,sans-serif}
+            main{width:min(720px,calc(100% - 32px));padding:38px;border:1px solid #deddd8;border-radius:4px;background:#fff;box-shadow:0 22px 70px #1112}
+            .brand{display:flex;align-items:center;gap:13px}.mark{display:grid;place-items:center;width:44px;height:44px;border-radius:2px;background:#111;color:#fff;font-weight:950}
+            .status{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:8px 12px;border:1px solid #deddd8;border-radius:999px;background:#f8f7f4;color:#31312f;font-size:12px;font-weight:800}
+            .dot{width:8px;height:8px;border-radius:50%;background:#25a65a;box-shadow:0 0 0 3px #25a65a1f}
+            h1{margin:28px 0 10px;font-size:clamp(30px,6vw,54px);letter-spacing:-.055em;line-height:1}p{color:#73736d;line-height:1.7}
+            a{color:#315cf4}code{color:#111}
+          </style>
+        </head>
+        <body>
+          <main>
+            <div class="brand"><span class="mark">FM</span><strong>FITMEMORY</strong></div>
+            <div class="status"><span class="dot"></span>API ÇALIŞIYOR</div>
+            <h1>Backend hazır.</h1>
+            <p>Bu adres uygulamanın API sunucusudur. Asıl ekran Chrome uzantısı ve telefondaki Expo Go’dadır.</p>
+            <p>Servis kontrolü: <a href="/health">/health</a></p>
+          </main>
+        </body>
+        </html>
+        """;
+}

@@ -15,7 +15,6 @@ public sealed class SizeRecommendationService(
     ProductCategoryService productCategoryService,
     ProductFitTaxonomyService fitTaxonomy,
     WardrobeStylistService wardrobeStylistService,
-    RegionalFitFeedbackService regionalFeedback,
     ILogger<SizeRecommendationService> logger) : ISizeRecommendationService
 {
     public async Task<RecommendationResult> RecommendAsync(
@@ -37,15 +36,9 @@ public sealed class SizeRecommendationService(
                 orders,
                 request.Product)
         };
-        var keepLocalSizing =
-            string.IsNullOrWhiteSpace(request.UserAdjustmentNote) &&
-            localResult.DataSource is
-                "local-category-history" or
-                "local-model-reference" or
-                "local-body-label-estimate" or
-                "local-footwear-size" or
-                "local-insufficient";
-
+        // Local engine is a draft only. Gemini/OpenAI is the final size controller.
+        // Same-cut wardrobe history is supporting evidence for the AI, never a size lock.
+        // Structural guard is the only post-AI override (physically impossible size).
         var provider = providerOptions.Value;
         var providerConfigured =
             provider.IsGemini && !string.IsNullOrWhiteSpace(geminiOptions.Value.ApiKey) ||
@@ -70,10 +63,6 @@ public sealed class SizeRecommendationService(
                     request,
                     localResult,
                     cancellationToken);
-                if (keepLocalSizing)
-                {
-                    result = PreserveLocalSizing(localResult, result.Style);
-                }
                 result = EnforceStructuralGuard(
                     result,
                     localResult,
@@ -94,10 +83,6 @@ public sealed class SizeRecommendationService(
                     request,
                     localResult,
                     cancellationToken);
-                if (keepLocalSizing)
-                {
-                    result = PreserveLocalSizing(localResult, result.Style);
-                }
                 result = EnforceStructuralGuard(
                     result,
                     localResult,
@@ -156,20 +141,10 @@ public sealed class SizeRecommendationService(
             Style = aiResult.Style,
             FitNotes = localResult.FitNotes
                 .Prepend(
-                    "AI seçimi omuz/göğüs fiziksel uygunluk sınırını aştığı için yerel ölçü kararı korundu.")
+                    "AI seçimi fiziksel uygunluk sınırını aştığı için yerel ölçü kararı korundu.")
                 .Take(5)
                 .ToArray(),
             DataSource = "local-guard"
-        };
-    }
-
-    private static RecommendationResult PreserveLocalSizing(
-        RecommendationResult localResult,
-        WardrobeStyleDto aiStyle)
-    {
-        return localResult with
-        {
-            Style = aiStyle
         };
     }
 
@@ -178,7 +153,7 @@ public sealed class SizeRecommendationService(
         IReadOnlyList<OrderHistoryItem> categoryOrders,
         AnalyzeRecommendationRequest request)
     {
-        var familyResult = ApplyProductFamilyEvidence(
+        var familyResult = AttachWardrobeSupportEvidence(
             result,
             categoryOrders,
             request);
@@ -202,112 +177,63 @@ public sealed class SizeRecommendationService(
                 : excludedFitCount > 0
                     ? $"Kalıp koruması aktif: {activeFit.Label}; {excludedFitCount} farklı fit kaydı beden sınırının dışında bırakıldı."
                     : $"Kalıp koruması aktif: beden kanıtı {activeFit.Label} ailesi içinde değerlendirildi.";
-        var silhouetteWarning =
-            $"{activeFit.Label}: {activeFit.Silhouette} {activeFit.SizingRule}".Trim();
         return familyResult with
         {
-            FitNotes = familyResult.FitNotes
-                .Prepend(fitScopeNote)
-                .Prepend(silhouetteWarning)
-                .Prepend(
-                    $"Kategori koruması aktif: analiz yalnız {categoryLabel.ToLowerInvariant()} hafızasıyla yapıldı.")
-                .Take(6)
-                .ToArray(),
-            Explanation =
-                $"{silhouetteWarning} {familyResult.Explanation}".Trim(),
             EvidenceSummary =
-                $"{categoryLabel} · {activeFit.Label} · {familyResult.EvidenceSummary}"
+                $"{categoryLabel} · {activeFit.Label} · {fitScopeNote} · {familyResult.EvidenceSummary}"
         };
     }
 
-    private RecommendationResult ApplyProductFamilyEvidence(
+    private RecommendationResult AttachWardrobeSupportEvidence(
         RecommendationResult result,
         IReadOnlyList<OrderHistoryItem> orders,
         AnalyzeRecommendationRequest request)
     {
-        var sameFamily = orders
-            .Where(order => productIdentityService.IsSameFamily(
-                order,
-                request.Product))
-            .ToArray();
-        var confirmedKept = sameFamily
-            .Where(order => order.Outcome == OrderOutcome.KeptGoodFit)
-            .Where(order => !regionalFeedback.HasNegativeSignal(
-                order.UserFitNotes))
-            .ToArray();
-        if (confirmedKept.Length == 0)
-        {
-            return result;
-        }
-
-        var sizes = localEngine.GetAvailableSizes(
-            request.SizeChart,
-            request.Product);
-        var strongestSize = confirmedKept
-            .GroupBy(order => order.PurchasedSize, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(group => group.Count())
-            .ThenByDescending(group => group.Max(order => order.UpdatedAt))
-            .Select(group => group.Key)
-            .FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(strongestSize) ||
-            !sizes.Contains(strongestSize, StringComparer.OrdinalIgnoreCase))
-        {
-            return result;
-        }
-
-        var archivedFitLabels = confirmedKept
-            .Select(order => order.FitLabel)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Cast<string>()
-            .ToArray();
-        if (!fitTaxonomy.AreFitLabelsCompatible(
-                request.Product.FitLabel,
-                archivedFitLabels))
-        {
-            return result with
-            {
-                FitNotes = result.FitNotes
-                    .Prepend(
-                        "Aynı ürün ailesi bulundu ancak resmi kalıp etiketi değiştiği için önceki beden zorlanmadı.")
-                    .Take(5)
-                    .ToArray()
-            };
-        }
-
-        var exemplar = confirmedKept
+        var support = orders
+            .Where(order =>
+                productIdentityService.IsSameFamily(
+                    order,
+                    request.Product) ||
+                fitTaxonomy.Compatibility(
+                    order,
+                    request.Product) >= 0.95)
             .OrderByDescending(order => order.UpdatedAt)
-            .First();
-        var fitLabelNote = string.IsNullOrWhiteSpace(request.Product.FitLabel)
-            ? "Aktif sayfada ayrıca bir kalıp etiketi okunamadı."
-            : $"Resmi sayfadaki kalıp: {request.Product.FitLabel}.";
+            .Take(4)
+            .ToArray();
+        if (support.Length == 0)
+        {
+            return result;
+        }
+
+        var briefings = support
+            .Select(DescribeWardrobeSupport)
+            .ToArray();
         return result with
         {
-            RecommendedSize = strongestSize.ToUpperInvariant(),
-            Confidence = Math.Clamp(
-                Math.Max(result.Confidence, 84),
-                35,
-                90),
-            Verdict =
-                $"{strongestSize.ToUpperInvariant()}, aynı modelin sende doğrulanmış bedeni.",
-            Explanation =
-                $"Arşivindeki {exemplar.ProductName} ürününün {strongestSize.ToUpperInvariant()} bedeni sende iyi olmuş. " +
-                "Aktif ürün aynı model/renk varyantı ailesiyle eşleştiği için bu gerçek kullanım kanıtı genel beden tahmininden daha güçlü kabul edildi.",
             FitNotes = result.FitNotes
-                .Prepend(fitLabelNote)
                 .Prepend(
-                    "Renk değişimi tek başına beden değişikliği sayılmadı; ürün kodu ve resmi sayfa kimliği eşleştirildi.")
-                .Take(5)
+                    "Aynı kesim geçmişi AI'ya destek olarak verildi; önceki beden kilitlenmedi.")
+                .Prepend(briefings[0])
+                .Take(6)
                 .ToArray(),
             Comparisons = result.Comparisons
                 .Prepend(new ComparisonDto(
-                    "Aynı model",
-                    $"Arşivde iyi uyum: {strongestSize.ToUpperInvariant()}"))
+                    "Dolap desteği",
+                    string.Join(" · ", briefings.Take(2))))
                 .Take(5)
                 .ToArray(),
             EvidenceSummary =
-                $"{confirmedKept.Length} aynı model iyi uyum · {result.EvidenceSummary}",
-            DataSource = $"{result.DataSource}-family-match"
+                $"{support.Length} dolap desteği · {result.EvidenceSummary}"
         };
+    }
+
+    private static string DescribeWardrobeSupport(OrderHistoryItem order)
+    {
+        var note = string.IsNullOrWhiteSpace(order.UserFitNotes)
+            ? ""
+            : $" {order.UserFitNotes.Trim().TrimEnd('.')}.";
+        return
+            $"{order.ProductName}: {order.PurchasedSize.ToUpperInvariant()} {order.Outcome.ToTurkishFitSummary()}.{note}";
     }
 
     private static bool ShouldFallback(
