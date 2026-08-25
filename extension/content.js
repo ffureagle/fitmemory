@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = "1.25.8";
+  const CONTENT_SCRIPT_VERSION = "1.25.26";
   if (globalThis.__fitMemoryContentScriptVersion === CONTENT_SCRIPT_VERSION) {
     return;
   }
@@ -917,6 +917,9 @@
       }
 
       const panelRoot = findMeasurePanelRoot(table, root);
+      if (panelRoot instanceof Document || panelRoot === document.body) {
+        continue;
+      }
       const sizeButtons = findMeasureSizeButtons(panelRoot);
       const rootText = cleanText(
         panelRoot instanceof Document

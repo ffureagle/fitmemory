@@ -1,6 +1,6 @@
 {
   "name": "fitmemory-extension",
-  "version": "1.25.8",
+  "version": "1.25.26",
   "type": "module",
   "description": "Build tooling for the FitMemory Manifest V3 Chrome extension",
   "scripts": {

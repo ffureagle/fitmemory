@@ -43,6 +43,32 @@ public sealed partial class LocalFitRecommendationEngine(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var measuredWithMetrics = candidates
+            .Where(candidate => candidate.Measurements.Count > 0)
+            .Select(candidate => candidate.Label)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var listedSizes = (request.SizeChart.AvailableSizes ?? [])
+            .Where(label => !string.IsNullOrWhiteSpace(label))
+            .Concat(availableSizes)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (measuredWithMetrics.Length == 1 && listedSizes.Length >= 2)
+        {
+            return new RecommendationResult(
+                "Bilinmiyor",
+                0,
+                "Yalnız bir bedenin milimi okundu; diğer bedenler toplanamadı.",
+                "Ölçü paneli açıkken tek bedenin sayıları geldi. FitMemory bu yüzden o tek satırı senin bedenin diye önermedi. Paneldeki tüm bedenleri tek tek gezdirip yeniden dene.",
+                [
+                    "Ölçüleri görüntüle açık kalsın; Tara ürün sayfasına dönmesin.",
+                    "Açık tabloda her beden chip'ine basılınca milimler değişmeli."
+                ],
+                [],
+                BuildEvidenceSummary(orders),
+                "local-insufficient");
+        }
+
         if (availableSizes.Length == 0)
         {
             return new RecommendationResult(

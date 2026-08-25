@@ -28,7 +28,10 @@ import { useSession } from "../session";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
-import { hasVerifiedNumericChart as hasVerifiedSnapshot } from "../scanValidation";
+import {
+  hasVerifiedNumericChart as hasVerifiedSnapshot,
+  isIncompleteWalkedChart,
+} from "../scanValidation";
 import { isCurrentScanResponse, isSameShopPage, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
 import {
   isAllowedShopUrl,
@@ -367,6 +370,9 @@ export function ScanScreen({
     if (!session.token || !session.account) return;
     if (!hasVerifiedSnapshot(nextSnapshot)) {
       throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
+    }
+    if (isIncompleteWalkedChart(nextSnapshot)) {
+      throw new Error("Açık panelde yalnız seçili bedenin milimleri okundu; diğer bedenler toplanamadı. Ölçü tablosunu açık bırakıp tekrar dene.");
     }
     if (!session.profile) {
       throw new Error("Beden önerisi için önce profilini kaydet.");

@@ -39,6 +39,22 @@ export function analyzeRecommendation(profile, orders, request) {
   if (availableSizes.length === 0) {
     availableSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
   }
+  const measuredWithMetrics = [...new Set(
+    candidates
+      .filter((item) => Object.keys(item.measurements || {}).length > 0)
+      .map((item) => item.label)
+  )];
+  const listedSizes = [...new Set([
+    ...(request.sizeChart?.availableSizes || []),
+    ...availableSizes
+  ].map((label) => String(label || "").trim()).filter(Boolean))];
+  if (measuredWithMetrics.length === 1 && listedSizes.length >= 2) {
+    return result("Bilinmiyor", 0,
+      "Yalnız bir bedenin milimi okundu; diğer bedenler toplanamadı.",
+      "Ölçü paneli açıkken tek bedenin sayıları geldi. FitMemory bu yüzden o tek satırı senin bedenin diye önermedi. Paneldeki tüm bedenleri tek tek gezdirip yeniden dene.",
+      ["Ölçüleri görüntüle açık kalsın; Tara ürün sayfasına dönmesin."],
+      [], "local-insufficient");
+  }
   if (availableSizes.length === 0) {
     return result("Bilinmiyor", 20,
       "Tabloda okunabilir beden etiketleri bulunamadı.",

@@ -134,3 +134,20 @@ test("reads an omuz çevresi column as circumference", () => {
   const result = analyzeRecommendation(circProfile, [], { product, sizeChart: circShoulder });
   assert.equal(result.recommendedSize, "L");
 });
+
+test("does not recommend from a single walked size when more sizes are listed", () => {
+  const result = analyzeRecommendation(profile, [], {
+    product,
+    sizeChart: {
+      found: true,
+      title: "Ürün ölçüleri",
+      unit: "Centimeters",
+      headers: ["Beden", "Göğüs eni (cm)"],
+      rows: [{ cells: ["M", "53"] }],
+      rawText: "M | 53\nMevcut bedenler: S M L XL",
+      availableSizes: ["S", "M", "L", "XL"]
+    }
+  });
+  assert.equal(result.recommendedSize, "Bilinmiyor");
+  assert.equal(result.dataSource, "local-insufficient");
+});

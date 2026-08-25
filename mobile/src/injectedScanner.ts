@@ -30,8 +30,23 @@ const scannerBootstrap = String.raw`
     if (/\b(inch|inc)\b/.test(folded)) return "Inches";
     return "Centimeters";
   };
-  const unlockPageScroll = () => {
+  const pageOverflowLocked = () => {
     try {
+      const overflow = [
+        document.body ? getComputedStyle(document.body).overflow : "",
+        getComputedStyle(document.documentElement).overflow
+      ].join(" ");
+      return /(hidden|clip)/i.test(overflow);
+    } catch (error) {
+      recordDiagnostic("overflow-lock", error);
+      return false;
+    }
+  };
+  const unlockPageScroll = (force = false) => {
+    try {
+      // Inditex ölçü katmanı body overflow:hidden ile durur. Bunu açmak
+      // paneli kapatır; sonra Tara ürün SKU bedenlerine basıp yanlış tablo okur.
+      if (!force && pageOverflowLocked()) return;
       const style = document.getElementById("fitmemory-scroll-unlock") || document.createElement("style");
       style.id = "fitmemory-scroll-unlock";
       style.textContent = "html,body{overflow:auto!important;height:auto!important;overscroll-behavior:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}#app,main,[data-qa-qualifier='main']{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}";
@@ -43,7 +58,6 @@ const scannerBootstrap = String.raw`
       }
     } catch (error) { recordDiagnostic("scroll-unlock", error); }
   };
-  unlockPageScroll();
   const visible = (element) => {
     if (!element || !(element instanceof Element)) return false;
     const style = getComputedStyle(element);
@@ -408,20 +422,45 @@ const scannerBootstrap = String.raw`
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent || "").join(" "));
   };
-  const clickable = (element) =>
-    element?.closest?.(
+  const isPageNavigatingHref = (href) => {
+    const value = clean(href);
+    if (!value || value === "#" || value.startsWith("#") ||
+        value.toLowerCase().startsWith("javascript:")) return false;
+    try {
+      const url = new URL(value, location.href);
+      return url.origin !== location.origin || url.pathname !== location.pathname;
+    } catch (error) {
+      recordDiagnostic("href-parse", error);
+      return true;
+    }
+  };
+  const overlayAncestor = (element) => element?.closest?.(
+    "[role='dialog'], [role='tabpanel'], aside, [class*='drawer' i], " +
+    "[class*='sheet' i], [class*='modal' i], [class*='size-guide' i], " +
+    "[class*='sizeguide' i], [class*='measure' i]"
+  );
+  const clickable = (element, stayInSurface = false) => {
+    const closest = element?.closest?.(
       "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
       "[class*='size-selector' i], [class*='sizeSelector' i], [data-qa-anchor*='size' i]"
     ) || element;
-  const clickElement = async (element) => {
-    const target = clickable(element);
-    if (!target) return false;
-    if (target.tagName === "A") {
-      const href = clean(target.getAttribute("href"));
-      if (href && !href.startsWith("#") &&
-          !href.toLowerCase().startsWith("javascript:")) return false;
+    if (stayInSurface && closest?.tagName === "A" &&
+        isPageNavigatingHref(closest.getAttribute("href"))) {
+      return element;
     }
-    target.scrollIntoView?.({ block: "center", inline: "center" });
+    return closest;
+  };
+  const clickElement = async (element, stayPut = false) => {
+    const inOverlay = Boolean(overlayAncestor(element));
+    const target = clickable(element, inOverlay || stayPut);
+    if (!target) return false;
+    if (target.tagName === "A" && isPageNavigatingHref(target.getAttribute("href"))) return false;
+    try {
+      target.scrollIntoView?.({
+        block: inOverlay || stayPut ? "nearest" : "center",
+        inline: inOverlay || stayPut ? "nearest" : "center"
+      });
+    } catch (error) { recordDiagnostic("scroll-into-view", error); }
     await sleep(35);
     try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
     for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
@@ -597,7 +636,7 @@ const scannerBootstrap = String.raw`
     return unique.map((panel) => {
       const text = panelText(panel);
       const surface = measurementSurface(text);
-      const sizeCount = findSizeButtons(panel).length || findSizeButtons(document).length;
+      const sizeCount = findSizeButtons(panel).length;
       return {
         panel,
         metricCount: surface.metricCount,
@@ -663,8 +702,8 @@ const scannerBootstrap = String.raw`
       };
     }).filter((candidate) => candidate.buttons.length >= 2)
       .sort((left, right) => right.score - left.score);
-    if (candidates[0]) return candidates[0].panel;
-    return findSizeButtons(document).length >= 3 ? document.body : null;
+    if (candidates[0] && candidates[0].panel !== document.body) return candidates[0].panel;
+    return null;
   };
   const selectedSizeButton = (button) => {
     if (!button || typeof button.getAttribute !== "function") return false;
@@ -795,6 +834,10 @@ const scannerBootstrap = String.raw`
     return Boolean(chart);
   };
   const openPullAndBearMeasurements = async () => {
+    if (metricLabelsVisible() && findMeasurePanel()) {
+      guideStage = "Pull&Bear ölçü paneli zaten açık";
+      return true;
+    }
     const patterns = [
       /^olculeri goruntule$/i, /^olculeri gor$/i, /^view measurements?$/i,
       /^product measurements?$/i, /^size guide$/i
@@ -855,7 +898,7 @@ const scannerBootstrap = String.raw`
     const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(scanHost);
     const isZara = /(?:^|\.)zara\.com$/i.test(scanHost);
     const isBershka = /(?:^|\.)bershka\.com$/i.test(scanHost);
-    if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
+    if (metricLabelsVisible() && findMeasurePanel()) {
       guideStage = "Ölçü paneli zaten açık";
       return true;
     }
@@ -940,6 +983,7 @@ const scannerBootstrap = String.raw`
     await sleep(70);
   };
   const revealWideTables = async () => {
+    if (metricLabelsVisible() && findMeasurePanel()) return;
     unlockPageScroll();
     const surfaces = [];
     for (const table of all("table, [role='table']").slice(0, 12)) {
@@ -1359,12 +1403,12 @@ const scannerBootstrap = String.raw`
     const result = [];
     const seen = new Set();
     for (const element of all(
-      "button, [role='radio'], [role='option'], [role='button'], [role='tab'], input[type='radio'], li, label, span"
+      "button, a, [role='radio'], [role='option'], [role='button'], [role='tab'], input[type='radio'], li, label, span"
     )) {
       if (!visible(element) || !panel.contains(element)) continue;
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
-      let target = clickable(element);
+      let target = clickable(element, true);
       if (target && !panel.contains(target)) target = element;
       if (!target || seen.has(target)) continue;
       seen.add(target);
@@ -1374,7 +1418,7 @@ const scannerBootstrap = String.raw`
   };
   const measurementOverlay = () => {
     const panel = findMeasurePanel();
-    if (!panel) return findSizePanel();
+    if (!panel || panel === document || panel === document.body) return null;
     let current = panel;
     for (let depth = 0; current && depth < 12; depth += 1) {
       if (containedSizeButtons(current).length >= 2) return current;
@@ -1394,13 +1438,12 @@ const scannerBootstrap = String.raw`
       .sort((left, right) => left.childElementCount - right.childElementCount)[0] || null;
   };
   const panelChart = async () => {
-    let overlay = measurementOverlay() || findMeasurePanel() || findSizePanel() || document.body;
-    if (!overlay) return null;
+    let overlay = measurementOverlay() || findMeasurePanel();
+    if (!overlay || overlay === document || overlay === document.body) return null;
     const sizeControls = () => {
       const local = containedSizeButtons(overlay);
       if (local.length >= 2) return local;
-      const nearby = findSizeButtons(overlay);
-      return nearby.length ? nearby : findSizeButtons(document);
+      return findSizeButtons(overlay).filter((element) => overlay.contains(element));
     };
     const initial = sizeControls().find(selectedSizeButton);
     const initialLabel = sizeLabelFromText(controlText(initial));
@@ -1410,25 +1453,37 @@ const scannerBootstrap = String.raw`
       .filter((size, index, values) => values.indexOf(size) === index);
     const records = [];
     let headers = null;
-    if (!labels.length) return null;
+    if (labels.length < 2) return null;
     for (const size of labels.slice(0, 10)) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const button = overlaySizeControl(overlay, size) ||
         sizeControls().find((candidate) => sizeLabelFromText(controlText(candidate)) === size);
-      if (button) {
+      if (button && !selectedSizeButton(button)) {
         const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
-        await clickElement(button);
-        const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
-          sizeLabelFromText(ownText(node) || controlText(node)) === size);
-        if (inner && inner !== button) await clickElement(inner);
+        await clickElement(button, true);
         await waitFor(() => {
           const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
           const afterValues = extractMeasurements(nextOverlay).map((item) => item.value).join("|");
           return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
         }, 4200, 70);
+        if (measureSignature() === before) {
+          const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
+            sizeLabelFromText(ownText(node) || controlText(node)) === size);
+          if (inner && inner !== button) await clickElement(inner, true);
+        }
+        await waitFor(() => {
+          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+          const afterValues = extractMeasurements(nextOverlay).map((item) => item.value).join("|");
+          return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
+        }, 4200, 70);
+        await waitForStable(() => {
+          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+          return extractMeasurements(nextOverlay).map((item) => item.value).join("|") || measureSignature();
+        }, 1800, 110);
+      } else if (button) {
         await waitForStable(() => {
           const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
           return extractMeasurements(nextOverlay).map((item) => item.value).join("|") || measureSignature();
@@ -1447,7 +1502,7 @@ const scannerBootstrap = String.raw`
     if (initialLabel) {
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const restore = overlaySizeControl(overlay, initialLabel);
-      if (restore && !selectedSizeButton(restore)) await clickElement(restore);
+      if (restore && !selectedSizeButton(restore)) await clickElement(restore, true);
     }
     const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
     if (!records.length || !headers) return null;
@@ -1460,8 +1515,16 @@ const scannerBootstrap = String.raw`
       rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
     };
   };
+  const listedSizeLabels = () => {
+    const overlay = measurementOverlay() || findMeasurePanel();
+    const fromOverlay = overlay ? containedSizeButtons(overlay) : [];
+    const source = fromOverlay.length >= 2 ? fromOverlay : findSizeButtons(document);
+    return source
+      .map((button) => sizeLabelFromText(controlText(button)))
+      .filter(Boolean)
+      .filter((size, index, values) => values.indexOf(size) === index);
+  };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
-    unlockPageScroll();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1479,9 +1542,13 @@ const scannerBootstrap = String.raw`
     ).slice(0, 120);
     let imageUrl = chooseProductImage(structured, title);
     const advice = merchantFitAdvice();
-    const openMeasurementSurface = () =>
-      metricLabelsVisible() && findSizeButtons(document).length >= 2;
-    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
+    const measurementSheetOpen = () =>
+      Boolean(metricLabelsVisible() && findMeasurePanel());
+    if (measurementSheetOpen()) {
+      guideStage = "Ölçü paneli zaten açık";
+    } else {
+      await openSizeGuide();
+    }
     const fit = fitDetails();
     const model = modelDetails();
     const offers = Array.isArray(structured?.offers)
@@ -1506,25 +1573,25 @@ const scannerBootstrap = String.raw`
       await revealWideTables();
       const table = await safeChart(() => tableChart());
       if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
-      const overlay = measurementOverlay();
+      const overlay = measurementOverlay() || findMeasurePanel();
       const overlayButtons = overlay ? containedSizeButtons(overlay) : [];
-      if (metricLabelsVisible() && (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2)) {
+      if (metricLabelsVisible() && overlayButtons.length >= 2) {
         const walked = await safeChart(() => panelChart());
-        if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
+        if (verifiedMeasurementChart(walked) && (walked.rows?.length || 0) > 1) return walked;
       }
       return firstVerifiedChart(
         table,
         await safeChart(() => visibleLayoutChart()),
         await safeChart(() => visibleOpenChart()),
         await safeChart(() => geometryChart()),
-        await safeChart(() => panelChart()),
+        overlayButtons.length >= 2 ? await safeChart(() => panelChart()) : null,
         await safeChart(() => visiblePanelChart())
       );
     };
     for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 3 : 2) && !chart?.found; attempt += 1) {
       chart = await collectChart();
       if (chart?.found) break;
-      if (!visibleMeasurementsOnly) await openSizeGuide();
+      if (!measurementSheetOpen()) await openSizeGuide();
       await sleep(250);
     }
     const material = await materialDetails();
@@ -1584,7 +1651,14 @@ const scannerBootstrap = String.raw`
         modelWornSize: model.size,
         modelEvidence: model.evidence
       },
-      sizeChart: chart,
+      sizeChart: {
+        ...chart,
+        availableSizes: listedSizeLabels(),
+        rawText: [
+          chart.rawText || "",
+          listedSizeLabels().length ? "Mevcut bedenler: " + listedSizeLabels().join(" ") : ""
+        ].filter(Boolean).join("\n").slice(0, 8000)
+      },
       capturedAt: new Date().toISOString()
     };
   };
@@ -1711,7 +1785,7 @@ const scannerBootstrap = String.raw`
     return cards;
   };
   const scrapeOrders = async () => {
-    unlockPageScroll();
+    unlockPageScroll(true);
     const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
     const junkImage = (url, alt) =>
       !url ||
@@ -1932,6 +2006,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
+  window.__fitmemoryScannerVersion = "1.25.26";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -1968,7 +2043,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.26" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

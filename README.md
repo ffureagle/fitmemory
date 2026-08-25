@@ -36,9 +36,9 @@ bağlanmamalıdır.
 fitmemory/
 ├── backend/                  ASP.NET Core API (üretim)
 ├── backend.tests/            .NET testleri
-├── extension/                Chrome Manifest V3 uzantısı (1.25.8)
+├── extension/                Chrome Manifest V3 uzantısı (1.25.26)
 ├── mobile/                   Expo React Native uygulaması
-├── mobile-expo-go/           Expo Go istemcisi (1.25.20)
+├── mobile-expo-go/           Expo Go istemcisi (1.25.26)
 ├── migration/
 │   └── FitMemory.Migrate/    SQLite → PostgreSQL taşıma aracı
 ├── deploy/                   Docker Compose, PostgreSQL, Caddy ve yedekleme
@@ -84,7 +84,7 @@ Mobil ve AI denetimi üretimde Render'daki .NET API'yi kullanır.
    ürün sekmesine geçin.
 7. **Tara** için `Siparişlerim`, sipariş detayı veya **Alışveriş özeti** sayfasını
    açık tutun, profiliniz kayıtlı olsun, sonra yan panelde Tara’ya basın. Sürüm
-   **1.25.8** olmalıdır.
+   **1.25.26** olmalıdır.
 
 Uzantının derlenmiş CSS'i hazırdır. CSS'i yeniden üretmek için:
 
@@ -98,7 +98,7 @@ pnpm run build
 
 Gereksinim: Node.js 22.13 veya daha yeni, pnpm ve Android Studio ya da Xcode.
 
-Kullandığınız istemci Expo Go ise `mobile-expo-go` (sürüm **1.25.20**):
+Kullandığınız istemci Expo Go ise `mobile-expo-go` (sürüm **1.25.26**):
 
 ```bash
 cd mobile-expo-go
@@ -108,7 +108,7 @@ EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com pnpm start
 
 Ardından Expo Go SDK 54 ile QR kodu okutun. Uygulamadan Zara / Bershka /
 Pull&Bear'a girin ve ürün sayfasında Tara'ya basın. Ölçü tablosunu elle
-açmanız gerekmez. Profil **Mobil · 1.25.20** görünmelidir.
+açmanız gerekmez. Profil **Mobil · 1.25.26** görünmelidir.
 
 Sunucu ücretsiz uyuyup hesap dosyasını silerse telefon aynı e-posta ile
 yeniden girince ölçüleri ve dolabı yerel kasadan yükler. Şifre unuttum
