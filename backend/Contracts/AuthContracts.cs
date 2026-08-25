@@ -44,7 +44,11 @@ public sealed class ResetPasswordRequest
     public required string NewPassword { get; init; }
 }
 
-public sealed record ForgotPasswordResponse(string Message, int ExpiresInMinutes);
+public sealed record ForgotPasswordResponse(
+    string Message,
+    int ExpiresInMinutes,
+    string Delivery,
+    string? Code);
 
 public sealed record AccountResponse(
     string UserId,

@@ -42,7 +42,25 @@ export function AuthScreen() {
     setResetBusy(true);
     try {
       const result = await api.forgotPassword(resetEmail.trim());
-      setResetMessage(result.message);
+      if (result.delivery === "none") {
+        setError(result.message);
+        setRegisterEmail(resetEmail.trim());
+        setMode("register");
+        setResetStep(0);
+        return;
+      }
+      const visibleCode = result.code?.trim() || "";
+      if (visibleCode) {
+        setResetCode(visibleCode);
+        setResetMessage(
+          result.message.includes(visibleCode)
+            ? result.message
+            : `E-posta şu anda gitmiyor. Kodun: ${visibleCode}`,
+        );
+      } else {
+        setResetCode("");
+        setResetMessage(result.message);
+      }
       setResetStep(2);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Kod gönderilemedi.");
@@ -159,9 +177,15 @@ export function AuthScreen() {
                 <Text style={styles.resetTitle}>Şifreni yenile</Text>
                 <Text style={styles.resetCopy}>
                   {resetStep === 1
-                    ? "Hesabındaki e-posta adresine 6 haneli, tek kullanımlık kod göndereceğiz."
+                    ? "6 haneli kodu alacağız. E-posta gitmezse kod bu ekranda görünür."
                     : resetMessage}
                 </Text>
+                {resetStep === 2 && resetCode.length === 6 ? (
+                  <View style={styles.codeBox}>
+                    <Text style={styles.codeLabel}>Doğrulama kodun</Text>
+                    <Text style={styles.codeValue}>{resetCode}</Text>
+                  </View>
+                ) : null}
                 <Field
                   autoCapitalize="none"
                   keyboardType="email-address"
@@ -178,7 +202,7 @@ export function AuthScreen() {
                   </>
                 ) : null}
                 {error ? <ErrorNotice message={error} onDismiss={() => setError("")} /> : null}
-                <Button busy={resetBusy} label={resetStep === 1 ? "Kodu e-postama gönder" : "Şifremi yenile"} onPress={() => void (resetStep === 1 ? sendResetCode() : completeReset())} tone="blue" />
+                <Button busy={resetBusy} label={resetStep === 1 ? "Kodu al" : "Şifremi yenile"} onPress={() => void (resetStep === 1 ? sendResetCode() : completeReset())} tone="blue" />
                 <Pressable onPress={() => { setResetStep(0); setError(""); }}>
                   <Text style={styles.forgot}>Giriş ekranına dön</Text>
                 </Pressable>
@@ -338,6 +362,27 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     lineHeight: 18,
+  },
+  codeBox: {
+    alignItems: "center",
+    backgroundColor: "#F4F1EA",
+    borderColor: colors.line,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 12,
+  },
+  codeLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+  },
+  codeValue: {
+    color: colors.ink,
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: 6,
+    marginTop: 4,
   },
   privacy: {
     color: colors.muted,

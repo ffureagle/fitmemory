@@ -91,7 +91,11 @@ public sealed class AccountSessionService(
                 cancellationToken);
         if (account is null)
         {
-            throw InvalidCredentials();
+            throw new AccountFlowException(
+                StatusCodes.Status401Unauthorized,
+                "Hesap bulunamadı",
+                "Bu e-posta ile sunucuda hesap yok. Aynı şifreyle tekrar hesap oluştur; dolabın bu telefonda duruyorsa yüklenecek.",
+                "account_missing");
         }
 
         var verification = passwordHasher.VerifyHashedPassword(
@@ -146,8 +150,10 @@ public sealed class AccountSessionService(
         {
             await Task.Delay(250, cancellationToken);
             return new ForgotPasswordResponse(
-                "Bu adres kayıtlıysa yenileme kodu e-posta ile gönderildi.",
-                15);
+                "Bu e-posta sunucuda kayıtlı değil. Hesap oluştur ile aynı e-posta ve şifreyi yaz.",
+                15,
+                "none",
+                null);
         }
 
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
@@ -156,10 +162,21 @@ public sealed class AccountSessionService(
         account.PasswordResetAttempts = 0;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
-        await resetEmailService.SendCodeAsync(account.Email, code, cancellationToken);
-        return new ForgotPasswordResponse(
-            "Bu adres kayıtlıysa yenileme kodu e-posta ile gönderildi.",
-            15);
+        var emailed = await resetEmailService.TrySendCodeAsync(
+            account.Email,
+            code,
+            cancellationToken);
+        return emailed
+            ? new ForgotPasswordResponse(
+                "Yenileme kodu e-postana gönderildi.",
+                15,
+                "email",
+                null)
+            : new ForgotPasswordResponse(
+                "E-posta şu anda gitmiyor. Kodun uygulamada: " + code,
+                15,
+                "app",
+                code);
     }
 
     public async Task ResetPasswordAsync(
@@ -326,18 +343,22 @@ public sealed class AccountSessionService(
         return new AccountFlowException(
             StatusCodes.Status401Unauthorized,
             "Giriş bilgileri hatalı",
-            "E-posta adresi veya şifre doğru değil.");
+            "E-posta adresi veya şifre doğru değil.",
+            "invalid_credentials");
     }
 }
 
 public sealed class AccountFlowException(
     int statusCode,
     string title,
-    string detail) : Exception(detail)
+    string detail,
+    string? errorCode = null) : Exception(detail)
 {
     public int StatusCode { get; } = statusCode;
 
     public string Title { get; } = title;
 
     public string Detail { get; } = detail;
+
+    public string? ErrorCode { get; } = errorCode;
 }

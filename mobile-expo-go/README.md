@@ -10,7 +10,7 @@ Aynı FitMemory arayüzü, Expo Go içinde. Native OCR yok; tarama DOM + Render 
 2. iPhone’da **Kamera** veya Expo Go içindeki **Scan QR code**.
 3. Android’de doğrudan Expo Go’dan QR tara.
 4. Aynı Wi‑Fi şart değil; **tunnel** adresi internet üzerinden açılır.
-5. İlk açılışta Render uykudaysa giriş 1 dakikayı bulabilir. Kayıtlı oturum telefonda kalır.
+5. İlk açılışta Render uykudaysa giriş 1 dakikayı bulabilir. Oturum ve dolap bu telefonda e-postaya bağlı kasada durur; sunucu hesabı silinse bile aynı e-posta ve şifreyle girince ölçülerin geri yüklenir. Şifre kodu e-postaya gitmezse uygulamada görünür.
 
 Bilgisayarında:
 
@@ -30,7 +30,7 @@ Pull&Bear / Bershka / Zara içinde **Siparişlerim**, **sipariş detayı** veya 
 
 ```bash
 npx eas-cli@latest login
-npx eas-cli@latest update --channel production --message "1.25.14"
+npx eas-cli@latest update --channel production --message "1.25.15"
 ```
 
 Proje: https://expo.dev/accounts/fstudio/projects/fitmemory-go  

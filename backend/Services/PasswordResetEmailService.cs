@@ -20,22 +20,25 @@ public sealed class PasswordResetEmailService(
     IOptions<EmailOptions> options,
     ILogger<PasswordResetEmailService> logger)
 {
-    public async Task SendCodeAsync(
+    public bool IsConfigured()
+    {
+        var settings = options.Value;
+        return !string.IsNullOrWhiteSpace(settings.Host) &&
+               !string.IsNullOrWhiteSpace(settings.FromAddress);
+    }
+
+    public async Task<bool> TrySendCodeAsync(
         string recipient,
         string code,
         CancellationToken cancellationToken)
     {
-        var settings = options.Value;
-        if (string.IsNullOrWhiteSpace(settings.Host) ||
-            string.IsNullOrWhiteSpace(settings.FromAddress))
+        if (!IsConfigured())
         {
-            logger.LogError("SMTP is not configured; password reset email cannot be sent.");
-            throw new AccountFlowException(
-                StatusCodes.Status503ServiceUnavailable,
-                "E-posta servisi hazır değil",
-                "Şifre yenileme e-postası şu anda gönderilemiyor. Lütfen kısa süre sonra tekrar deneyin.");
+            logger.LogWarning("SMTP is not configured; password reset code will be shown in the app.");
+            return false;
         }
 
+        var settings = options.Value;
         using var message = new MailMessage
         {
             From = new MailAddress(settings.FromAddress, settings.FromName),
@@ -58,14 +61,12 @@ public sealed class PasswordResetEmailService(
             await client.SendMailAsync(message).WaitAsync(
                 TimeSpan.FromSeconds(25),
                 cancellationToken);
+            return true;
         }
         catch (Exception exception) when (exception is SmtpException or TimeoutException)
         {
             logger.LogError(exception, "Password reset email could not be delivered.");
-            throw new AccountFlowException(
-                StatusCodes.Status503ServiceUnavailable,
-                "E-posta gönderilemedi",
-                "Şifre yenileme e-postası gönderilemedi. SMTP ayarlarını kontrol edip tekrar deneyin.");
+            return false;
         }
     }
 }

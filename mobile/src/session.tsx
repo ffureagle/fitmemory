@@ -20,6 +20,13 @@ import type {
 } from "./types";
 import { useI18n } from "./i18n";
 import {
+  clearAccountVault,
+  ordersFromVault,
+  persistSessionVault,
+  profileFromVault,
+  readAccountVault,
+} from "./accountVault";
+import {
   clearPendingProfile,
   clearProfileDraft,
   isPendingNewer,
@@ -84,6 +91,20 @@ function normalizeApiUrl(value: string) {
   return trimmed;
 }
 
+function displayNameFromEmail(email: string) {
+  const local = email.split("@")[0]?.trim();
+  return local && local.length >= 2 ? local : "FitMemory";
+}
+
+function isMissingAccount(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    (error.errorCode === "account_missing" ||
+      (error.status === 401 &&
+        /kayıtlı değil|oluştur|sunucuda hesap yok|silindi/i.test(error.message)))
+  );
+}
+
 async function readLastEmail() {
   const value = await SecureStore.getItemAsync(LAST_EMAIL_KEY);
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -93,6 +114,123 @@ async function writeLastEmail(email: string) {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return;
   await SecureStore.setItemAsync(LAST_EMAIL_KEY, normalized, STORE_OPTIONS);
+}
+
+async function applyVaultIfServerEmpty(
+  currentApi: FitMemoryApi,
+  currentToken: string,
+  currentAccount: Account,
+  profile: Profile | null,
+  orders: Order[],
+  styleBoard: StyleBoardItem[],
+) {
+  const vault = await readAccountVault(currentAccount.email);
+  if (!vault) {
+    return { profile, orders, styleBoard };
+  }
+
+  let nextProfile = profile;
+  if (!nextProfile && vault.profile) {
+    try {
+      nextProfile = await currentApi.saveProfile(
+        currentAccount.userId,
+        currentToken,
+        profileForServerSync(vault.profile),
+      );
+    } catch {
+      nextProfile = profileFromVault(vault, currentAccount.userId);
+      if (nextProfile) {
+        await writePendingProfile(nextProfile);
+      }
+    }
+  }
+
+  let nextOrders = orders;
+  if (nextOrders.length === 0 && vault.orders.length > 0) {
+    const restored: Order[] = [];
+    for (const item of vault.orders) {
+      try {
+        restored.push(
+          await currentApi.createOrder(currentAccount.userId, currentToken, {
+            brand: item.brand || "Bilinmiyor",
+            productName: item.productName || "Ürün",
+            category: item.category || "other",
+            purchasedSize: item.purchasedSize || "M",
+            outcome: item.outcome,
+            returnConfirmedByUser: item.returnConfirmedByUser,
+            fitNotes: item.fitNotes,
+            userFitNotes: item.userFitNotes,
+            productUrl: item.productUrl,
+            imageUrl: item.imageUrl,
+            fitLabel: item.fitLabel,
+          }),
+        );
+      } catch {
+        restored.push(
+          ordersFromVault(
+            { ...vault, orders: [item] },
+            currentAccount.userId,
+          )[0]!,
+        );
+      }
+    }
+    nextOrders = restored;
+  }
+
+  let nextStyleBoard = styleBoard;
+  if (nextStyleBoard.length === 0 && vault.styleBoard.length > 0) {
+    const restored: StyleBoardItem[] = [];
+    for (const item of vault.styleBoard) {
+      try {
+        restored.push(
+          await currentApi.restoreStyleBoardItem(
+            currentAccount.userId,
+            currentToken,
+            item,
+          ),
+        );
+      } catch {
+        restored.push({
+          id: -(restored.length + 1),
+          userId: currentAccount.userId,
+          productUrl: item.product.url,
+          brand: item.product.brand,
+          productName: item.product.name,
+          category: item.product.category,
+          price: item.product.price,
+          imageUrl: item.product.imageUrl,
+          productReference: item.product.productReference,
+          fitLabel: item.product.fitLabel,
+          fitEvidence: item.product.fitEvidence,
+          description: item.product.description,
+          materialSummary: item.product.materialSummary,
+          materialEvidence: item.product.materialEvidence,
+          recommendedSize: item.recommendedSize,
+          recommendationConfidence: item.recommendationConfidence,
+          isSelected: false,
+          isInStudio: item.isInStudio,
+          isSaved: item.isSaved,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+    nextStyleBoard = restored;
+  }
+
+  await persistSessionVault({
+    email: currentAccount.email,
+    displayName: currentAccount.displayName || vault.displayName,
+    profile: nextProfile,
+    orders: nextOrders,
+    styleBoard: nextStyleBoard,
+  });
+
+  return {
+    profile: nextProfile,
+    orders: nextOrders,
+    styleBoard: nextStyleBoard,
+  };
 }
 
 export function SessionProvider({ children }: PropsWithChildren) {
@@ -143,11 +281,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
       if (rejected) {
         throw rejected;
       }
+      let profileValue: Profile | null = null;
       if (nextProfile.status === "fulfilled") {
         const serverProfile = nextProfile.value;
         const pending = await readPendingProfile(currentAccount.userId);
         if (pending && isPendingNewer(pending, serverProfile)) {
-          setProfile(pending);
+          profileValue = pending;
           void currentApi
             .saveProfile(
               currentAccount.userId,
@@ -170,26 +309,37 @@ export function SessionProvider({ children }: PropsWithChildren) {
             })
             .catch(() => undefined);
         } else {
-          setProfile(serverProfile);
+          profileValue = serverProfile;
           if (serverProfile) {
             await clearPendingProfile();
           }
         }
       } else {
-        const pending = await readPendingProfile(currentAccount.userId);
-        if (pending) {
-          setProfile(pending);
-        }
+        profileValue =
+          (await readPendingProfile(currentAccount.userId)) ?? null;
       }
-      if (nextOrders.status === "fulfilled") {
-        setOrders(nextOrders.value ?? []);
-      }
-      if (nextStyleBoard.status === "fulfilled") {
-        setStyleBoard(nextStyleBoard.value ?? []);
-      }
-      if (nextFavorites.status === "fulfilled") {
-        setFavoriteOutfits(nextFavorites.value ?? []);
-      }
+      const orderValue =
+        nextOrders.status === "fulfilled" ? nextOrders.value ?? [] : [];
+      const styleValue =
+        nextStyleBoard.status === "fulfilled"
+          ? nextStyleBoard.value ?? []
+          : [];
+      const favoritesValue =
+        nextFavorites.status === "fulfilled"
+          ? nextFavorites.value ?? []
+          : [];
+      const restored = await applyVaultIfServerEmpty(
+        currentApi,
+        currentToken,
+        currentAccount,
+        profileValue,
+        orderValue,
+        styleValue,
+      );
+      setProfile(restored.profile);
+      setOrders(restored.orders);
+      setStyleBoard(restored.styleBoard);
+      setFavoriteOutfits(favoritesValue);
     },
     [],
   );
@@ -264,9 +414,17 @@ export function SessionProvider({ children }: PropsWithChildren) {
         }
         setToken(parsed.accessToken);
         setAccount(parsed.account);
+        const vault = email ? await readAccountVault(email) : null;
         const pendingProfile = await readPendingProfile(parsed.account.userId);
-        if (pendingProfile && active) {
-          setProfile(pendingProfile);
+        if (active) {
+          if (pendingProfile) {
+            setProfile(pendingProfile);
+          } else if (vault?.profile) {
+            setProfile(profileFromVault(vault, parsed.account.userId));
+          }
+          if (vault && vault.orders.length > 0) {
+            setOrders(ordersFromVault(vault, parsed.account.userId));
+          }
         }
         if (active) setReady(true);
         try {
@@ -286,7 +444,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
           );
         } catch (error) {
           if (error instanceof ApiError && error.status === 401) {
+            const remembered = email || storedEmail;
             await clearSession();
+            if (remembered) {
+              setLastEmail(remembered);
+              await writeLastEmail(remembered);
+            }
           }
         }
         return;
@@ -308,7 +471,21 @@ export function SessionProvider({ children }: PropsWithChildren) {
         await writeLastEmail(email);
         setLastEmail(email.trim().toLowerCase());
         await api.health(90_000).catch(() => undefined);
-        await acceptSession(await api.login(email.trim(), password));
+        try {
+          await acceptSession(await api.login(email.trim(), password.trim()));
+        } catch (error) {
+          if (!isMissingAccount(error)) {
+            throw error;
+          }
+          const vault = await readAccountVault(email);
+          await acceptSession(
+            await api.register(
+              vault?.displayName || displayNameFromEmail(email),
+              email.trim(),
+              password.trim(),
+            ),
+          );
+        }
       } finally {
         setBusy(false);
       }
@@ -323,9 +500,16 @@ export function SessionProvider({ children }: PropsWithChildren) {
         await writeLastEmail(email);
         setLastEmail(email.trim().toLowerCase());
         await api.health(90_000).catch(() => undefined);
-        await acceptSession(
-          await api.register(name.trim(), email.trim(), password),
-        );
+        try {
+          await acceptSession(
+            await api.register(name.trim(), email.trim(), password.trim()),
+          );
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 409) {
+            throw error;
+          }
+          await acceptSession(await api.login(email.trim(), password.trim()));
+        }
       } finally {
         setBusy(false);
       }
@@ -337,6 +521,13 @@ export function SessionProvider({ children }: PropsWithChildren) {
     setBusy(true);
     try {
       if (account?.email) {
+        await persistSessionVault({
+          email: account.email,
+          displayName: account.displayName,
+          profile,
+          orders,
+          styleBoard,
+        });
         await writeLastEmail(account.email);
         setLastEmail(account.email.trim().toLowerCase());
       }
@@ -347,18 +538,21 @@ export function SessionProvider({ children }: PropsWithChildren) {
     } finally {
       setBusy(false);
     }
-  }, [account, api, clearSession, token]);
+  }, [account, api, clearSession, orders, profile, styleBoard, token]);
 
   const deleteAccount = useCallback(async () => {
     if (!token) return;
     setBusy(true);
     try {
       await api.deleteAccount(token);
+      if (account?.email) {
+        await clearAccountVault(account.email);
+      }
       await clearSession();
     } finally {
       setBusy(false);
     }
-  }, [api, clearSession, token]);
+  }, [account, api, clearSession, token]);
 
   const setApiBaseUrl = useCallback(
     async (value: string) => {
@@ -391,10 +585,22 @@ export function SessionProvider({ children }: PropsWithChildren) {
       await loadAccountData(api, token, account);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
+        const remembered = account.email;
+        await persistSessionVault({
+          email: remembered,
+          displayName: account.displayName,
+          profile,
+          orders,
+          styleBoard,
+        });
         await clearSession();
+        if (remembered) {
+          setLastEmail(remembered);
+          await writeLastEmail(remembered);
+        }
       }
     }
-  }, [account, api, clearSession, loadAccountData, token]);
+  }, [account, api, clearSession, loadAccountData, orders, profile, styleBoard, token]);
 
   const syncPendingProfile = useCallback(async () => {
     if (!token || !account) return;
@@ -417,7 +623,14 @@ export function SessionProvider({ children }: PropsWithChildren) {
     );
     setProfile(saved);
     await clearPendingProfile();
-  }, [account, api, token]);
+    await persistSessionVault({
+      email: account.email,
+      displayName: account.displayName,
+      profile: saved,
+      orders,
+      styleBoard,
+    });
+  }, [account, api, orders, styleBoard, token]);
 
   const value = useMemo<SessionContextValue>(
     () => ({
@@ -441,14 +654,45 @@ export function SessionProvider({ children }: PropsWithChildren) {
       syncPendingProfile,
       updateProfile: (next, pendingSync = false) => {
         setProfile(next);
+        if (account?.email) {
+          void persistSessionVault({
+            email: account.email,
+            displayName: account.displayName,
+            profile: next,
+            orders,
+            styleBoard,
+          });
+        }
         if (pendingSync) {
           void writePendingProfile(next);
         } else {
           void clearPendingProfile();
         }
       },
-      updateOrders: setOrders,
-      updateStyleBoard: setStyleBoard,
+      updateOrders: (next) => {
+        setOrders(next);
+        if (account?.email) {
+          void persistSessionVault({
+            email: account.email,
+            displayName: account.displayName,
+            profile,
+            orders: next,
+            styleBoard,
+          });
+        }
+      },
+      updateStyleBoard: (next) => {
+        setStyleBoard(next);
+        if (account?.email) {
+          void persistSessionVault({
+            email: account.email,
+            displayName: account.displayName,
+            profile,
+            orders,
+            styleBoard: next,
+          });
+        }
+      },
       updateFavoriteOutfits: setFavoriteOutfits,
     }),
     [

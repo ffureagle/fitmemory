@@ -30,10 +30,7 @@ public sealed class AuthController(
         }
         catch (AccountFlowException exception)
         {
-            return Problem(
-                statusCode: exception.StatusCode,
-                title: exception.Title,
-                detail: exception.Detail);
+            return AuthProblem(exception);
         }
     }
 
@@ -53,10 +50,7 @@ public sealed class AuthController(
         }
         catch (AccountFlowException exception)
         {
-            return Problem(
-                statusCode: exception.StatusCode,
-                title: exception.Title,
-                detail: exception.Detail);
+            return AuthProblem(exception);
         }
     }
 
@@ -72,7 +66,7 @@ public sealed class AuthController(
         }
         catch (AccountFlowException exception)
         {
-            return Problem(statusCode: exception.StatusCode, title: exception.Title, detail: exception.Detail);
+            return AuthProblem(exception);
         }
     }
 
@@ -90,7 +84,7 @@ public sealed class AuthController(
         }
         catch (AccountFlowException exception)
         {
-            return Problem(statusCode: exception.StatusCode, title: exception.Title, detail: exception.Detail);
+            return AuthProblem(exception);
         }
     }
 
@@ -161,5 +155,16 @@ public sealed class AuthController(
             StringComparison.OrdinalIgnoreCase)
             ? authorization["Bearer ".Length..].Trim()
             : null;
+    }
+
+    private ObjectResult AuthProblem(AccountFlowException exception)
+    {
+        return StatusCode(exception.StatusCode, new
+        {
+            title = exception.Title,
+            status = exception.StatusCode,
+            detail = exception.Detail,
+            errorCode = exception.ErrorCode
+        });
     }
 }

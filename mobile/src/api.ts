@@ -4,6 +4,7 @@ import type {
   Order,
   OrderImportResponse,
   OrderSnapshot,
+  Product,
   ProductSnapshot,
   Profile,
   Recommendation,
@@ -18,10 +19,18 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly errorCode?: string,
   ) {
     super(message);
   }
 }
+
+export type ForgotPasswordResult = {
+  message: string;
+  expiresInMinutes: number;
+  delivery?: "email" | "app" | "none" | string;
+  code?: string | null;
+};
 
 type ApiOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -99,13 +108,16 @@ export class FitMemoryApi {
       const fallback = `Sunucu isteği başarısız oldu (${response.status}).`;
       let message = fallback;
       const textResponse = response.clone();
+      let errorCode: string | undefined;
       try {
         const problem = (await response.json()) as {
           detail?: string;
           title?: string;
           message?: string;
+          errorCode?: string;
           errors?: Record<string, string[]>;
         };
+        errorCode = problem.errorCode;
         message =
           Object.values(problem.errors ?? {}).flat().join(" ") ||
           problem.detail ||
@@ -116,7 +128,7 @@ export class FitMemoryApi {
         console.warn("API problem response was not JSON", parseError);
         message = (await textResponse.text()) || fallback;
       }
-      throw new ApiError(message, response.status);
+      throw new ApiError(message, response.status, errorCode);
     }
     return (await response.json()) as T;
   }
@@ -145,10 +157,85 @@ export class FitMemoryApi {
   }
 
   forgotPassword(email: string) {
-    return this.request<{ message: string; expiresInMinutes: number }>(
+    return this.request<ForgotPasswordResult>(
       "/api/auth/password/forgot",
       { method: "POST", body: { email }, timeoutMs: 25_000 },
     );
+  }
+
+  createOrder(
+    userId: string,
+    token: string,
+    body: {
+      brand: string;
+      productName: string;
+      category: string;
+      purchasedSize: string;
+      outcome: Order["outcome"];
+      returnConfirmedByUser: boolean;
+      fitNotes?: string | null;
+      userFitNotes?: string | null;
+      productUrl?: string | null;
+      imageUrl?: string | null;
+      fitLabel?: string | null;
+    },
+  ) {
+    const httpUrl = (value?: string | null) => {
+      const trimmed = value?.trim() ?? "";
+      return /^https?:\/\//i.test(trimmed) ? trimmed : undefined;
+    };
+    return this.request<Order>("/api/orders", {
+      method: "POST",
+      token,
+      body: {
+        userId,
+        brand: body.brand,
+        productName: body.productName,
+        category: body.category,
+        purchasedSize: body.purchasedSize,
+        outcome: body.outcome,
+        returnConfirmedByUser: body.returnConfirmedByUser,
+        fitNotes: body.fitNotes,
+        userFitNotes: body.userFitNotes,
+        productUrl: httpUrl(body.productUrl),
+        imageUrl: httpUrl(body.imageUrl),
+        fitLabel: body.fitLabel,
+      },
+    });
+  }
+
+  restoreStyleBoardItem(
+    userId: string,
+    token: string,
+    item: {
+      product: Product;
+      recommendedSize: string;
+      recommendationConfidence: number;
+      isInStudio: boolean;
+      isSaved: boolean;
+    },
+  ) {
+    return this.request<StyleBoardItem>("/api/style-board/items", {
+      method: "POST",
+      token,
+      body: {
+        userId,
+        product: {
+          ...item.product,
+          url:
+            item.product.url?.trim() ||
+            `https://fitmemory.app/vault/${encodeURIComponent(item.product.name || "item")}`,
+        },
+        recommendedSize: item.recommendedSize,
+        recommendationConfidence: Math.max(
+          0,
+          Math.min(95, Math.round(item.recommendationConfidence || 0)),
+        ),
+        saveToStudio: item.isInStudio,
+        saveToCloset: item.isSaved,
+      },
+      timeoutMs: 90_000,
+    });
   }
 
   resetPassword(email: string, code: string, newPassword: string) {
