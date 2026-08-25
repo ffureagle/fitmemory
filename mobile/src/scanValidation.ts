@@ -26,12 +26,13 @@ export function listedSizeLabels(snapshot: ProductSnapshot): string[] {
 }
 
 export function isIncompleteWalkedChart(snapshot: ProductSnapshot): boolean {
+  const letterSizePattern = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)$/i;
   const measured = [...new Set(
     snapshot.sizeChart.rows
       .map((row) => String(row.cells[0] ?? "").trim().toUpperCase())
-      .filter((label) => sizePattern.test(label)),
+      .filter((label) => letterSizePattern.test(label)),
   )];
-  const listed = listedSizeLabels(snapshot);
+  const listed = listedSizeLabels(snapshot).filter((label) => letterSizePattern.test(label));
   return listed.length >= 2 && measured.length < 2;
 }
 

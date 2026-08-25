@@ -53,7 +53,8 @@ public sealed partial class LocalFitRecommendationEngine(
             .Concat(availableSizes)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (measuredWithMetrics.Length == 1 && listedSizes.Length >= 2)
+        if (measuredWithMetrics.Count(IsLetterSizeLabel) == 1 &&
+            listedSizes.Count(IsLetterSizeLabel) >= 2)
         {
             return new RecommendationResult(
                 "Bilinmiyor",
@@ -1641,6 +1642,9 @@ public sealed partial class LocalFitRecommendationEngine(
         .Replace('ö', 'o')
         .Replace('ü', 'u');
 
+    private static bool IsLetterSizeLabel(string value) =>
+        LetterSizeLabelRegex().IsMatch(value.Trim());
+
     private static string NormalizeSizeLabel(string value)
     {
         var label = value.Trim();
@@ -1698,6 +1702,9 @@ public sealed partial class LocalFitRecommendationEngine(
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9 /+.-]{0,29}$", RegexOptions.CultureInvariant)]
     private static partial Regex SizeLabelRegex();
+
+    [GeneratedRegex(@"^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LetterSizeLabelRegex();
 
     [GeneratedRegex(@"\b(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TextSizeRegex();

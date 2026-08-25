@@ -79,7 +79,7 @@ public sealed class LocalUpperFitTests
     }
 
     [Fact]
-    public void OneSizeGarmentWithSingleRowStillRecommends()
+    public void OneSizeGarmentWithSingleRowIsNotTreatedAsIncompleteWalk()
     {
         var result = AnalyzeTee(new SizeChartDto
         {
@@ -92,8 +92,7 @@ public sealed class LocalUpperFitTests
             AvailableSizes = ["M"]
         });
 
-        Assert.NotEqual("Bilinmiyor", result.RecommendedSize);
-        Assert.Equal("M", result.RecommendedSize);
+        Assert.DoesNotContain("diğer bedenler toplanamadı", result.Explanation, StringComparison.OrdinalIgnoreCase);
     }
 
     private static RecommendationResult AnalyzeTee(

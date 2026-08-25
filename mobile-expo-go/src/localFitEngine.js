@@ -1,4 +1,6 @@
 const LETTER_ORDER = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+const isLetterSizeLabel = (value) =>
+  /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL)$/i.test(String(value || "").trim());
 const WIDTH = "width";
 const CIRCUMFERENCE = "circumference";
 const LINEAR = "linear";
@@ -48,7 +50,8 @@ export function analyzeRecommendation(profile, orders, request) {
     ...(request.sizeChart?.availableSizes || []),
     ...availableSizes
   ].map((label) => String(label || "").trim()).filter(Boolean))];
-  if (measuredWithMetrics.length === 1 && listedSizes.length >= 2) {
+  if (measuredWithMetrics.filter(isLetterSizeLabel).length === 1 &&
+      listedSizes.filter(isLetterSizeLabel).length >= 2) {
     return result("Bilinmiyor", 0,
       "Yalnız bir bedenin milimi okundu; diğer bedenler toplanamadı.",
       "Ölçü paneli açıkken tek bedenin sayıları geldi. FitMemory bu yüzden o tek satırı senin bedenin diye önermedi. Paneldeki tüm bedenleri tek tek gezdirip yeniden dene.",
