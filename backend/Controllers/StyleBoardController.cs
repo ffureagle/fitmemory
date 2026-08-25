@@ -114,7 +114,7 @@ public sealed class StyleBoardController(
             0,
             95);
         item.IsInStudio |= request.SaveToStudio;
-        item.IsSaved |= request.SaveToCloset;
+        item.IsSaved |= request.WantsStudioSaved;
         item.UpdatedAt = now;
         if (existing is null)
         {
@@ -566,6 +566,13 @@ public sealed class StyleBoardController(
         var analysis = JsonSerializer.Deserialize<StyleBoardAnalysisResponse>(favorite.AnalysisJson, JsonOptions)
             ?? throw new InvalidOperationException("Favori kombin analizi okunamadı.");
         var items = JsonSerializer.Deserialize<IReadOnlyList<StyleBoardItemResponse>>(favorite.ItemsJson, JsonOptions) ?? [];
-        return new FavoriteOutfitResponse(favorite.Id, favorite.UserProfile.UserId, favorite.Title, analysis, items, favorite.CreatedAt);
+        return new FavoriteOutfitResponse(
+            favorite.Id,
+            favorite.UserProfile.UserId,
+            favorite.Title,
+            analysis,
+            items,
+            favorite.CreatedAt,
+            SavedPlace.ForFavorite(favorite.Title, items));
     }
 }

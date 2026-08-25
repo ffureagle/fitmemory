@@ -38,7 +38,7 @@ fitmemory/
 ├── backend.tests/            .NET testleri
 ├── extension/                Chrome Manifest V3 uzantısı (1.25.8)
 ├── mobile/                   Expo React Native uygulaması
-├── mobile-expo-go/           Expo Go istemcisi (1.25.19)
+├── mobile-expo-go/           Expo Go istemcisi (1.25.20)
 ├── migration/
 │   └── FitMemory.Migrate/    SQLite → PostgreSQL taşıma aracı
 ├── deploy/                   Docker Compose, PostgreSQL, Caddy ve yedekleme
@@ -98,7 +98,7 @@ pnpm run build
 
 Gereksinim: Node.js 22.13 veya daha yeni, pnpm ve Android Studio ya da Xcode.
 
-Kullandığınız istemci Expo Go ise `mobile-expo-go` (sürüm **1.25.19**):
+Kullandığınız istemci Expo Go ise `mobile-expo-go` (sürüm **1.25.20**):
 
 ```bash
 cd mobile-expo-go
@@ -108,7 +108,7 @@ EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com pnpm start
 
 Ardından Expo Go SDK 54 ile QR kodu okutun. Uygulamadan Zara / Bershka /
 Pull&Bear'a girin ve ürün sayfasında Tara'ya basın. Ölçü tablosunu elle
-açmanız gerekmez. Profil **Mobil · 1.25.19** görünmelidir.
+açmanız gerekmez. Profil **Mobil · 1.25.20** görünmelidir.
 
 Sunucu ücretsiz uyuyup hesap dosyasını silerse telefon aynı e-posta ile
 yeniden girince ölçüleri ve dolabı yerel kasadan yükler. Şifre unuttum

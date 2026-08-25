@@ -233,6 +233,7 @@ export class FitMemoryApi {
         ),
         saveToStudio: item.isInStudio,
         saveToCloset: item.isSaved,
+        saveToStudioSaved: item.isSaved,
       },
       timeoutMs: 90_000,
     });
@@ -437,7 +438,10 @@ export class FitMemoryApi {
         recommendedSize: recommendation?.recommendedSize ?? "",
         recommendationConfidence: recommendation?.confidence ?? 0,
         saveToStudio: target === "studio",
+        // saveToCloset is the live API's flag for Studio → Kaydedilenler.
+        // It does not put the product in Dolabım.
         saveToCloset: target === "saved",
+        saveToStudioSaved: target === "saved",
       },
     });
   }

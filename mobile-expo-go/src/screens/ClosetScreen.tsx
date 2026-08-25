@@ -23,6 +23,7 @@ import { useSession } from "../session";
 import { colors } from "../theme";
 import { Text, useI18n } from "../i18n";
 import type { FavoriteOutfit, Order, WardrobeOutfit } from "../types";
+import { closetSavedOutfits } from "../savedPlaces";
 
 const categoryNames: Record<string, string> = {
   Tops: "Tişört & Üst",
@@ -118,7 +119,7 @@ export function ClosetScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"closet" | "saved">("closet");
-  const savedOutfits = session.favoriteOutfits.filter((item) => item.title.startsWith("Dolap · "));
+  const savedOutfits = closetSavedOutfits(session.favoriteOutfits);
   const [outfitPrompt, setOutfitPrompt] = useState("");
   const [outfitBusy, setOutfitBusy] = useState(false);
   const [outfitError, setOutfitError] = useState("");
@@ -381,15 +382,15 @@ export function ClosetScreen() {
         </View>
         <Text style={styles.intro}>
           {tab === "saved"
-            ? "Burada yalnız dolabındaki parçalarla kurduğun kombinler durur. Almadığın ürünler Stüdyo → Kaydedilenler’dedir."
-            : "Satın aldığın parçalar burada yaşar. İki veya daha fazla parçayı seçip AI ile kombin yaptırabilirsin."}
+            ? "Dolabındaki parçalarla AI kombin kurup kaydettiğin yer. Stüdyodaki kaydedilenler buraya düşmez."
+            : "Satın aldığın parçalar burada. Fotoğrafa basıp seç, AI kombin kursun; beğenirsen Kaydedilenler’e al."}
         </Text>
         {error ? (
           <ErrorNotice message={error} onDismiss={() => setError("")} />
         ) : null}
         {tab === "saved" ? (
           !savedOutfits.length ? (
-            <EmptyState copy="Dolabındaki parçaları seçip kombin yap, sonra ‘Kombini kaydet’. Almadığın ürünler Stüdyo → Kaydedilenler’e gider." symbol="♡" title="Henüz kayıt yok" />
+            <EmptyState copy="Parçaları seç, kombin yap, Kombini kaydet. Beden bulup almadığın ürünler Stüdyo → Kaydedilenler’de kalır." symbol="♡" title="Henüz dolap kombini yok" />
           ) : (
             <View style={styles.savedGrid}>
               {savedOutfits.map((item) => (
@@ -427,7 +428,7 @@ export function ClosetScreen() {
               <Text style={styles.outfitEyebrow}>DOLAPTAN KOMBİN</Text>
               <Text style={styles.outfitTitle}>Dolabındakilerle kombin kur</Text>
               <Text style={styles.outfitHint}>
-                {picked.length ? `${picked.length} parça seçili.` : "Parçanın fotoğrafına dokunarak seç; ya da nasıl görünmek istediğini yaz."}
+                {picked.length ? `${picked.length} parça seçili. Kombini kaydet, Dolabım → Kaydedilenler’e gider.` : "Parçanın fotoğrafına dokunarak seç; ya da nasıl görünmek istediğini yaz. Kaydettiğin kombin Dolabım → Kaydedilenler’de durur, Stüdyo’da değil."}
               </Text>
               <TextInput
                 maxLength={500}

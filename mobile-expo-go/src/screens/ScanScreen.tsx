@@ -168,6 +168,7 @@ export function ScanScreen({
   const [outfitBusy, setOutfitBusy] = useState(false);
   const [outfitError, setOutfitError] = useState("");
   const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
+  const [wardrobeSaved, setWardrobeSaved] = useState(false);
   const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
   const [pendingOrders, setPendingOrders] = useState<OrderSnapshot | null>(null);
   const [orderImportBusy, setOrderImportBusy] = useState(false);
@@ -202,6 +203,7 @@ export function ScanScreen({
     if (prompt.length < 3) return;
     setOutfitBusy(true);
     setOutfitError("");
+    setWardrobeSaved(false);
     setWardrobeOutfit(null);
     try {
       setWardrobeOutfit(await session.api.createWardrobeOutfit(session.account.userId, session.token, prompt));
@@ -227,6 +229,7 @@ export function ScanScreen({
       );
       session.updateFavoriteOutfits([favorite, ...session.favoriteOutfits]);
       feedback.success();
+      setWardrobeSaved(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Kombin kaydedilemedi.");
     } finally {
@@ -684,7 +687,7 @@ export function ScanScreen({
         ...session.styleBoard.filter((item) => item.id !== saved.id),
       ]);
       feedback.success();
-      setStatus("Stüdyo → Kaydedilenler sekmesine eklendi.");
+      setStatus(translate("Stüdyo → Kaydedilenler sekmesine eklendi."));
       setTimeout(() => setStatus(""), 5000);
       void session.refresh();
     } catch (reason) {
@@ -747,6 +750,7 @@ export function ScanScreen({
         <Card style={styles.outfitMaker}>
           <Text style={styles.outfitMakerEyebrow}>AI KOMBİN ASİSTANI</Text>
           <Text style={styles.outfitMakerTitle}>Bugün nasıl görünmek istiyorsun?</Text>
+          <Text style={styles.outfitExplanation}>Bu kombin dolabındaki parçalardan kurulur ve Dolabım → Kaydedilenler’e gider.</Text>
           <TextInput
             maxLength={500}
             multiline
@@ -777,7 +781,8 @@ export function ScanScreen({
               {wardrobeOutfit.analysis.notes.slice(0, 3).map((item) => <Text key={item} style={styles.outfitNote}>• {item}</Text>)}
               <Button
                 busy={wardrobeFavoriteBusy}
-                label="Kombini kaydet"
+                disabled={wardrobeSaved}
+                label={wardrobeSaved ? "Kaydedildi · Dolabım Kaydedilenler" : "Kombini kaydet"}
                 onPress={() => void saveWardrobeFavorite()}
                 small
               />
