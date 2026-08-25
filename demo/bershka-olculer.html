@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bershka ürün | FitMemory tarama denemesi</title>
+    <meta property="og:site_name" content="Bershka" />
+    <meta property="og:title" content="Kutulu kesim tişört" />
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f4f4f4; }
+      main { max-width: 420px; margin: 0 auto; padding: 24px 16px 80px; background: #fff; min-height: 100vh; }
+      h1 { font-size: 22px; }
+      .sizes button { margin: 0 6px 8px 0; padding: 10px 14px; border: 1px solid #111; background: #fff; }
+      .sizes button[aria-checked="true"] { background: #111; color: #fff; }
+      .row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+      .dash { color: #999; }
+      .howto { margin-top: 28px; color: #666; font-size: 13px; }
+    </style>
+  </head>
+  <body data-fitmemory-test-host="www.bershka.com">
+    <main>
+      <h1>Kutulu kesim tişört</h1>
+      <p>Bershka · 590,00 TL</p>
+      <h2>BEDEN SEÇ</h2>
+      <div class="sizes" id="sizes">
+        <button type="button" role="radio" aria-checked="false">XS</button>
+        <button type="button" role="radio" aria-checked="false">S</button>
+        <button type="button" role="radio" aria-checked="false">M</button>
+        <button type="button" role="radio" aria-checked="false">L</button>
+        <button type="button" role="radio" aria-checked="false">XL</button>
+      </div>
+      <h2>ÖLÇÜLER</h2>
+      <div id="measure">
+        <div class="row"><span>Göğüs çevresi</span><span class="dash" data-metric="chest">-</span></div>
+        <div class="row"><span>Basen çevresi</span><span class="dash" data-metric="hip">-</span></div>
+        <div class="row"><span>Omuz</span><span class="dash" data-metric="shoulder">-</span></div>
+      </div>
+      <section class="howto">
+        <h3>Nasıl ölçülür?</h3>
+        <p>1 göğüs 2 bel 3 basen. Adımlar resimdedir; sayısal ürün ölçüsü yoktur.</p>
+      </section>
+    </main>
+    <script>
+      document.documentElement.setAttribute("data-fitmemory-test-host", "www.bershka.com");
+      const table = {
+        XS: { chest: "98", hip: "92", shoulder: "40" },
+        S: { chest: "102", hip: "96", shoulder: "42" },
+        M: { chest: "106", hip: "100", shoulder: "44" },
+        L: { chest: "110", hip: "104", shoulder: "46" },
+        XL: { chest: "114", hip: "108", shoulder: "48" }
+      };
+      const buttons = [...document.querySelectorAll(".sizes button")];
+      const fill = (size) => {
+        const row = table[size];
+        if (!row) return;
+        for (const [key, value] of Object.entries(row)) {
+          const node = document.querySelector('[data-metric="' + key + '"]');
+          if (node) {
+            node.textContent = value;
+            node.classList.remove("dash");
+          }
+        }
+      };
+      for (const button of buttons) {
+        button.addEventListener("click", () => {
+          for (const other of buttons) other.setAttribute("aria-checked", "false");
+          button.setAttribute("aria-checked", "true");
+          window.setTimeout(() => fill(button.textContent.trim()), 90);
+        });
+      }
+    </script>
+  </body>
+</html>

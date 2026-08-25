@@ -14,6 +14,16 @@ sonra Ayarlar > Erişilebilirlik > FitMemory beden tablosu okuyucu seçeneği bi
 Expo Go özel native modülleri yükleyemediği için Expo Go testinde DOM + Vision AI hattı kullanılır;
 cihaz içi OCR ve AccessibilityService, EAS ile oluşturulan APK/IPA içinde etkinleşir.
 
+iPhone Expo Go (SDK 54) için `mobile-expo-go/` kullanın:
+
+```bash
+cd ../mobile-expo-go
+pnpm install
+EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com pnpm start -- --tunnel
+```
+
+OTA: `npx eas-cli@latest update --channel production` (`fstudio` / `fitmemory-go`).
+
 Expo SDK 57 tabanlı Android/iOS istemcisidir. Chrome uzantısıyla aynı backend
 hesabını kullanır; profil, dolap, uyum notları ve Kombin Stüdyosu iki cihazda
 aynı kalır.
@@ -46,8 +56,9 @@ pnpm start
 2. Profilde yaş, boy, kilo, omuz, göğüs çevresi, bel çevresi, ayak uzunluğu,
    EU ayakkabı numarası ve tercih edilen silüeti kaydedin.
 3. **Beden** sekmesinde mağaza tarayıcısını açın.
-4. Ürün sayfasındaki beden rehberini görünür hale getirip **Ürünü tara**ya
-   basın.
+4. Ürün sayfasında **Ürünü tara**ya basın. Uygulama Zara, Bershka ve
+   Pull&Bear ölçü panelini kendisi açar; göğüs çevresi ve göğüs eni
+   tabloları ayrı okunur.
 5. Sipariş sayfasında ürün kartları görünürken **Sipariş**e basarak dolabı
    aktarın.
 6. Taradığınız ama almadığınız parçayı **Kombin için ayır** ile Stüdyo'ya

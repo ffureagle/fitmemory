@@ -298,14 +298,24 @@ const scannerBootstrap = String.raw`
     }
     return null;
   };
-  const controlText = (element) => clean(
-    element.getAttribute?.("aria-label") || element.getAttribute?.("title") ||
-    element.value || element.innerText || element.textContent ||
-    element.getAttribute?.("data-testid") || ""
-  );
+  const controlText = (element) => {
+    if (!element || typeof element.getAttribute !== "function") return "";
+    return clean(
+      element.getAttribute("aria-label") || element.getAttribute("title") ||
+      element.value || element.innerText || element.textContent ||
+      element.getAttribute("data-testid") || ""
+    );
+  };
+  const ownText = (element) => {
+    if (!element || !element.childNodes) return "";
+    return clean([...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || "").join(" "));
+  };
   const clickable = (element) =>
     element?.closest?.(
-      "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary"
+      "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
+      "[class*='size-selector' i], [class*='sizeSelector' i], [data-qa-anchor*='size' i]"
     ) || element;
   const clickElement = async (element) => {
     const target = clickable(element);
@@ -397,7 +407,7 @@ const scannerBootstrap = String.raw`
       .filter((element) => element && !seen.has(element) && seen.add(element));
   };
   const measurementPattern =
-    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|view measurements?|measurements?/i;
+    /^(?:urun\s+)?olculeri(?:ni)?\s+(?:gor|goster|goruntule)$|^olculeri?\s+gor$|^olculer$|urun boyutlari|product (?:measurements?|dimensions?)|beden rehberi|beden tablosu|size guide|size chart|view measurements?|measurements?/i;
   const measurementControls = () =>
     all(
       "button, a, [role='button'], [role='tab'], summary, [data-testid*='measure' i], " +
@@ -416,12 +426,13 @@ const scannerBootstrap = String.raw`
     ).map(({ element }) => clickable(element));
   const findMeasurementTrigger = (excluded) =>
     measurementControls().find((element) => element && !excluded?.has(element)) || null;
-  const sizePattern = /^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)$/i;
+  const sizePattern = /^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d(?:[/-][1-9]\d)?)$/i;
   const sizeLabelFromText = (value) => {
     const text = clean(value).toUpperCase();
-    return text.match(/^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)?.[1]?.toUpperCase() ||
-      text.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)?.[1] ||
-      text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|\d{1,3})\)/i)?.[1]?.toUpperCase() || "";
+    const label = text.match(/^(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d(?:[/-][1-9]\d)?)(?:\s*\([^)]*\))?$/i)?.[1]?.toUpperCase() ||
+      text.match(/^EU\s*([1-9]\d)(?:\s*\([^)]*\))?$/i)?.[1] ||
+      text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d)\)/i)?.[1]?.toUpperCase() || "";
+    return sizePattern.test(label) ? label : "";
   };
   const selectedSizeEvidence = () => all(
     "[aria-selected='true'], [aria-checked='true'], [aria-pressed='true'], " +
@@ -431,11 +442,25 @@ const scannerBootstrap = String.raw`
     .filter(Boolean).filter((value, index, values) => values.indexOf(value) === index)
     .map((value) => "[selected] " + value).join("\n");
   const measurementNamePattern =
-    /gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|sirt genisligi|back width|kol genisligi|arm width|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
+    /gogus|chest|bust|cevre|circum|omuz|shoulder|bel|waist|kalca|basen|hip|on uzunluk|front length|sirt genisligi|back width|kol genisligi|arm width|uzunluk|length|kol|sleeve|ic bacak|inseam|uyluk|thigh|paca|leg opening|yukseklik|rise/i;
   const panelText = (panel) => clean(panel?.innerText || panel?.textContent || "");
-  const ownText = (element) => clean([...element.childNodes]
-    .filter((node) => node.nodeType === Node.TEXT_NODE)
-    .map((node) => node.textContent || "").join(" "));
+  const openMetricPattern =
+    /gogus|chest|bust|(?:^|\b)bel(?:\b|cevresi)|waist|kalca|basen|hip|omuz|shoulder|ic bacak|inseam|on uzunluk|front length/;
+  const metricLabelsVisible = () => all("th, td, dt, dd, span, p, div, li, button, label")
+    .filter(visible)
+    .some((element) => {
+      const text = fold(ownText(element) || "");
+      return text.length > 0 && text.length <= 42 && openMetricPattern.test(text);
+    });
+  const measurementSurface = (text) => {
+    const folded = fold(text);
+    return {
+      folded,
+      metricCount: (folded.match(/gogus|chest|bust|omuz|shoulder|bel|waist|kalca|basen|hip|uzunluk|length|kol|sleeve|inseam/g) || []).length,
+      numericCount: (String(text || "").match(/\d{1,3}(?:[.,]\d+)?/g) || []).length,
+      placeholderCount: (String(text || "").match(/(?:^|\s)[-–—](?:\s|$)/g) || []).length
+    };
+  };
   const findMeasurePanel = () => {
     const candidates = all(
       "[role='dialog'], aside, table, [role='table'], " +
@@ -453,9 +478,11 @@ const scannerBootstrap = String.raw`
     for (const label of metricLabels.slice(0, 80)) {
       let ancestor = label.parentElement;
       for (let depth = 0; ancestor && depth < 7; depth += 1) {
-        const text = fold(panelText(ancestor));
-        if (text.length >= 15 && text.length <= 4500 &&
-            (text.match(/\d{1,3}(?:[.,]\d+)?/g) || []).length >= 2) {
+        const text = panelText(ancestor);
+        const surface = measurementSurface(text);
+        if (text.length >= 12 && text.length <= 4500 && surface.metricCount >= 2 &&
+            (surface.numericCount >= 1 || surface.placeholderCount >= 1 ||
+             /olculer|measurements?|size chart/.test(surface.folded))) {
           candidates.push(ancestor);
         }
         ancestor = ancestor.parentElement;
@@ -463,23 +490,25 @@ const scannerBootstrap = String.raw`
     }
     const unique = [...new Set(candidates)];
     return unique.map((panel) => {
-      const text = fold(panelText(panel));
-      const metricCount = (text.match(/gogus|chest|bust|omuz|shoulder|bel|waist|kalca|hip|uzunluk|length|kol|sleeve|inseam/g) || []).length;
-      const numericCount = (text.match(/\d{1,3}(?:[.,]\d+)?/g) || []).length;
+      const text = panelText(panel);
+      const surface = measurementSurface(text);
       const sizeCount = findSizeButtons(panel).length || findSizeButtons(document).length;
       return {
         panel,
-        metricCount,
-        numericCount,
+        metricCount: surface.metricCount,
+        numericCount: surface.numericCount,
+        placeholderCount: surface.placeholderCount,
         sizeCount,
         isTable: panel.matches("table, [role='table']"),
-        score: Math.min(metricCount, 8) * 8 + Math.min(numericCount, 14) + Math.min(sizeCount, 10) * 4 - Math.min(text.length / 3000, 5)
+        score: Math.min(surface.metricCount, 8) * 8 + Math.min(surface.numericCount, 14) +
+          Math.min(surface.placeholderCount, 6) * 3 + Math.min(sizeCount, 10) * 4 -
+          Math.min(text.length / 3000, 5)
       };
     }).filter((candidate) =>
-      candidate.metricCount >= 1 &&
-      candidate.numericCount >= 2 &&
-       (candidate.sizeCount >= 1 || candidate.isTable || candidate.numericCount >= 2) &&
-      candidate.score >= 13
+      candidate.metricCount >= 2 &&
+      (candidate.numericCount >= 2 || candidate.placeholderCount >= 1 ||
+        candidate.sizeCount >= 2 || candidate.isTable) &&
+      candidate.score >= 10
     )
       .sort((left, right) => right.score - left.score)[0]?.panel || null;
   };
@@ -533,7 +562,7 @@ const scannerBootstrap = String.raw`
     return findSizeButtons(document).length >= 3 ? document.body : null;
   };
   const selectedSizeButton = (button) => {
-    if (!button) return false;
+    if (!button || typeof button.getAttribute !== "function") return false;
     if (button.getAttribute("aria-checked") === "true" ||
         button.getAttribute("aria-selected") === "true" ||
         button.getAttribute("aria-pressed") === "true") return true;
@@ -566,10 +595,15 @@ const scannerBootstrap = String.raw`
     return null;
   };
   const verifiedChart = () => {
-    const chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), visiblePanelChart());
-    if (chart) return chart;
-    const panel = findMeasurePanel();
-    return panel && extractMeasurements(panel).length > 0 ? panel : null;
+    try {
+      const chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), visiblePanelChart());
+      if (chart) return chart;
+      const panel = findMeasurePanel();
+      return panel && extractMeasurements(panel).length > 0 ? panel : null;
+    } catch (error) {
+      recordDiagnostic("verified-chart", error);
+      return null;
+    }
   };
   const exactBrandControl = (patterns) => all(
     "button, a, [role='button'], [role='tab'], summary, [data-testid], [data-qa], span, div"
@@ -614,6 +648,45 @@ const scannerBootstrap = String.raw`
     await clickElement(trigger);
     const chart = await waitForStable(() => verifiedChart(), 7000, 240);
     guideStage = chart ? "Zara ölçü tablosu okundu" : "Zara ölçüler sekmesi açıldı ancak tablo oluşmadı";
+    return Boolean(chart);
+  };
+  const openBershkaMeasurements = async () => {
+    const patterns = [
+      /^olculer$/i, /^urun olculeri$/i, /^urun boyutlari$/i, /^beden rehberi$/i,
+      /^product measurements?$/i, /^size guide$/i, /^measurements?$/i,
+      /^olculeri goruntule$/i, /^olculeri gor$/i
+    ];
+    guideStage = "Bershka ölçü paneli aranıyor";
+    progress(guideStage);
+    let trigger = await scrollFindBrandControl(patterns, 14);
+    if (!trigger) {
+      const addControl = findExactVisibleTextControl(addPattern) || pullAddCandidates()[0];
+      const sizeControl = findExactVisibleTextControl(
+        /^(bir\s+)?beden sec$|^beden secin$|^choose size$|^select size$|^ekle$|^sepete ekle$/i
+      );
+      const opener = addControl || sizeControl;
+      if (opener) {
+        guideStage = "Bershka beden seçici açılıyor";
+        progress(guideStage);
+        await clickElement(opener);
+        trigger = await waitFor(() => exactBrandControl(patterns), 6000, 80);
+      }
+    }
+    if (!trigger) {
+      guideStage = "Bershka ölçü bağlantısı bulunamadı";
+      return false;
+    }
+    if (metricLabelsVisible()) {
+      guideStage = "Bershka ölçü paneli zaten açık";
+      return true;
+    }
+    trigger.scrollIntoView?.({ block: "center", inline: "center" });
+    await sleep(80);
+    guideStage = "Bershka ölçü paneli açılıyor";
+    progress(guideStage);
+    await clickElement(trigger);
+    const chart = await waitForStable(() => verifiedChart(), 7000, 240);
+    guideStage = chart ? "Bershka ölçü tablosu okundu" : "Bershka ölçü paneli açıldı ancak tablo oluşmadı";
     return Boolean(chart);
   };
   const openPullAndBearMeasurements = async () => {
@@ -676,12 +749,18 @@ const scannerBootstrap = String.raw`
     const scanHost = location.hostname || document.documentElement.getAttribute("data-fitmemory-test-host") || "";
     const isPullAndBear = /(?:^|\.)pullandbear\.com$/i.test(scanHost);
     const isZara = /(?:^|\.)zara\.com$/i.test(scanHost);
+    const isBershka = /(?:^|\.)bershka\.com$/i.test(scanHost);
+    if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
+      guideStage = "Ölçü paneli zaten açık";
+      return true;
+    }
     if (verifiedChart()) {
       guideStage = "Ölçü paneli açık";
       return true;
     }
     if (isPullAndBear) return await openPullAndBearMeasurements();
     if (isZara) return await openZaraMeasurements();
+    if (isBershka) return await openBershkaMeasurements();
     let measurement = isPullAndBear ? null : findMeasurementTrigger();
     if (!isPullAndBear && measurement && await activateMeasurementChain(3, 12000)) return true;
     const addControl = isPullAndBear
@@ -796,14 +875,30 @@ const scannerBootstrap = String.raw`
   };
   const normalizeMeasurementLabel = (value) => {
     const text = fold(value);
-    if (/gogus|chest|bust/.test(text)) return "Göğüs eni";
+    if (/gogus|chest|bust/.test(text)) {
+      if (/cevre|circum/.test(text)) return "Göğüs çevresi";
+      if (/eni|width|flat|half/.test(text)) return "Göğüs eni";
+      return "Göğüs";
+    }
     if (/on uzunluk|front length/.test(text)) return "Ön uzunluk";
     if (/sirt genisligi|back width/.test(text)) return "Sırt genişliği";
     if (/kol genisligi|arm width/.test(text)) return "Kol genişliği";
     if (/kol|sleeve/.test(text)) return "Kol uzunluğu";
-    if (/bel|waist/.test(text)) return "Bel eni";
-    if (/kalca|basen|hip/.test(text)) return "Kalça eni";
-    if (/omuz|shoulder/.test(text)) return "Omuz";
+    if (/bel|waist/.test(text)) {
+      if (/cevre|circum/.test(text)) return "Bel çevresi";
+      if (/eni|width|flat/.test(text)) return "Bel eni";
+      return "Bel";
+    }
+    if (/kalca|basen|hip/.test(text)) {
+      if (/cevre|circum/.test(text)) return "Kalça çevresi";
+      if (/eni|width/.test(text)) return "Kalça eni";
+      return "Kalça";
+    }
+    if (/omuz|shoulder/.test(text)) {
+      if (/cevre|circum/.test(text)) return "Omuz çevresi";
+      if (/eni|width|flat/.test(text)) return "Omuz eni";
+      return "Omuz";
+    }
     if (/ic bacak|inseam/.test(text)) return "İç bacak";
     if (/uyluk|thigh/.test(text)) return "Uyluk eni";
     if (/paca|leg opening/.test(text)) return "Paça eni";
@@ -815,7 +910,8 @@ const scannerBootstrap = String.raw`
     chart.headers?.length > 1 && chart.rows?.some((row) =>
       sizePattern.test(clean(row.cells?.[0])) && row.cells.slice(1).some((cell, index) =>
         measurementNamePattern.test(fold(chart.headers[index + 1] || "")) &&
-        /^\d{1,3}(?:[.,]\d+)?$/.test(clean(cell))
+        /^[1-9]\d{1,2}(?:[.,]\d+)?$/.test(clean(cell)) &&
+        Number(clean(cell).replace(",", ".")) >= 10
       )));
   const firstVerifiedChart = (...charts) => charts.find(verifiedMeasurementChart) || null;
   const visibleLayoutChart = () => {
@@ -1014,6 +1110,9 @@ const scannerBootstrap = String.raw`
       const normalized = normalizeMeasurementLabel(label);
       const numeric = clean(value).replace(",", ".").match(/\d{1,3}(?:\.\d+)?/)?.[0] || "";
       if (!normalized || !numeric || seen.has(normalized)) return;
+      if (!/^[1-9]\d(?:\.\d+)?$|^[1-9]\d{2}(?:\.\d+)?$/.test(numeric)) return;
+      if (Number(numeric) < 10) return;
+      if (clean(value) === "-" || clean(value) === "–" || clean(value) === "—") return;
       seen.add(normalized);
       measurements.push({ label: normalized, value: numeric });
     };
@@ -1043,7 +1142,9 @@ const scannerBootstrap = String.raw`
         let row = labelElement.parentElement;
         for (let depth = 0; row && depth < 4; depth += 1) {
           const label = clean(labelElement.innerText || labelElement.textContent);
-          const values = (clean(row.innerText || row.textContent).match(/\d{1,3}(?:[.,]\d+)?/g) || []);
+          const values = (clean(row.innerText || row.textContent).match(/\d{1,3}(?:[.,]\d+)?/g) || [])
+            .filter((item) => /^\d{2,3}(?:[.,]\d+)?$/.test(item));
+          if (clean(row.innerText || "").length > 120) { row = row.parentElement; continue; }
           if (values.length) { add(label, values[0]); break; }
           row = row.parentElement;
         }
@@ -1058,8 +1159,10 @@ const scannerBootstrap = String.raw`
     if (!scope) return null;
     const measurements = extractMeasurements(scope);
     if (!measurements.length) return null;
-    const selectedButton = findSizeButtons(document).find(selectedSizeButton);
-    const size = sizeLabelFromText(controlText(selectedButton)) || sizeLabelFromText(selected);
+    const selectedButton = findSizeButtons(document).find(selectedSizeButton) || null;
+    const size = sizeLabelFromText(controlText(selectedButton)) ||
+      sizeLabelFromText(selected) ||
+      sizeLabelFromText(controlText(findSizeButtons(document)[0]));
     if (!size) return null;
     const headers = ["Beden", ...measurements.map((item) => item.label)];
     const row = { cells: [size, ...measurements.map((item) => item.value)] };
@@ -1078,7 +1181,7 @@ const scannerBootstrap = String.raw`
     return extractMeasurements(panel).map((item) => item.label + ":" + item.value).join("|") || panelText(panel).slice(0, 1000);
   };
   const panelChart = async () => {
-    let panel = findMeasurePanel() || findSizePanel();
+    let panel = findMeasurePanel() || findSizePanel() || document.body;
     if (!panel) return null;
     const availableButtons = () => {
       const local = findSizeButtons(panel);
@@ -1095,6 +1198,8 @@ const scannerBootstrap = String.raw`
     const targets = labels;
     if (!targets.length) return null;
     for (const size of targets.slice(0, 10)) {
+      guideStage = "Beden " + size + " ölçüleri okunuyor";
+      progress(guideStage);
       panel = findMeasurePanel() || findSizePanel() || panel;
       const localButtons = findSizeButtons(panel);
       const button = (localButtons.length ? localButtons : findSizeButtons(document)).find((candidate) =>
@@ -1102,8 +1207,8 @@ const scannerBootstrap = String.raw`
       if (button) {
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || measureSignature() !== before, 1300, 55);
-        await waitForStable(() => measureSignature(), 1100, 120);
+        await waitFor(() => selectedSizeButton(button) || extractMeasurements(findMeasurePanel() || panel).length >= 2 || measureSignature() !== before, 3200, 70);
+        await waitForStable(() => measureSignature() || extractMeasurements(findMeasurePanel() || document.body).map((item) => item.value).join("|"), 1600, 120);
       }
       panel = findMeasurePanel() || findSizePanel() || panel;
       const measurements = extractMeasurements(panel);
@@ -1134,7 +1239,9 @@ const scannerBootstrap = String.raw`
     };
   };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
-    if (!visibleMeasurementsOnly) await openSizeGuide();
+    const openMeasurementSurface = () =>
+      metricLabelsVisible() && findSizeButtons(document).length >= 2;
+    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1162,8 +1269,30 @@ const scannerBootstrap = String.raw`
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
     let chart = null;
+    const safeChart = async (loader) => {
+      try {
+        return await loader();
+      } catch (error) {
+        recordDiagnostic("chart-extract", error);
+        return null;
+      }
+    };
+    const collectChart = async () => {
+      if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
+        const walked = await safeChart(() => panelChart());
+        if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
+      }
+      return firstVerifiedChart(
+        await safeChart(() => tableChart()),
+        await safeChart(() => visibleLayoutChart()),
+        await safeChart(() => visibleOpenChart()),
+        await safeChart(() => geometryChart()),
+        await safeChart(() => panelChart()),
+        await safeChart(() => visiblePanelChart())
+      );
+    };
     for (let attempt = 0; attempt < (visibleMeasurementsOnly ? 3 : 2) && !chart?.found; attempt += 1) {
-      chart = firstVerifiedChart(tableChart(), visibleLayoutChart(), visibleOpenChart(), geometryChart(), await panelChart(), visiblePanelChart());
+      chart = await collectChart();
       if (chart?.found) break;
       if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
@@ -1295,12 +1424,57 @@ const scannerBootstrap = String.raw`
       const text = safeText(current);
       if (text.length >= 8 && text.length <= 1800 &&
           /(XXS|XS|\bS\b|\bM\b|\bL\b|XL|\b2[4-9]\b|\b3\d\b|\b4\d\b|\b5[0-9]\b|beden|size)/i.test(text) &&
-          /(jean|pantolon|tişört|shirt|sweat|hoodie|ceket|mont|kaban|etek|elbise|kazak|hırka|ayakkabı|shoe|sneaker|fit)/i.test(text)) {
+          /(jean|pantolon|tişört|tisort|t-?shirt|shirt|sweat|hoodie|ceket|jacket|mont|kaban|coat|parka|etek|elbise|kazak|hırka|ayakkabı|shoe|sneaker|fit|şişme)/i.test(text)) {
         return current;
       }
       current = current.parentElement;
     }
     return start.closest("article, li, [role='listitem']") || start.parentElement;
+  };
+  const harvestOrdersFromPage = () => {
+    const clothing = /(jean|denim|pantolon|tişört|tisort|t-?shirt|shirt|gömlek|sweat|hoodie|kazak|hırka|ceket|jacket|mont|kaban|coat|parka|şort|etek|elbise|tulum|şişme|baggy|muscle|fit)/i;
+    const heading = /^(alışveriş|alisveris|sipariş|siparis|order|shopping)\s+(özeti|ozeti|summary)|^(toplam|ara toplam|kargo|teslim edildi|delivered|adet|beden|renk)$/i;
+    const sizeOk = (value) => /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)$/i.test(String(value || "")) || (/^\d{2}$/.test(String(value || "")) && Number(value) >= 24 && Number(value) <= 60);
+    const lines = String((document.body && (document.body.innerText || document.body.textContent)) || "").replace(/\u00a0/g, " ").split(/\n+/).map(clean).filter(Boolean);
+    const cards = [];
+    const used = {};
+    for (let index = 0; index < lines.length; index += 1) {
+      if (used[index]) continue;
+      const name = lines[index];
+      if (heading.test(name) || sizeOk(name) || /(özeti|ozeti|summary)$/i.test(name)) continue;
+      if (!clothing.test(name) && !(name.length >= 8 && name.split(" ").length >= 2 && !/(₺|\btl\b|\d+[.,]\d{2})/i.test(name))) continue;
+      const look = [];
+      let end = index;
+      for (let cursor = index + 1; cursor < lines.length && cursor <= index + 12; cursor += 1) {
+        const line = lines[cursor];
+        const nextProduct = !heading.test(line) && !sizeOk(line) && clothing.test(line) && !/(₺|\btl\b|\d+[.,]\d{2})/i.test(line);
+        if (nextProduct) break;
+        look.push(line);
+        end = cursor;
+      }
+      const blob = [name].concat(look).join(" · ");
+      const hasPrice = /(₺|\btl\b|\beur\b|€|\$|\d+[.,]\d{2})/i.test(blob);
+      const lineSize = look.find((line) => sizeOk(line)) || "";
+      const purchasedSize = lineSize || "";
+      if (!hasPrice || !purchasedSize) continue;
+      const clientKeySource = [name, purchasedSize].join("|").toUpperCase();
+      let clientHash = 2166136261;
+      for (let i = 0; i < clientKeySource.length; i += 1) { clientHash ^= clientKeySource.charCodeAt(i); clientHash = Math.imul(clientHash, 16777619); }
+      cards.push({
+        clientKey: "order-" + (clientHash >>> 0).toString(16),
+        orderReference: "",
+        text: blob.slice(0, 4000),
+        brand: clean(meta("og:site_name") || location.hostname.replace(/^www\./, "").split(".")[0]).slice(0, 100),
+        productName: name.slice(0, 240),
+        purchasedSize: String(purchasedSize).toUpperCase().slice(0, 30),
+        productLinks: [],
+        imageAlt: "",
+        imageUrl: "",
+        images: []
+      });
+      for (let mark = index; mark <= end; mark += 1) used[mark] = true;
+    }
+    return cards;
   };
   const scrapeOrders = async () => {
     const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
@@ -1325,7 +1499,7 @@ const scannerBootstrap = String.raw`
     };
     const zaraOrderScanner = () => all("[data-qa-qualifier*='order' i] [data-qa-qualifier*='product' i], [class*='order-detail' i] [class*='product' i], [class*='purchase' i] [class*='product' i]");
     const bershkaOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-item' i]");
-    const pullAndBearOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-product' i], [class*='order-item' i]");
+    const pullAndBearOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-product' i], [class*='order-item' i], [class*='checkout' i] [class*='product' i], [class*='summary' i] [class*='product' i], [class*='line-item' i], [data-qa-qualifier*='product' i]");
     await loadAllOrderHistory();
     const orderImageUrl = (image) => {
       const candidates = [
@@ -1354,7 +1528,7 @@ const scannerBootstrap = String.raw`
     const candidates = adapterCandidates;
     for (const image of all("main img, img")) {
       const rect = image.getBoundingClientRect();
-      if (rect.width < 55 || rect.height < 65) continue;
+      if (rect.width < 36 || rect.height < 40) continue;
       const container = closestProductContainer(image);
       if (container && !candidates.includes(container)) candidates.push(container);
     }
@@ -1374,7 +1548,7 @@ const scannerBootstrap = String.raw`
         if (!candidates.includes(element)) candidates.push(element);
       }
     }
-    const orderCards = candidates.map((element) => {
+    let orderCards = candidates.map((element) => {
       const text = safeText(element);
       const links = [...element.querySelectorAll("a[href]")]
         .map((link) => absoluteUrl(link.href))
@@ -1427,9 +1601,25 @@ const scannerBootstrap = String.raw`
       card.text.length >= 8 &&
       (card.productName || card.purchasedSize || card.images.length)
     ).filter((card, index, cards) => cards.findIndex((candidate) => candidate.clientKey === card.clientKey) === index).slice(0, 300);
+    const harvested = harvestOrdersFromPage();
+    const completeHarvest = harvested.filter((card) => card.productName && card.purchasedSize);
+    const completeDom = orderCards.filter((card) => card.productName && card.purchasedSize);
+    if (completeHarvest.length >= 2 && completeHarvest.length >= completeDom.length) {
+      orderCards = completeHarvest;
+    } else {
+      const seen = {};
+      for (const card of orderCards) seen[(card.productName || "").toLowerCase() + "|" + (card.purchasedSize || "")] = true;
+      for (const card of completeHarvest) {
+        const key = (card.productName || "").toLowerCase() + "|" + (card.purchasedSize || "");
+        if (!seen[key]) {
+          seen[key] = true;
+          orderCards.push(card);
+        }
+      }
+    }
     if (!orderCards.length) {
       throw new Error(
-        "Görünür sipariş ürünü bulunamadı. Sipariş ayrıntısını açıp ürün görseli ve bedeni ekranda tutun."
+        "Görünür sipariş ürünü bulunamadı. Siparişlerim, sipariş detayı veya alışveriş özeti sayfasını açın; ürün adı, beden ve fiyat görünsün."
       );
     }
     postOrderProgress("Bulunan: " + orderCards.length + " ürün");

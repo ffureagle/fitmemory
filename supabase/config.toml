@@ -1,0 +1,12 @@
+project_id = "wouetdktjqvusvsxgsyk"
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+major_version = 15
+
+[functions.api]
+verify_jwt = false

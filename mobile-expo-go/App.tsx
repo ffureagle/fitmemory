@@ -2,11 +2,9 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
-  ActivityIndicator,
   Animated,
   AppState,
   Easing,
-  Image,
   Platform,
   Pressable,
   StatusBar as NativeStatusBar,
@@ -19,6 +17,7 @@ import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ScanScreen } from "./src/screens/ScanScreen";
 import { StudioScreen } from "./src/screens/StudioScreen";
 import { Brand, ScreenLoader } from "./src/components/Ui";
+import { IntroSplash } from "./src/components/IntroSplash";
 import { SessionProvider, useSession } from "./src/session";
 import { colors } from "./src/theme";
 import { FeedbackProvider, useFeedback } from "./src/feedback";
@@ -182,34 +181,18 @@ function Application() {
   const session = useSession();
   const { ready, hasChosenLanguage } = useI18n();
   const [introVisible, setIntroVisible] = useState(true);
-  const introProgress = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (!ready || !hasChosenLanguage || !session.ready) return;
-    Animated.sequence([
-      Animated.delay(520),
-      Animated.timing(introProgress, { duration: 220, toValue: 0, useNativeDriver: true }),
-    ]).start(() => setIntroVisible(false));
-  }, [hasChosenLanguage, introProgress, ready, session.ready]);
   if (!ready) {
     return <ScreenLoader label="Hazırlanıyor" />;
   }
   if (!hasChosenLanguage) {
     return <LanguageScreen />;
   }
-  if (introVisible || !session.ready) {
+  if (introVisible) {
     return (
-      <View style={styles.introSplash}>
-        <Animated.View style={[styles.introContent, { opacity: session.ready ? introProgress : 1, transform: [{ scale: session.ready ? introProgress.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) : 1 }] }]}>
-          <Image resizeMode="contain" source={require("./assets/fitmemory-logo.png")} style={styles.introLogo} />
-          <Text style={styles.introSplashCopy}>KALIBIN. DOLABIN. SENİN VERİN.</Text>
-          {!session.ready ? (
-            <View style={styles.introLoading}>
-              <ActivityIndicator color="#FFFFFF" size="small" />
-              <Text style={styles.introLoadingCopy}>Dolabın açılıyor</Text>
-            </View>
-          ) : null}
-        </Animated.View>
-      </View>
+      <IntroSplash
+        sessionReady={session.ready}
+        onFinished={() => setIntroVisible(false)}
+      />
     );
   }
   return session.account && session.token ? <Shell /> : <AuthScreen />;
@@ -229,41 +212,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  introSplash: {
-    alignItems: "center",
-    backgroundColor: "#000000",
-    flex: 1,
-    justifyContent: "center",
-  },
-  introContent: {
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-  },
-  introLogo: {
-    height: 260,
-    maxWidth: 420,
-    width: "84%",
-  },
-  introSplashCopy: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1.4,
-    marginTop: -20,
-    textAlign: "center",
-  },
-  introLoading: {
-    alignItems: "center",
-    gap: 12,
-    marginTop: 30,
-  },
-  introLoadingCopy: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-  },
   shell: {
     backgroundColor: colors.paper,
     flex: 1,

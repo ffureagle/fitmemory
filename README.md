@@ -16,16 +16,31 @@ Proje üç istemci/servis katmanından oluşur:
 AI anahtarları uzantıya veya mobil uygulamaya gömülmez. Yalnızca backend
 ortam değişkenlerinde tutulur.
 
+Yerel ölçü motoru ilk taslağı üretir. AI son denetleyicidir: ürünün kalıp,
+dikiş, kesim ve FitLabel etiketlerini taslakla birlikte tartıp nihai bedeni
+seçer. Aynı kesimde daha önce alınan beden ("M almıştı, şöyle olmuştu")
+AI'ya destek olarak gider; bedeni kilitlemez. Kombin yorumu ikincildir.
+Fiziksel olarak imkânsız bir beden, güvenilirlik için AI tahmininin üstünde
+tutulur.
+
+Üretim API: `https://fitmemory-api.onrender.com` (Docker, `backend/Dockerfile`).
+Render, GitHub `ffureagle/fitmemory` `main` dalına bakıyorsa bu ağaçtaki
+düzeltmelerin oraya push edilmesi gerekir. Node `api/` klasörü Render'a
+bağlanmamalıdır.
+
 ## Klasörler
 
 ```text
 fitmemory/
-├── backend/                  ASP.NET Core API
-├── extension/                Chrome Manifest V3 uzantısı
+├── backend/                  ASP.NET Core API (üretim)
+├── backend.tests/            .NET testleri
+├── extension/                Chrome Manifest V3 uzantısı (1.25.8)
 ├── mobile/                   Expo React Native uygulaması
+├── mobile-expo-go/           Expo Go istemcisi (1.25.13)
 ├── migration/
 │   └── FitMemory.Migrate/    SQLite → PostgreSQL taşıma aracı
 ├── deploy/                   Docker Compose, PostgreSQL, Caddy ve yedekleme
+├── demo/                     Yerel tarama ve Expo Go deneme sayfaları
 ├── Directory.Build.props
 └── FitMemory.sln
 ```
@@ -34,39 +49,45 @@ fitmemory/
 
 Gereksinim: .NET 10 SDK.
 
-```powershell
-dotnet user-secrets set "Gemini:ApiKey" "KENDI_ANAHTARINIZ" --project .\backend\FitMemory.Api.csproj
-dotnet run --project .\backend\FitMemory.Api.csproj --launch-profile http
+```bash
+dotnet user-secrets set "Gemini:ApiKey" "KENDI_ANAHTARINIZ" --project backend/FitMemory.Api.csproj
+dotnet run --project backend/FitMemory.Api.csproj --urls http://0.0.0.0:43123
 ```
 
-API `http://localhost:5158`, sağlık kontrolü
-`http://localhost:5158/health` adresindedir. Yerel veriler
+API `http://localhost:43123`, sağlık kontrolü
+`http://localhost:43123/health` adresindedir. Yerel veriler
 `backend/fitmemory.db` dosyasına yazılır.
 
 Telefonun aynı Wi-Fi ağından yerel API'ye ulaşması için backend'i bütün ağ
-arayüzlerinde başlatın:
-
-```powershell
-dotnet run --project .\backend\FitMemory.Api.csproj --urls http://0.0.0.0:5158
-```
-
-Windows Güvenlik Duvarı yalnızca özel ağ için izin istemelidir. Mobil Profil
-ekranındaki API adresini bilgisayarın yerel IP'siyle girin:
-`http://192.168.x.x:5158`. Android emülatörü için varsayılan adres
-`http://10.0.2.2:5158`, iOS simülatörü için `http://localhost:5158` olur.
+arayüzlerinde başlatın (`0.0.0.0`). Mobil Profil ekranındaki API adresini
+bilgisayarın yerel IP'siyle girin: `http://192.168.x.x:43123`. Android
+emülatörü için varsayılan adres `http://10.0.2.2:43123`, iOS simülatörü
+için `http://localhost:43123` olur.
 
 ## Chrome uzantısı
+
+Chrome uzantısı hesap, profil ve yerel beden taslağını cihazda tutabilir.
+Mobil ve AI denetimi üretimde Render'daki .NET API'yi kullanır.
 
 1. Chrome'da `chrome://extensions` sayfasını açın.
 2. **Geliştirici modu**nu açın.
 3. **Paketlenmemiş öğe yükle** ile `extension` klasörünü seçin.
-4. FitMemory simgesini sabitleyin.
-5. Profil ekranındaki API adresini yerel veya üretim API adresi yapın.
+4. Yüklüyse karttaki **dairesel yenile**ye basın. **Kaldır** demeyin; Kaldır
+   hesabı ve dolabı siler. Yeni zip’i her zaman **aynı klasörün** üzerine çıkarın.
+5. FitMemory simgesini sabitleyin, hesap oluşturun ve profilini kaydedin.
+   Oturum bu Chrome profilinde kalır; her açılışta yeniden giriş istenmez.
+6. Bir ürün sayfasını açık tutun; yan panel **o sekmedeki** görünür beden
+   tablosunu okur. Yapıştırma yoktur. Okumayı denemek için `demo/tee.html`
+   dosyasını yerel bir HTTP sunucusunda açın, uzantıyı yeniden yükleyin ve
+   ürün sekmesine geçin.
+7. **Tara** için `Siparişlerim`, sipariş detayı veya **Alışveriş özeti** sayfasını
+   açık tutun, profiliniz kayıtlı olsun, sonra yan panelde Tara’ya basın. Sürüm
+   **1.25.8** olmalıdır.
 
 Uzantının derlenmiş CSS'i hazırdır. CSS'i yeniden üretmek için:
 
-```powershell
-cd .\extension
+```bash
+cd extension
 pnpm install
 pnpm run build
 ```
@@ -75,31 +96,37 @@ pnpm run build
 
 Gereksinim: Node.js 22.13 veya daha yeni, pnpm ve Android Studio ya da Xcode.
 
-```powershell
-cd .\mobile
+Kullandığınız istemci Expo Go ise `mobile-expo-go` (sürüm **1.25.13**):
+
+```bash
+cd mobile-expo-go
 pnpm install
-pnpm start
+EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com pnpm start
 ```
 
-Ardından terminalde:
+Ardından Expo Go SDK 54 ile QR kodu okutun. Uygulamadan Zara / Bershka /
+Pull&Bear'a girin ve ürün sayfasında Tara'ya basın. Ölçü tablosunu elle
+açmanız gerekmez. Profil **Mobil · 1.25.13** görünmelidir.
 
-- Android emülatörü için `a`
-- iOS simülatörü için `i` (yalnızca macOS)
-- Fiziksel cihaz için ekrandaki QR kod
+Mağaza oturumu WebView içinde kalır. Mağaza şifresi ve çerezleri FitMemory
+API'ye gönderilmez. Ürün taraması ölçü panelini kendisi açar. Markanın göğüs
+**çevresi** tablosu ile ürünün göğüs **eni** tablosu ayrı türlerdir; motor
+ikisini birbirine çevirir.
 
-Mobil uygulamadaki mağaza oturumu WebView içinde kalır. Mağaza şifresi ve
-çerezleri FitMemory API'ye gönderilmez. Sipariş aktarımında e-posta, telefon,
-adres, ödeme ve sipariş numarası alanları ekran görüntüsünden önce karartılır;
-DOM metni ayrıca cihazda ayıklanır. FitMemory erişim anahtarı cihazın şifreli
-SecureStore alanında tutulur.
-
-Ayrıntılar: [mobile/README.md](mobile/README.md)
+Ayrıntılar: [mobile/README.md](mobile/README.md),
+[mobile-expo-go/README.md](mobile-expo-go/README.md)
 
 ## Üretim sunucusu
 
-Gereksinim: Linux sunucu, Docker Engine, Docker Compose ve DNS yönetimi.
-Bu kurulumun üretim API adresi
-`https://api.mfurkangokbag.com.tr` olarak sabitlenmiştir.
+Render web servisi **fitmemory-api**, runtime **Docker**, dosya
+`./backend/Dockerfile` (resmi `aspnet:10.0` imajı). Playwright taban imajına
+.NET 10 bindirmeyin; Render bunu status 139 ile düşürür. Node `api/` dizinine
+geçmeyin.
+
+Ücretsiz Render örneği uykuya yatar; ilk istek 50 saniyeden uzun sürebilir.
+Kalıcı çözüm plan yükseltmektir. İstemciler önce `/health` ile uyandırır.
+
+Kendi Linux sunucunuz için:
 
 ```bash
 cd deploy
@@ -108,62 +135,29 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Caddy, `API_DOMAIN` için TLS sertifikasını otomatik alır ve yalnızca HTTPS
-üzerinden API'yi yayınlar. PostgreSQL doğrudan internete port açmaz.
-
-Ayrıntılar ve geçiş sırası: [deploy/README.md](deploy/README.md)
+Ayrıntılar: [deploy/README.md](deploy/README.md)
 
 ## Yerel dolabı PostgreSQL'e taşıma
 
-Önce `backend/fitmemory.db` dosyasının ayrıca bir kopyasını alın. Üretim
-sunucusundaki `deploy` klasöründe:
+Önce `backend/fitmemory.db` dosyasının ayrıca bir kopyasını alın.
 
 ```bash
-docker compose up -d postgres
-docker compose --profile tools run --rm migrate
-docker compose up -d api caddy
-```
-
-Taşıma aracı hedef PostgreSQL boş değilse işlemi durdurur. Hedefi bilinçli
-olarak tamamen değiştirmeniz gerekiyorsa komuta `--replace` ekleyin.
-
-Yerel makineden doğrudan çalıştırmak da mümkündür:
-
-```powershell
-dotnet run --project .\migration\FitMemory.Migrate -- `
-  --sqlite .\backend\fitmemory.db `
+dotnet run --project migration/FitMemory.Migrate -- \
+  --sqlite backend/fitmemory.db \
   --postgres "Host=SUNUCU;Database=fitmemory;Username=fitmemory;Password=PAROLA"
 ```
 
-Hesaplar, parola özetleri, profiller, aktif oturumlar, dolap parçaları, uyum
-notları, öneri geçmişi ve Stüdyo parçaları birlikte taşınır. Açık metin parola
-taşınmaz; sistem zaten parola özeti saklar.
-
-## Yedekleme
-
-Linux sunucuda:
-
-```bash
-cd deploy
-chmod +x backup.sh
-./backup.sh
-```
-
-Yedekler `deploy/backups` altında sıkıştırılmış PostgreSQL dökümü olarak
-oluşur, bütünlüğü `gzip -t` ile doğrulanır ve varsayılan olarak 30 gün tutulur.
-Günlük çalıştırmak için sunucunun cron/systemd zamanlayıcısına eklenmelidir.
-
 ## Doğrulama
 
-```powershell
-dotnet build .\FitMemory.sln --configuration Release
-
-cd .\mobile
-pnpm typecheck
-
-node --check ..\extension\background.js
-node --check ..\extension\content.js
-node --check ..\extension\popup.js
+```bash
+dotnet test backend.tests/FitMemory.Api.Tests.csproj --configuration Release
+node scripts/test-local-fit.mjs
+node scripts/test-pants-fit.mjs
+node scripts/test-render-runtime.mjs
+node scripts/smoke-api.mjs
+node --check extension/background.js
+node --check extension/content.js
+node --check extension/popup.js
 ```
 
 ## Güvenlik sınırları
@@ -173,8 +167,4 @@ node --check ..\extension\popup.js
 - Parolalar ASP.NET Core `PasswordHasher` ile özetlenir.
 - Oturum anahtarının yalnızca SHA-256 özeti veritabanında tutulur.
 - API anahtarları yalnızca backend ortamında bulunur.
-- Üretimde PostgreSQL ve API container ağı içinde kalır; dışarı Caddy'nin
-  80/443 portları açılır.
 - `.env`, veritabanları, yedekler, loglar ve `node_modules` Git'e alınmaz.
-- Genel internete açılmadan önce e-posta doğrulama, şifre sıfırlama, merkezi
-  log/izleme ve harici yedek hedefi eklenmelidir.

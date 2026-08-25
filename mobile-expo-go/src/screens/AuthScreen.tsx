@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -14,7 +14,7 @@ import { colors } from "../theme";
 import { LanguageSwitch, Text } from "../i18n";
 
 export function AuthScreen() {
-  const { api, busy, login, register } = useSession();
+  const { api, busy, lastEmail, login, register } = useSession();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -30,6 +30,12 @@ export function AuthScreen() {
   const [resetPasswordAgain, setResetPasswordAgain] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
+
+  useEffect(() => {
+    if (lastEmail) {
+      setLoginEmail((current) => current || lastEmail);
+    }
+  }, [lastEmail]);
 
   const sendResetCode = async () => {
     setError("");
@@ -238,8 +244,9 @@ export function AuthScreen() {
           </View>
         </View>
         <Text style={styles.privacy}>
-          Oturum anahtarın cihazın güvenli kasasında tutulur. Mağaza şifrelerin
-          FitMemory sunucusuna gönderilmez.
+          Oturum bu telefonda açık kalır. Anahtar cihazın güvenli kasasında
+          tutulur; şifre saklanmaz. Mağaza şifrelerin FitMemory sunucusuna
+          gönderilmez.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

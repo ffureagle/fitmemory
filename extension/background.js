@@ -1,23 +1,31 @@
-const DEFAULT_API_BASE_URL = "https://fitmemory-api.onrender.com";
+import { localApiFetch } from "./local-backend.js";
+
+const DEFAULT_API_BASE_URL = "http://localhost:8788";
+const SUPABASE_PROJECT_HOST = "wouetdktjqvusvsxgsyk.supabase.co";
 const IDENTITY_KEY = "fitMemoryUserId";
 const SETTINGS_KEY = "fitMemorySettings";
 const AUTH_KEY = "fitMemoryAuth";
+const LAST_EMAIL_KEY = "fitMemoryLastEmail";
 const TARGET_TAB_KEY = "fitMemoryTargetTabId";
 const tabStateQueues = new Map();
 
 chrome.runtime.onInstalled.addListener(async () => {
-  await chrome.storage.session.clear();
-  await getLegacyIdentity();
-  const { [SETTINGS_KEY]: existing } = await chrome.storage.local.get(SETTINGS_KEY);
-  await chrome.storage.local.set({
-    [SETTINGS_KEY]: {
-      ...existing,
-      apiBaseUrl: DEFAULT_API_BASE_URL,
-      autoAnalyze: existing?.autoAnalyze ?? true
-    }
-  });
-  await configureSidePanel();
-  await clearLegacyPageCards();
+  try {
+    await chrome.storage.session.clear();
+    await getLegacyIdentity();
+    const { [SETTINGS_KEY]: existing } = await chrome.storage.local.get(SETTINGS_KEY);
+    await chrome.storage.local.set({
+      [SETTINGS_KEY]: {
+        ...existing,
+        apiBaseUrl: DEFAULT_API_BASE_URL,
+        autoAnalyze: existing?.autoAnalyze ?? true
+      }
+    });
+    await configureSidePanel();
+    await clearLegacyPageCards();
+  } catch (error) {
+    console.error("FitMemory kurulum hatası", error);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -100,7 +108,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handlePopupMessage(message) {
   switch (message?.type) {
     case "GET_BOOTSTRAP":
-      return getBootstrap();
+      return getBootstrap(message.payload?.tabId);
+    case "SET_TARGET_TAB":
+      return setTargetTab(message.payload?.tabId);
     case "GET_FIT_PROGRESS": {
       const userId = await getIdentity();
       return apiFetch(
@@ -113,16 +123,17 @@ async function handlePopupMessage(message) {
     case "LOGOUT_ACCOUNT":
       return logoutAccount();
     case "GET_ACTIVE_PRODUCT_STATE":
-      return getActiveProductState();
+      return getActiveProductState(message.payload?.tabId);
     case "RESCAN_ACTIVE_TAB":
-      return rescanActiveTab();
+      return rescanActiveTab(message.payload?.tabId);
     case "ANALYZE_CURRENT_PRODUCT":
       return analyzeActiveProduct(
         false,
         message.payload?.userAdjustmentNote,
-        message.payload?.isReconsideration === true);
+        message.payload?.isReconsideration === true,
+        message.payload?.tabId);
     case "SAVE_CURRENT_PRODUCT_TO_STYLE_BOARD":
-      return saveCurrentProductToStyleBoard();
+      return saveCurrentProductToStyleBoard(message.payload?.tabId);
     case "DELETE_STYLE_BOARD_ITEM":
       return deleteStyleBoardItem(message.payload?.id);
     case "SELECT_STYLE_BOARD_ITEM":
@@ -132,7 +143,7 @@ async function handlePopupMessage(message) {
     case "ANALYZE_STYLE_BOARD":
       return analyzeStyleBoard();
     case "SCAN_ORDER_HISTORY":
-      return scanOrderHistory();
+      return scanOrderHistory(message.payload?.tabId);
     case "SAVE_PROFILE":
       return saveProfile(message.payload);
     case "SAVE_ORDER":
@@ -149,11 +160,12 @@ async function handlePopupMessage(message) {
   }
 }
 
-async function getBootstrap() {
+async function getBootstrap(preferredTabId) {
+  await enforceProductionApiUrl();
   const [legacyUserId, settings, activeTab, storedAuth] = await Promise.all([
     getLegacyIdentity(),
     getSettings(),
-    getActiveTab(),
+    getActiveTab(preferredTabId),
     getAuth()
   ]);
 
@@ -162,11 +174,15 @@ async function getBootstrap() {
   let snapshotIdentity = null;
   let recommendationIdentity = null;
   if (activeTab?.id !== undefined) {
-    snapshot = await getFreshSnapshot(activeTab.id);
-    const productState = await getRecommendationForSnapshot(activeTab.id, snapshot);
-    recommendation = productState.recommendation;
-    snapshotIdentity = productState.snapshotIdentity;
-    recommendationIdentity = productState.recommendationIdentity;
+    try {
+      snapshot = await getFreshSnapshot(activeTab.id);
+      const productState = await getRecommendationForSnapshot(activeTab.id, snapshot);
+      recommendation = productState.recommendation;
+      snapshotIdentity = productState.snapshotIdentity;
+      recommendationIdentity = productState.recommendationIdentity;
+    } catch (error) {
+      console.info("FitMemory sayfa taraması atlandı.", error);
+    }
   }
 
   let apiHealthy = false;
@@ -177,17 +193,54 @@ async function getBootstrap() {
   let apiError = null;
   let auth = storedAuth;
   let account = storedAuth?.account ?? null;
+  let sessionVerified = false;
 
   try {
     await apiFetch("/health", { anonymous: true });
     apiHealthy = true;
-    if (auth?.accessToken) {
-      account = await apiFetch("/api/auth/me");
-      auth = {
-        ...auth,
-        account
-      };
-      await chrome.storage.local.set({ [AUTH_KEY]: auth });
+    if (auth?.accessToken || auth?.account?.userId || auth?.account?.email) {
+      try {
+        account = await apiFetch("/api/auth/me", { keepAuthOn401: true });
+        auth = {
+          ...auth,
+          account
+        };
+        await chrome.storage.local.set({ [AUTH_KEY]: auth });
+        sessionVerified = Boolean(auth?.accessToken && account);
+      } catch {
+        try {
+          const restored = await restoreLocalSession(auth);
+          auth = {
+            accessToken: restored.accessToken,
+            expiresAt: restored.expiresAt,
+            account: restored.account
+          };
+          account = restored.account;
+          sessionVerified = Boolean(auth?.accessToken && account);
+        } catch {
+          account = auth?.account ?? null;
+          if (!account) {
+            await chrome.storage.local.remove(AUTH_KEY);
+            auth = null;
+          }
+        }
+      }
+    }
+    if (!sessionVerified) {
+      try {
+        const restored = await restoreLocalSession(auth || {});
+        auth = {
+          accessToken: restored.accessToken,
+          expiresAt: restored.expiresAt,
+          account: restored.account
+        };
+        account = restored.account;
+        sessionVerified = Boolean(auth?.accessToken && account);
+      } catch {
+        // Yerelde hesap yoksa giriş ekranı açılır; e-posta hatırlanır.
+      }
+    }
+    if (sessionVerified && auth?.accessToken && account) {
       profile = await apiFetch(
         `/api/profiles/${encodeURIComponent(account.userId)}`,
         { allowNotFound: true });
@@ -206,13 +259,16 @@ async function getBootstrap() {
     apiError = normalizeError(error);
     auth = await getAuth();
     account = auth?.account ?? null;
+    sessionVerified = Boolean(auth?.accessToken && account);
+    apiHealthy = true;
   }
 
   return {
     userId: account?.userId ?? null,
     legacyUserId,
     account,
-    authenticated: Boolean(auth?.accessToken && account),
+    lastEmail: (await getLastEmail()) || String(account?.email || "").trim(),
+    authenticated: Boolean(sessionVerified && auth?.accessToken && account),
     settings,
     apiHealthy,
     apiError,
@@ -257,7 +313,7 @@ async function registerAccount(payload) {
     }
   });
   await storeAuth(session);
-  const bootstrap = await getBootstrap();
+  const bootstrap = await getBootstrap(payload?.tabId);
   return {
     ...bootstrap,
     migratedLegacyData: session.migratedLegacyData === true
@@ -280,48 +336,52 @@ async function loginAccount(payload) {
     }
   });
   await storeAuth(session);
-  return getBootstrap();
+  return getBootstrap(payload?.tabId);
 }
 
 async function logoutAccount() {
   try {
     const auth = await getAuth();
+    const email = String(auth?.account?.email || "").trim().toLowerCase();
+    if (email) {
+      await chrome.storage.local.set({ [LAST_EMAIL_KEY]: email });
+    }
     if (auth?.accessToken) {
       await apiFetch("/api/auth/logout", {
         method: "POST",
-        expectNoContent: true
+        expectNoContent: true,
+        keepAuthOn401: true
       });
     }
   } finally {
     await chrome.storage.local.remove(AUTH_KEY);
-    await chrome.storage.session.clear();
     await chrome.action.setBadgeText({ text: "" });
   }
   return getBootstrap();
 }
 
 async function storeAuth(session) {
-  if (
-    !session?.accessToken ||
-    !session?.expiresAt ||
-    !session?.account?.userId
-  ) {
+  if (!session?.accessToken || !session?.account?.userId) {
     throw new Error("FitMemory güvenli oturumu oluşturulamadı.");
   }
 
-  await chrome.storage.local.set({
+  const email = String(session.account.email || "").trim().toLowerCase();
+  const payload = {
     [AUTH_KEY]: {
       accessToken: session.accessToken,
-      expiresAt: session.expiresAt,
+      expiresAt: session.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       account: session.account
     }
-  });
-  await chrome.storage.session.clear();
+  };
+  if (email) {
+    payload[LAST_EMAIL_KEY] = email;
+  }
+  await chrome.storage.local.set(payload);
   await chrome.action.setBadgeText({ text: "" });
 }
 
-async function getActiveProductState() {
-  const activeTab = await getActiveTab();
+async function getActiveProductState(preferredTabId) {
+  const activeTab = await getActiveTab(preferredTabId);
   if (activeTab?.id === undefined) {
     return {
       activeTabId: null,
@@ -393,8 +453,8 @@ async function saveProfile(payload) {
   };
 }
 
-async function saveCurrentProductToStyleBoard() {
-  const tab = await getActiveTab();
+async function saveCurrentProductToStyleBoard(preferredTabId) {
+  const tab = await getActiveTab(preferredTabId);
   if (tab?.id === undefined) {
     throw new Error("Kombine ayrılacak aktif ürün sekmesi bulunamadı.");
   }
@@ -506,8 +566,8 @@ async function saveOrder(payload) {
   };
 }
 
-async function scanOrderHistory() {
-  const tab = await getActiveTab();
+async function scanOrderHistory(preferredTabId) {
+  const tab = await getActiveTab(preferredTabId);
   if (tab?.id === undefined || tab.windowId === undefined) {
     throw new Error("Taranacak aktif sekme bulunamadı.");
   }
@@ -515,33 +575,49 @@ async function scanOrderHistory() {
     throw new Error("Sipariş geçmişini normal bir HTTP veya HTTPS sayfasında açın.");
   }
 
-  const response = await sendContentMessageWithRecovery(
-    tab.id,
-    { type: "SCAN_FITMEMORY_ORDERS_V120" },
-    (candidate) => Boolean(candidate?.history),
-    "sipariş geçmişi"
-  );
+  const frameIds = await listTabFrameIds(tab.id);
+  const histories = [];
+  for (const frameId of frameIds) {
+    try {
+      const response = await sendContentMessageToFrame(
+        tab.id,
+        frameId,
+        { type: "SCAN_FITMEMORY_ORDERS_V120" },
+        (candidate) => Boolean(candidate?.history)
+      );
+      if (response?.history) {
+        histories.push(response.history);
+      }
+    } catch (error) {
+      console.info("FitMemory sipariş taraması bir çerçeveyi atladı.", frameId, error);
+    }
+  }
 
-  const history = response?.history;
+  const history = mergeOrderHistories(histories, tab.url || "");
   if (!history?.orderCards?.length) {
     throw new Error(
-      "Görünür sipariş kartı bulunamadı. Siparişlerim sayfasını açın, en az bir sipariş kartını ekrana kaydırın ve yeniden deneyin."
+      "Görünür sipariş ürünü bulunamadı. Siparişlerim, sipariş detayı veya alışveriş özeti sayfasını açın; ürün adı, beden ve fiyat görünsün, sonra Tara’ya basın."
     );
   }
-  if (!history.cropRect || history.cropRect.width < 20 || history.cropRect.height < 20) {
-    throw new Error("Ekranda kırpılabilecek bir sipariş kartı yok. Ürün kartlarını görünür alana kaydırın.");
+
+  let screenshotDataUrl = "";
+  try {
+    const screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format: "jpeg",
+      quality: 82
+    });
+    if (history.cropRect && history.cropRect.width >= 20 && history.cropRect.height >= 20) {
+      screenshotDataUrl = await cropScreenshot(
+        screenshot,
+        history.cropRect,
+        history.viewport,
+        history.redactionRects || []
+      );
+    }
+  } catch (error) {
+    console.info("FitMemory ekran görüntüsü alınamadı; sipariş kartları sayfadan okunacak.", error);
   }
 
-  const screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: "jpeg",
-    quality: 82
-  });
-  const screenshotDataUrl = await cropScreenshot(
-    screenshot,
-    history.cropRect,
-    history.viewport,
-    history.redactionRects || []
-  );
   const userId = await getIdentity();
   const productPageResearch = await researchOfficialProductPages(
     history.orderCards,
@@ -561,6 +637,40 @@ async function scanOrderHistory() {
       screenshotDataUrl
     }
   });
+}
+
+function mergeOrderHistories(histories, tabUrl) {
+  const usable = histories.filter((history) => Array.isArray(history?.orderCards));
+  if (!usable.length) {
+    return null;
+  }
+
+  const keyOf = (card) =>
+    `${String(card.productName || "").trim().toLocaleLowerCase("tr")}|${String(card.purchasedSize || "").trim().toUpperCase()}|${String(card.text || "").slice(0, 48)}`;
+  const cards = [];
+  const seen = new Set();
+  let best = usable[0];
+  for (const history of usable) {
+    if ((history.orderCards?.length || 0) > (best.orderCards?.length || 0)) {
+      best = history;
+    }
+    for (const card of history.orderCards || []) {
+      const key = keyOf(card);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      cards.push(card);
+    }
+  }
+
+  return {
+    ...best,
+    pageUrl: (best.pageUrl || tabUrl || "").slice(0, 1_000),
+    orderCards: cards.slice(0, 25),
+    sanitizedText: cards.map((card, index) =>
+      `KART ${index + 1}: ${card.text || ""}`).join("\n\n").slice(0, 30_000)
+  };
 }
 
 async function researchOfficialProductPages(orderCards, orderPageUrl) {
@@ -766,39 +876,52 @@ async function setOrderFeedback(payload) {
 }
 
 async function setApiBaseUrl(value) {
-  if (!value || typeof value !== "string") {
-    throw new Error("Geçerli bir API adresi girin.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("Geçerli bir API adresi girin.");
-  }
-
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error("API adresi HTTP veya HTTPS kullanmalıdır.");
-  }
-
   const settings = await getSettings();
-  settings.apiBaseUrl = DEFAULT_API_BASE_URL;
+  settings.apiBaseUrl = resolveApiBaseUrl(value) || DEFAULT_API_BASE_URL;
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
   return settings;
 }
 
 async function receivePageSnapshot(tabId, snapshot, senderUrl = "") {
+  if (!snapshot || typeof snapshot !== "object") {
+    return;
+  }
+
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return;
+  }
+
+  const found = Boolean(snapshot.sizeChart?.found);
+  const matchesTab = snapshotMatchesTabUrl(snapshot, tab?.url);
+  const matchesSender = snapshotMatchesTabUrl(snapshot, senderUrl);
+  if (!found && !matchesTab && !matchesSender) {
+    return;
+  }
+
+  const stored = await chrome.storage.session.get(snapshotKey(tabId));
+  const existing = stored[snapshotKey(tabId)] ?? null;
+  if (existing?.sizeChart?.found && !found) {
+    return;
+  }
   if (
-    !snapshot ||
-    typeof snapshot !== "object" ||
-    !snapshotMatchesTabUrl(snapshot, senderUrl)
+    existing?.sizeChart?.found &&
+    sizeChartRowCount(existing.sizeChart) > 0 &&
+    snapshot.sizeChart?.requiresInteraction &&
+    sizeChartRowCount(snapshot.sizeChart) === 0
   ) {
     return;
   }
 
-  await commitPageSnapshot(tabId, snapshot);
-  if (snapshot.sizeChart?.found && !snapshot.sizeChart.requiresInteraction) {
-    await maybeAutoAnalyze(tabId, snapshot);
+  const aligned = found && !matchesTab
+    ? alignSnapshotToTab(snapshot, tab)
+    : snapshot;
+
+  await commitPageSnapshot(tabId, aligned);
+  if (aligned.sizeChart?.found && !aligned.sizeChart.requiresInteraction) {
+    await maybeAutoAnalyze(tabId, aligned);
   }
 }
 
@@ -897,8 +1020,9 @@ async function maybeAutoAnalyze(tabId, snapshot) {
 async function analyzeActiveProduct(
   forceRescan,
   userAdjustmentNote = "",
-  isReconsideration = false) {
-  const tab = await getActiveTab();
+  isReconsideration = false,
+  preferredTabId) {
+  const tab = await getActiveTab(preferredTabId);
   if (tab?.id === undefined) {
       throw new Error("Aktif tarayıcı sekmesi bulunamadı.");
   }
@@ -943,7 +1067,8 @@ async function analyzeActiveProduct(
       recommendation,
       snapshotIdentity,
       recommendationIdentity: snapshotIdentity,
-      analysisStatus: null
+      analysisStatus: null,
+      activeTabId: tab.id
     };
   } finally {
     await endAnalysis(tab.id);
@@ -1029,8 +1154,8 @@ async function setRecommendationBadge(tabId, recommendation) {
   });
 }
 
-async function rescanActiveTab() {
-  const tab = await getActiveTab();
+async function rescanActiveTab(preferredTabId) {
+  const tab = await getActiveTab(preferredTabId);
   if (tab?.id === undefined) {
     throw new Error("Aktif tarayıcı sekmesi bulunamadı.");
   }
@@ -1047,22 +1172,87 @@ async function rescanActiveTab() {
 }
 
 async function rescanTab(tabId) {
-  const response = await sendContentMessageWithRecovery(
-    tabId,
-    { type: "SCRAPE_FITMEMORY_PAGE_V120" },
-    (candidate) => Boolean(candidate?.snapshot),
-    "ürün"
-  );
-  if (response.snapshot) {
-    const tab = await chrome.tabs.get(tabId);
-    if (!snapshotMatchesTabUrl(response.snapshot, tab?.url)) {
-      throw new Error("Sayfa tarama sırasında değişti. Yeni ürün sayfasında yeniden deneyin.");
+  const tab = await chrome.tabs.get(tabId);
+  assertScannableTab(tab, "ürün");
+
+  const frameIds = await listTabFrameIds(tabId);
+  const snapshots = [];
+  for (const frameId of frameIds) {
+    try {
+      const response = await sendContentMessageToFrame(
+        tabId,
+        frameId,
+        { type: "SCRAPE_FITMEMORY_PAGE_V120" },
+        (candidate) => Boolean(candidate?.snapshot)
+      );
+      if (response?.snapshot) {
+        snapshots.push(response.snapshot);
+      }
+    } catch {
+      // Ads, sandboxed frames, and chrome:// subframes are expected to fail.
     }
-    await commitPageSnapshot(tabId, response.snapshot);
-    return response.snapshot;
   }
 
-  return null;
+  const snapshot = pickBestSnapshot(snapshots);
+  if (!snapshot) {
+    throw new Error(
+      "Bu sekmede FitMemory tarayıcısı çalışmıyor. Sayfayı yenileyip tekrar dene."
+    );
+  }
+
+  const aligned = alignSnapshotToTab(snapshot, tab);
+  await commitPageSnapshot(tabId, aligned);
+  return aligned;
+}
+
+async function listTabFrameIds(tabId) {
+  const ids = new Set([0]);
+  try {
+    const frames = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => true
+    });
+    for (const frame of frames) {
+      if (Number.isInteger(frame.frameId)) {
+        ids.add(frame.frameId);
+      }
+    }
+  } catch {
+    // Restricted frames are skipped; the top frame is still scanned.
+  }
+  return [...ids];
+}
+
+async function sendContentMessageToFrame(
+  tabId,
+  frameId,
+  message,
+  isExpectedResponse
+) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, message, { frameId });
+    if (isExpectedResponse(response)) {
+      return response;
+    }
+  } catch {
+    // Content script may not be injected into this frame yet.
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      files: ["content.js"]
+    });
+  } catch (error) {
+    const tab = await chrome.tabs.get(tabId);
+    throw new Error(buildInjectionError(tab, "ürün", error?.message || ""));
+  }
+
+  const response = await chrome.tabs.sendMessage(tabId, message, { frameId });
+  if (!isExpectedResponse(response)) {
+    throw new Error("FitMemory bu çerçeveden ürün verisini okuyamadı.");
+  }
+  return response;
 }
 
 async function sendContentMessageWithRecovery(
@@ -1163,15 +1353,52 @@ async function getFreshSnapshot(tabId) {
       chrome.tabs.get(tabId)
     ]);
     const snapshot = stored[snapshotKey(tabId)] ?? null;
-    if (!snapshotMatchesTabUrl(snapshot, tab?.url)) {
-      await invalidateTabStateForNavigation(tabId, tab?.url || "");
+    if (!snapshot?.sizeChart) {
       return null;
     }
-    return snapshot;
+    return alignSnapshotToTab(snapshot, tab);
   }
 }
 
-async function getActiveTab() {
+async function setTargetTab(tabId) {
+  const tab = await getActiveTab(tabId);
+  return { activeTabId: tab?.id ?? null };
+}
+
+async function getActiveTab(preferredTabId) {
+  const requestedId = Number(preferredTabId);
+  if (Number.isInteger(requestedId) && requestedId > 0) {
+    try {
+      const requested = await chrome.tabs.get(requestedId);
+      if (isScannableWebUrl(requested.url)) {
+        await chrome.storage.session.set({
+          [TARGET_TAB_KEY]: requested.id
+        });
+        return requested;
+      }
+    } catch {
+      // The side panel may pass a tab that was just closed.
+    }
+  }
+
+  const focusedQueries = [
+    { active: true, lastFocusedWindow: true },
+    { active: true, currentWindow: true }
+  ];
+  for (const query of focusedQueries) {
+    try {
+      const [focused] = await chrome.tabs.query(query);
+      if (focused?.id !== undefined && isScannableWebUrl(focused.url)) {
+        await chrome.storage.session.set({
+          [TARGET_TAB_KEY]: focused.id
+        });
+        return focused;
+      }
+    } catch {
+      // Service workers have no current window; lastFocusedWindow can also fail.
+    }
+  }
+
   const stored = await chrome.storage.session.get(TARGET_TAB_KEY);
   const targetTabId = stored[TARGET_TAB_KEY];
   if (Number.isInteger(targetTabId)) {
@@ -1186,14 +1413,28 @@ async function getActiveTab() {
   }
 
   const activeTabs = await chrome.tabs.query({ active: true });
-  const target = activeTabs.find(tab =>
-    isScannableWebUrl(tab.url));
-  if (target?.id !== undefined) {
-    await chrome.storage.session.set({
-      [TARGET_TAB_KEY]: target.id
-    });
+  const scannable = activeTabs.filter((tab) => isScannableWebUrl(tab.url));
+  for (const tab of scannable) {
+    if (tab?.id === undefined) {
+      continue;
+    }
+    const storedSnapshot = await chrome.storage.session.get(snapshotKey(tab.id));
+    if (storedSnapshot[snapshotKey(tab.id)]?.sizeChart?.found) {
+      await chrome.storage.session.set({
+        [TARGET_TAB_KEY]: tab.id
+      });
+      return tab;
+    }
   }
-  return target ?? null;
+
+  if (scannable[0]?.id !== undefined) {
+    await chrome.storage.session.set({
+      [TARGET_TAB_KEY]: scannable[0].id
+    });
+    return scannable[0];
+  }
+
+  return null;
 }
 
 async function getIdentity() {
@@ -1218,28 +1459,92 @@ async function getLegacyIdentity() {
 async function getAuth() {
   const stored = await chrome.storage.local.get(AUTH_KEY);
   const auth = stored[AUTH_KEY];
-  if (!auth?.accessToken || !auth?.account?.userId) {
+  if (!auth?.account?.userId && !auth?.accessToken) {
     return null;
   }
   const expiresAt = Date.parse(auth.expiresAt || "");
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-    await chrome.storage.local.remove(AUTH_KEY);
-    await chrome.storage.session.clear();
-    return null;
+  const valid =
+    Boolean(auth?.accessToken && auth?.account?.userId) &&
+    Number.isFinite(expiresAt) &&
+    expiresAt > Date.now();
+  if (valid) {
+    return auth;
   }
-  return auth;
+  try {
+    return await restoreLocalSession(auth);
+  } catch {
+    return auth?.account?.userId ? auth : null;
+  }
+}
+
+async function getLastEmail() {
+  const stored = await chrome.storage.local.get(LAST_EMAIL_KEY);
+  return typeof stored[LAST_EMAIL_KEY] === "string" ? stored[LAST_EMAIL_KEY] : "";
+}
+
+async function restoreLocalSession(auth) {
+  const session = await localApiFetch("/api/auth/restore", {
+    method: "POST",
+    body: {
+      userId: auth?.account?.userId,
+      email: auth?.account?.email || await getLastEmail(),
+      accessToken: auth?.accessToken
+    }
+  });
+  await storeAuth(session);
+  return session;
+}
+
+function normalizeApiBaseUrl(value) {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim().replace(/\/+$/, "");
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return "";
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function isUnreachableLegacyApi(value) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    if (host.endsWith("onrender.com")) {
+      return true;
+    }
+    if (host === SUPABASE_PROJECT_HOST || host.endsWith(".supabase.co")) {
+      return true;
+    }
+    if ((host === "localhost" || host === "127.0.0.1") && parsed.port === "5158") {
+      return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function resolveApiBaseUrl(value) {
+  const normalized = normalizeApiBaseUrl(value);
+  if (!normalized || isUnreachableLegacyApi(normalized)) {
+    return DEFAULT_API_BASE_URL;
+  }
+  return normalized;
 }
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
-  const settings = {
-    apiBaseUrl: DEFAULT_API_BASE_URL,
+  return {
+    apiBaseUrl: resolveApiBaseUrl(stored[SETTINGS_KEY]?.apiBaseUrl),
     autoAnalyze: stored[SETTINGS_KEY]?.autoAnalyze ?? true
   };
-  if (stored[SETTINGS_KEY]?.apiBaseUrl !== DEFAULT_API_BASE_URL) {
-    await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-  }
-  return settings;
 }
 
 async function enforceProductionApiUrl() {
@@ -1248,62 +1553,30 @@ async function enforceProductionApiUrl() {
 }
 
 async function apiFetch(path, options = {}) {
-  const settings = await getSettings();
   const auth = options.anonymous ? null : await getAuth();
-  const headers = {};
-  if (options.body) {
-    headers["Content-Type"] = "application/json";
-  }
-  if (auth?.accessToken) {
-    headers.Authorization = `Bearer ${auth.accessToken}`;
-  }
-  const response = await fetch(`${settings.apiBaseUrl}${path}`, {
-    method: options.method || "GET",
-    headers: Object.keys(headers).length ? headers : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-
-  if (options.allowNotFound && response.status === 404) {
-    return null;
-  }
-
-  if (options.expectNoContent && response.status === 204) {
-    return null;
-  }
-
-  if (!response.ok) {
-    if (
-      response.status === 401 &&
-      !options.anonymous
-    ) {
-      await chrome.storage.local.remove(AUTH_KEY);
-      await chrome.storage.session.clear();
+  try {
+    return await localApiFetch(path, {
+      method: options.method || "GET",
+      body: options.body,
+      accessToken: auth?.accessToken,
+      allowNotFound: options.allowNotFound === true,
+      expectNoContent: options.expectNoContent === true
+    });
+  } catch (error) {
+    if (error?.status === 401 && !options.anonymous && !options.keepAuthOn401 && !options._didRestore) {
+      try {
+        const stored = await chrome.storage.local.get(AUTH_KEY);
+        await restoreLocalSession(stored[AUTH_KEY]);
+        return await apiFetch(path, { ...options, _didRestore: true });
+      } catch {
+        throw new Error("Oturumunuz sona erdi. FitMemory hesabınıza yeniden giriş yapın.");
+      }
+    }
+    if (error?.status === 401 && !options.anonymous && !options.keepAuthOn401) {
       throw new Error("Oturumunuz sona erdi. FitMemory hesabınıza yeniden giriş yapın.");
     }
-    let message = `API isteği ${response.status} durum koduyla başarısız oldu.`;
-    try {
-      const problem = await response.json();
-      message = problem.detail || problem.title || problem.message || message;
-      if (problem.errors) {
-        const validationMessage = Object.values(problem.errors).flat().join(" ");
-        if (validationMessage) {
-          message = validationMessage;
-        }
-      }
-    } catch {
-      const text = await response.text().catch(() => "");
-      if (text) {
-        message = text;
-      }
-    }
-    throw new Error(message);
+    throw new Error(error?.detail || error?.message || "Beklenmeyen bir hata oluştu.");
   }
-
-  if (response.status === 204) {
-    return null;
-  }
-
-  return response.json();
 }
 
 async function getRecommendationForSnapshot(tabId, snapshot) {
@@ -1414,12 +1687,20 @@ function normalizeProductUrl(value) {
         leftValue.localeCompare(rightValue));
     const query = new URLSearchParams(parameters).toString();
     const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
-    return `${parsed.protocol}//${parsed.hostname.toLocaleLowerCase("en-US")}${
+    return `${parsed.protocol}//${canonicalHostname(parsed.hostname)}${
       parsed.port ? `:${parsed.port}` : ""
     }${pathname}${query ? `?${query}` : ""}`;
   } catch {
     return value.trim().toLocaleLowerCase("en-US");
   }
+}
+
+function canonicalHostname(hostname) {
+  const host = String(hostname || "").toLocaleLowerCase("en-US");
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1") {
+    return "localhost";
+  }
+  return host.replace(/^www\./, "");
 }
 
 function snapshotMatchesTabUrl(snapshot, tabUrl) {
@@ -1429,6 +1710,46 @@ function snapshotMatchesTabUrl(snapshot, tabUrl) {
   const snapshotUrl = normalizeProductUrl(snapshot?.product?.url);
   const currentUrl = normalizeProductUrl(tabUrl);
   return Boolean(snapshotUrl && currentUrl && snapshotUrl === currentUrl);
+}
+
+function alignSnapshotToTab(snapshot, tab) {
+  if (!snapshot?.product || !tab?.url) {
+    return snapshot;
+  }
+  if (snapshotMatchesTabUrl(snapshot, tab.url)) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    product: {
+      ...snapshot.product,
+      url: tab.url
+    }
+  };
+}
+
+function sizeChartRowCount(sizeChart) {
+  return Array.isArray(sizeChart?.rows) ? sizeChart.rows.length : 0;
+}
+
+function snapshotChartQuality(snapshot) {
+  const chart = snapshot?.sizeChart;
+  if (!chart?.found) {
+    return 0;
+  }
+  const rows = sizeChartRowCount(chart);
+  const numeric = String(chart.rawText || "").match(/\d/g)?.length || 0;
+  const completeBonus = !chart.requiresInteraction && rows > 0 ? 25 : 0;
+  return rows * 10 + Math.min(numeric, 20) + completeBonus;
+}
+
+function pickBestSnapshot(snapshots) {
+  if (!Array.isArray(snapshots) || snapshots.length === 0) {
+    return null;
+  }
+  return [...snapshots].sort(
+    (left, right) => snapshotChartQuality(right) - snapshotChartQuality(left)
+  )[0];
 }
 
 function hashText(source) {

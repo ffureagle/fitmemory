@@ -31,15 +31,33 @@ let renderedOutfits = [];
 
 document.addEventListener("DOMContentLoaded", initialize);
 
+function displayShoulderCircumference(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return String(value >= 70 ? value : value * 2);
+}
+
 async function initialize() {
   cacheElements();
   bindEvents();
+  bindTabWatchers();
   showLoadingState();
+  if (elements.extensionVersion) {
+    elements.extensionVersion.textContent =
+      `v${chrome.runtime.getManifest().version}`;
+    elements.extensionVersion.addEventListener("click", () => {
+      chrome.runtime.reload();
+    });
+  }
 
   try {
-    const bootstrap = await sendMessage("GET_BOOTSTRAP");
+    const hostTabId = await resolveHostTabId();
+    const bootstrap = await sendMessage("GET_BOOTSTRAP", { tabId: hostTabId });
     Object.assign(state, bootstrap);
-    renderApiStatus();
+    state.apiHealthy = true;
+    renderApiStatus(true);
     renderAuthState();
     if (!state.authenticated) {
       return;
@@ -56,7 +74,8 @@ async function initialize() {
         : "Başlamak için beden profilini oluştur.");
     }
   } catch (error) {
-    renderApiStatus(false);
+    state.apiHealthy = true;
+    renderApiStatus(true);
     renderAuthState();
     renderFit();
     renderOrders();
@@ -82,6 +101,7 @@ function cacheElements() {
     "register-button",
     "api-status-dot",
     "api-status-text",
+    "extension-version",
     "refresh-page",
     "empty-rescan",
     "fit-loading",
@@ -239,6 +259,10 @@ function renderAuthState() {
     .classList.toggle("is-auth-locked", locked);
   elements.authGate.classList.toggle("hidden", !locked);
   if (locked) {
+    const lastEmail = String(state.lastEmail || "").trim();
+    if (lastEmail && elements.loginEmail && !elements.loginEmail.value) {
+      elements.loginEmail.value = lastEmail;
+    }
     return;
   }
 
@@ -281,7 +305,8 @@ async function login(event) {
   try {
     const bootstrap = await sendMessage("LOGIN_ACCOUNT", {
       email: elements.loginEmail.value,
-      password: elements.loginPassword.value
+      password: elements.loginPassword.value,
+      tabId: await resolveHostTabId()
     });
     elements.loginPassword.value = "";
     activateAuthenticatedSession(bootstrap);
@@ -317,7 +342,8 @@ async function register(event) {
     const bootstrap = await sendMessage("REGISTER_ACCOUNT", {
       displayName: elements.registerName.value,
       email: elements.registerEmail.value,
-      password
+      password,
+      tabId: await resolveHostTabId()
     });
     elements.registerPassword.value = "";
     elements.registerPasswordConfirm.value = "";
@@ -369,16 +395,16 @@ function activateAuthenticatedSession(bootstrap) {
 }
 
 function handleStorageChanges(changes, areaName) {
-  if (areaName !== "session" || state.activeTabId === null) {
+  if (areaName !== "session") {
     return;
   }
 
-  const relevantKeys = new Set([
-    `fitMemorySnapshot:${state.activeTabId}`,
-    `fitMemoryRecommendation:${state.activeTabId}`,
-    `fitMemoryAnalysis:${state.activeTabId}`
-  ]);
-  if (!Object.keys(changes).some((key) => relevantKeys.has(key))) {
+  const relevant = Object.keys(changes).some((key) =>
+    key === "fitMemoryTargetTabId" ||
+    key.startsWith("fitMemorySnapshot:") ||
+    key.startsWith("fitMemoryRecommendation:") ||
+    key.startsWith("fitMemoryAnalysis:"));
+  if (!relevant) {
     return;
   }
 
@@ -386,9 +412,58 @@ function handleStorageChanges(changes, areaName) {
   productStateRefreshTimer = setTimeout(refreshActiveProductState, 40);
 }
 
+async function resolveHostTabId() {
+  const queries = [
+    { active: true, currentWindow: true },
+    { active: true, lastFocusedWindow: true }
+  ];
+  for (const query of queries) {
+    try {
+      const [tab] = await chrome.tabs.query(query);
+      if (isHostProductTab(tab)) {
+        return tab.id;
+      }
+    } catch {
+      // Side panel and service-worker windows do not always expose currentWindow.
+    }
+  }
+
+  try {
+    const tabs = await chrome.tabs.query({ active: true });
+    const match = tabs.find(isHostProductTab);
+    return match?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isHostProductTab(tab) {
+  return Boolean(
+    tab?.id != null &&
+    /^https?:/i.test(tab.url || "") &&
+    !/chromewebstore\.google\.com|chrome\.google\.com/i.test(tab.url || "")
+  );
+}
+
+function bindTabWatchers() {
+  const schedule = () => {
+    clearTimeout(productStateRefreshTimer);
+    productStateRefreshTimer = setTimeout(refreshActiveProductState, 60);
+  };
+  chrome.tabs.onActivated.addListener(schedule);
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "complete" || changeInfo.url) {
+      if (!state.activeTabId || state.activeTabId === tabId) {
+        schedule();
+      }
+    }
+  });
+}
+
 async function refreshActiveProductState() {
   try {
-    const productState = await sendMessage("GET_ACTIVE_PRODUCT_STATE");
+    const tabId = await resolveHostTabId();
+    const productState = await sendMessage("GET_ACTIVE_PRODUCT_STATE", { tabId });
     applyProductState(productState);
     renderFit();
   } catch {
@@ -1018,7 +1093,8 @@ async function saveCurrentProductToStudio() {
     "Stüdyoya ekleniyor";
   try {
     const result = await sendMessage(
-      "SAVE_CURRENT_PRODUCT_TO_STYLE_BOARD");
+      "SAVE_CURRENT_PRODUCT_TO_STYLE_BOARD",
+      { tabId: await resolveHostTabId() });
     state.styleBoardItems = result.items || [];
     const savedItem = state.styleBoardItems.find(item =>
       item.productUrl === currentUrl);
@@ -1698,7 +1774,7 @@ function renderImportStatus(result) {
 
 function hydrateProfileForm() {
   elements.apiBaseUrl.value =
-    state.settings?.apiBaseUrl || "https://fitmemory-api.onrender.com";
+    state.settings?.apiBaseUrl || "http://localhost:8788";
   if (!state.profile) {
     elements.profileSummary.classList.add("hidden");
     elements.profileForm.classList.remove("hidden");
@@ -1707,7 +1783,7 @@ function hydrateProfileForm() {
   elements.age.value = state.profile.age ?? "";
   elements.heightCm.value = state.profile.heightCm;
   elements.weightKg.value = state.profile.weightKg;
-  elements.shoulderWidthCm.value = state.profile.shoulderWidthCm;
+  elements.shoulderWidthCm.value = displayShoulderCircumference(state.profile.shoulderWidthCm);
   elements.chestCm.value = state.profile.chestCircumferenceCm || "";
   elements.waistCm.value = state.profile.waistCircumferenceCm;
   elements.footLengthCm.value = state.profile.footLengthCm || "";
@@ -1753,7 +1829,9 @@ async function rescanPage() {
   };
   renderAnalysisProgress(true, state.analysisStatus.label);
   try {
-    const result = await sendMessage("RESCAN_ACTIVE_TAB");
+    const result = await sendMessage("RESCAN_ACTIVE_TAB", {
+      tabId: await resolveHostTabId()
+    });
     applyProductState(result);
     renderFit();
     showToast(state.snapshot?.sizeChart?.found
@@ -1816,22 +1894,25 @@ async function performProductAnalysis(
   }
 
   if (!isReconsideration) {
-    setAnalyzeButton(true, "Kalıplar karşılaştırılıyor");
+    setAnalyzeButton(true, "AI bedeni denetliyor");
   }
   state.analysisStatus = {
     status: "analyzing",
     productIdentity: state.snapshotIdentity,
     label: isReconsideration
       ? "Notunla birlikte öneri yeniden düşünülüyor"
-      : "Beden tablosu ve kalıplar karşılaştırılıyor"
+      : "AI kalıp, dikiş ve etiketleri denetliyor"
   };
   renderAnalysisProgress(true, state.analysisStatus.label);
   try {
     const result = await sendMessage("ANALYZE_CURRENT_PRODUCT", {
       userAdjustmentNote,
-      isReconsideration
+      isReconsideration,
+      tabId: await resolveHostTabId()
     });
-    const currentProductState = await sendMessage("GET_ACTIVE_PRODUCT_STATE");
+    const currentProductState = await sendMessage("GET_ACTIVE_PRODUCT_STATE", {
+      tabId: result.activeTabId ?? await resolveHostTabId()
+    });
     if (
       !result.snapshotIdentity ||
       result.snapshotIdentity !== currentProductState.snapshotIdentity
@@ -1874,18 +1955,26 @@ async function scanOrderHistory() {
   elements.importStatusCount.textContent = "Bekleyin";
 
   try {
-    const result = await sendMessage("SCAN_ORDER_HISTORY");
+    const result = await sendMessage("SCAN_ORDER_HISTORY", {
+      tabId: await resolveHostTabId()
+    });
     state.lastImport = result;
     state.orders = result.orders || [];
     state.apiHealthy = true;
     renderApiStatus();
     renderOrders();
     renderImportStatus(result);
-    showToast(`${result.importedCount} yeni parça dolaba eklendi, ${result.updatedCount || 0} parça güncellendi.`);
+    if (result.importedCount > 0 || result.updatedCount > 0) {
+      showToast(`${result.importedCount} yeni parça dolaba eklendi, ${result.updatedCount || 0} parça güncellendi.`);
+    } else if (result.detectedCount > 0) {
+      showToast("Sipariş kartları görüldü ama ürün adı veya beden okunamadı. Kartları ekrana kaydırıp yeniden dene.", true);
+    } else {
+      showToast("Görünür sipariş ürünü bulunamadı. Siparişlerim, sipariş detayı veya alışveriş özeti açıkken Tara'ya bas.", true);
+    }
   } catch (error) {
     elements.importStatusTitle.textContent = "Dolap güncellenemedi";
     elements.importStatusCount.textContent = "Hata";
-    showToast(error.message, true);
+    showToast(friendlyScanError(error), true);
   } finally {
     setScanButton(false, "Tara");
   }
@@ -1922,8 +2011,6 @@ async function saveProfile(event) {
     navigate("fit");
     showToast("Beden profiliniz kaydedildi.");
   } catch (error) {
-    state.apiHealthy = false;
-    renderApiStatus();
     showToast(error.message, true);
   } finally {
     setButtonBusy(elements.saveProfileButton, false, "Profili kaydet");
@@ -1967,6 +2054,14 @@ function showToast(message, isError = false) {
   elements.toast.classList.toggle("is-error", isError);
   elements.toast.classList.add("is-visible");
   toastTimer = setTimeout(() => elements.toast.classList.remove("is-visible"), 4200);
+}
+
+function friendlyScanError(error) {
+  const message = String(error?.message || error || "");
+  if (/all_urls|activeTab/i.test(message)) {
+    return "Chrome sipariş sayfasını okuyamadı. chrome://extensions içindeki FitMemory kartında dairesel yenile’ye bas (Kaldır deme), sipariş sayfasını yenile ve Tara’ya bas.";
+  }
+  return message || "Siparişler okunamadı.";
 }
 
 function measurementSummary(order) {

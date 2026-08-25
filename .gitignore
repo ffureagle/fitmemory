@@ -7,6 +7,11 @@ Backups/
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal
+api/data/
+api/.env
+supabase/.temp/
+supabase/.branches/
+
 backend/smoke.out.log
 backend/smoke.err.log
 smoke.db
@@ -23,3 +28,4 @@ deploy/.env
 deploy/backups/
 mobile/.expo/
 mobile/dist/
+download/*.zip

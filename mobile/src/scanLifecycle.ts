@@ -18,6 +18,19 @@ export function normalizeScanUrl(url: string): string {
   }
 }
 
+export function shopPageKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.pathname}`;
+  } catch {
+    return normalizeScanUrl(url);
+  }
+}
+
+export function isSameShopPage(left: string, right: string): boolean {
+  return shopPageKey(left) === shopPageKey(right);
+}
+
 export function isCurrentScanResponse(
   active: ActiveScanIdentity | null,
   scanId: string,
@@ -26,7 +39,7 @@ export function isCurrentScanResponse(
 ): boolean {
   if (!active || active.scanId !== scanId) return false;
   if (responseRequestId && responseRequestId !== scanId) return false;
-  return normalizeScanUrl(active.url) === normalizeScanUrl(productUrl);
+  return isSameShopPage(active.url, productUrl);
 }
 
 const transitions: Record<ScanStage, readonly ScanStage[]> = {

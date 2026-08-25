@@ -1,7 +1,7 @@
 import type { ProductAgentResult, ProductSnapshot } from "./types";
 
 const sizePattern = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|(?:2[0-9]|[3-5][0-9]|60)(?:[/-](?:2[0-9]|[3-5][0-9]|60))?)$/i;
-const metricPattern = /göğüs|gogus|chest|bust|omuz|shoulder|bel|waist|kalça|kalca|basen|hip|uzunluk|length|kol|sleeve|sırt|sirt|back width|inseam|uyluk|thigh|paça|paca|rise/i;
+const metricPattern = /göğüs|gogus|chest|bust|çevre|cevre|circum|omuz|shoulder|bel|waist|kalça|kalca|basen|hip|uzunluk|length|kol|sleeve|sırt|sirt|back width|inseam|uyluk|thigh|paça|paca|rise/i;
 const rejectedPattern = /fiyat|price|sku|ref|stok|stock|model|boyu|height|indirim|discount|adet|quantity|puan|rating/i;
 
 export function hasVerifiedNumericChart(snapshot: ProductSnapshot): boolean {

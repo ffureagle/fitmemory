@@ -1,0 +1,32 @@
+FitMemory — çalıştırmak
+=======================
+
+Yeni dosyalar
+-------------
+Proje klasöründe: FitMemory-yeni-dosyalar.zip
+Klasör kopyalayamıyorsan çalışan sayfada /yapistir — dokuz kutuyu
+GitHub’daki aynı dosyaların üstüne yapıştır.
+
+İndirme sayfası: demo/sunucu.html
+
+Üretim API: https://fitmemory-api.onrender.com
+Dockerfile: backend/Dockerfile  (Node api/ değil)
+
+Yerel API
+---------
+dotnet run --project backend/FitMemory.Api.csproj --urls http://0.0.0.0:43123
+http://localhost:43123/health
+
+Chrome uzantısı (1.25.8)
+------------------------
+1) Chrome'da chrome://extensions
+2) Geliştirici modunu aç
+3) Paketlenmemiş öğe yükle → extension klasörü
+4) Yüklüyse karttaki dairesel yenileye bas. Kaldır'a basma.
+5) FitMemory panelini aç, hesap oluştur, profilini kaydet
+6) Bir ürün sayfasını açık tut; beden tablosunu yapıştırma
+
+Expo Go (1.25.13)
+-----------------
+Expo Go'yu kapatıp aç. Profil: Mobil · 1.25.13
+Render ücretsiz planda uyuyorsa ilk istek 50+ saniye sürebilir.

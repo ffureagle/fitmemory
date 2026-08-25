@@ -23,7 +23,8 @@ import {
 } from "../components/Ui";
 import { createScannerInstallScript, createScanScript } from "../injectedScanner";
 import { hasVerifiedNumericChart } from "../scanValidation";
-import { isCurrentScanResponse, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
+import { recommendFromSnapshot } from "../localRecommend";
+import { isCurrentScanResponse, isSameShopPage, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
 import {
   chartFromRecognizedText,
   collectNativeScanEvidence,
@@ -50,6 +51,9 @@ const shops = [
   { name: "Bershka", logo: "BERSHKA", url: "https://www.bershka.com/tr/" },
   { name: "Zara", logo: "ZARA", url: "https://www.zara.com/tr/" },
 ];
+
+const iosSafariUserAgent =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
 
 const allowedShopDomains = [
   "pullandbear.com",
@@ -92,6 +96,7 @@ export function ScanScreen({
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanOriginRef = useRef<string | null>(null);
   const activeScanRef = useRef<{ scanId: string; url: string; controller: AbortController } | null>(null);
+  const aiReviewRef = useRef<{ id: string; controller: AbortController } | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -110,13 +115,13 @@ export function ScanScreen({
   const [status, setStatus] = useState("");
   const [scanStage, setScanStage] = useState<ScanStage>("idle");
   const [scanTrace, setScanTrace] = useState<ScanTraceStep[]>([]);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [outfitPrompt, setOutfitPrompt] = useState("");
   const [outfitBusy, setOutfitBusy] = useState(false);
   const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
   const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
   const [pendingOrders, setPendingOrders] = useState<OrderSnapshot | null>(null);
   const [orderImportBusy, setOrderImportBusy] = useState(false);
+  const [aiReviewing, setAiReviewing] = useState(false);
 
   const createWardrobeOutfit = async () => {
     if (!session.token || !session.account || outfitPrompt.trim().length < 3) return;
@@ -156,6 +161,12 @@ export function ScanScreen({
   const canScan = Boolean(session.profile?.age && session.token);
   const currentProductUrl = snapshot?.product.url ?? "";
 
+  const abortAiReview = () => {
+    aiReviewRef.current?.controller.abort();
+    aiReviewRef.current = null;
+    setAiReviewing(false);
+  };
+
   const stopScan = () => {
     activeScanRef.current?.controller.abort();
     activeScanRef.current = null;
@@ -164,6 +175,7 @@ export function ScanScreen({
       scanTimeoutRef.current = null;
     }
     scanOriginRef.current = null;
+    abortAiReview();
     setScanMode(null);
     setStatus("");
     setScanStage("idle");
@@ -239,6 +251,7 @@ export function ScanScreen({
       return;
     }
     setError("");
+    abortAiReview();
     activeScanRef.current?.controller.abort();
     const scanId = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeScanRef.current = {
@@ -276,22 +289,80 @@ export function ScanScreen({
     if (!hasVerifiedNumericChart(nextSnapshot)) {
       throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
     }
-    const scanId = activeScanRef.current?.scanId;
+    if (!session.profile) {
+      throw new Error("Beden önerisi için önce profilini kaydet.");
+    }
+    abortAiReview();
+    const reviewId = `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const controller = new AbortController();
+    aiReviewRef.current = { id: reviewId, controller };
+    const userId = session.account.userId;
+    const token = session.token;
     setSnapshot(nextSnapshot);
-    setRecommendation(null);
-    setStatus("Ölçüler ve dolabın karşılaştırılıyor");
-    setScanStage("recommending");
-    const result = await session.api.analyzeProduct(
-      session.account.userId,
-      session.token,
+    setScanMode(null);
+    const local = recommendFromSnapshot(
+      session.profile,
+      session.orders,
       nextSnapshot,
     );
-    if (scanId && activeScanRef.current?.scanId !== scanId) return;
-    setRecommendation(result);
+    setRecommendation(local);
     setScanStage("completed");
-    setScanTrace((steps) => [...steps, { stage: "recommendation", status: "success", message: "Ölçüler profil ile karşılaştırıldı" }]);
-    setStatus("");
+    setAiReviewing(true);
+    setStatus("AI kalıp, dikiş ve etiketleri denetliyor");
     feedback.success();
+
+    void (async () => {
+      try {
+        try {
+          await session.syncPendingProfile();
+        } catch {
+          // Profil henüz sunucuda değilse analiz 404 verebilir; yerel taslak durur.
+        }
+        if (aiReviewRef.current?.id !== reviewId) return;
+        const result = await session.api.analyzeProduct(
+          userId,
+          token,
+          nextSnapshot,
+          "",
+          false,
+          controller.signal,
+        );
+        if (aiReviewRef.current?.id !== reviewId) return;
+        setRecommendation(result);
+        setAiReviewing(false);
+        setStatus("AI denetimi tamamlandı");
+        feedback.success();
+        setTimeout(() => {
+          if (aiReviewRef.current?.id === reviewId) {
+            setStatus("");
+            aiReviewRef.current = null;
+          }
+        }, 2200);
+      } catch {
+        if (aiReviewRef.current?.id !== reviewId || controller.signal.aborted) {
+          return;
+        }
+        setAiReviewing(false);
+        setRecommendation((current) =>
+          current
+            ? {
+                ...current,
+                fitNotes: [
+                  "AI kalıp denetimine ulaşılamadı; gösterilen beden yerel ölçü taslağıdır.",
+                  ...current.fitNotes,
+                ].slice(0, 6),
+              }
+            : current,
+        );
+        setStatus("AI'ya ulaşılamadı; yerel taslak korundu");
+        setTimeout(() => {
+          if (aiReviewRef.current?.id === reviewId) {
+            setStatus("");
+            aiReviewRef.current = null;
+          }
+        }, 4000);
+      }
+    })();
   };
 
   const importOrderSnapshot = async (
@@ -478,6 +549,7 @@ export function ScanScreen({
   useEffect(() => () => {
     if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
     activeScanRef.current?.controller.abort();
+    aiReviewRef.current?.controller.abort();
   }, []);
 
   const reconsider = async () => {
@@ -696,8 +768,13 @@ export function ScanScreen({
           >
             <WebView
               allowsBackForwardNavigationGestures
+              allowsInlineMediaPlayback
+              decelerationRate="normal"
+              domStorageEnabled
               injectedJavaScript={createScannerInstallScript()}
+              injectedJavaScriptBeforeContentLoaded={createScannerInstallScript()}
               javaScriptEnabled
+              mediaPlaybackRequiresUserAction={false}
               onShouldStartLoadWithRequest={(request) => {
                 if (request.isTopFrame === false) return true;
                 const allowed = isAllowedShopUrl(request.url);
@@ -710,7 +787,7 @@ export function ScanScreen({
                 }
                 return allowed;
               }}
-              originWhitelist={["https://*"]}
+              originWhitelist={["https://*", "about:blank", "about:srcdoc"]}
               onLoadEnd={() => setPageLoading(false)}
               onLoadStart={(event) => {
                 setPageLoading(true);
@@ -724,8 +801,7 @@ export function ScanScreen({
               }}
               onMessage={(event) => void handleMessage(event)}
               onNavigationStateChange={(state) => {
-                const nextUrl = normalizeScanUrl(state.url);
-                if (scanOriginRef.current && nextUrl !== scanOriginRef.current) {
+                if (scanOriginRef.current && !isSameShopPage(scanOriginRef.current, state.url)) {
                   stopScan();
                   setSnapshot(null);
                   setRecommendation(null);
@@ -741,6 +817,7 @@ export function ScanScreen({
               source={{ uri: browserUrl }}
               startInLoadingState
               thirdPartyCookiesEnabled
+              userAgent={Platform.OS === "ios" ? iosSafariUserAgent : undefined}
             />
             {pageLoading && (
               <View pointerEvents="none" style={styles.pageLoader}>
@@ -887,6 +964,14 @@ export function ScanScreen({
             </View>
           ) : null}
 
+          {status ? (
+            <View style={styles.scanStatus}>
+              {scanMode || aiReviewing ? (
+                <ActivityIndicator color={colors.blue} size="small" />
+              ) : null}
+              <Text style={styles.scanStatusText}>{status}</Text>
+            </View>
+          ) : null}
           <View style={styles.browserBottom}>
             <Pressable
               disabled={!canGoBack}
@@ -930,26 +1015,6 @@ export function ScanScreen({
               <Text style={styles.browserToolLabel}>Siparişi tara</Text>
             </Pressable>
           </View>
-          {scanMode || status ? (
-            <View style={styles.scanStatus}>
-              {scanMode ? (
-                <ActivityIndicator color={colors.blue} size="small" />
-              ) : null}
-              <Text style={styles.scanStatusText}>{status}</Text>
-            </View>
-          ) : null}
-          {scanTrace.length ? (
-            <View style={styles.diagnostics}>
-              <Pressable onPress={() => setShowDiagnostics((value) => !value)}>
-                <Text style={styles.diagnosticsTitle}>Tarama tanısı · {scanStage}</Text>
-              </Pressable>
-              {showDiagnostics ? scanTrace.slice(-8).map((step, index) => (
-                <Text key={`${step.stage}-${index}`} style={styles.diagnosticsLine}>
-                  [{step.stage}] {step.status}: {step.message}
-                </Text>
-              )) : null}
-            </View>
-          ) : null}
         </View>
       </Modal>
     </>
@@ -957,7 +1022,7 @@ export function ScanScreen({
 }
 
 const styles = StyleSheet.create({
-  orderReview: { backgroundColor: colors.card, bottom: 74, left: 10, maxHeight: "78%", padding: 16, position: "absolute", right: 10, zIndex: 30, ...shadow },
+  orderReview: { backgroundColor: colors.card, marginHorizontal: 10, marginBottom: 8, maxHeight: "48%", padding: 16, zIndex: 30, ...shadow },
   orderReviewHeader: { alignItems: "center", flexDirection: "row", gap: 10 },
   orderReviewEyebrow: { color: colors.blue, fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
   orderReviewTitle: { color: colors.ink, fontSize: 21, fontWeight: "900", marginTop: 3 },
@@ -1323,14 +1388,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.blueSoft,
     borderTopColor: "#C8D5FF",
     borderTopWidth: 1,
-    bottom: Platform.OS === "ios" ? 70 : 66,
     flexDirection: "row",
     gap: 9,
-    left: 0,
     paddingHorizontal: 15,
     paddingVertical: 10,
-    position: "absolute",
-    right: 0,
   },
   scanStatusText: {
     color: "#173A9D",
@@ -1342,12 +1403,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderColor: colors.line,
     borderRadius: 18,
-    bottom: Platform.OS === "ios" ? 76 : 72,
-    left: 12,
-    maxHeight: "60%",
+    marginHorizontal: 12,
+    marginBottom: 8,
+    maxHeight: "48%",
     padding: 17,
-    position: "absolute",
-    right: 12,
     ...shadow,
   },
   resultProduct: {

@@ -33,7 +33,7 @@
         <form id="login-form" class="auth-form" novalidate>
           <label>
             <span class="field-label">E-posta</span>
-            <input id="login-email" class="field" name="email" type="email" maxlength="254" autocomplete="email" placeholder="sen@email.com" required />
+            <input id="login-email" class="field" name="email" type="email" maxlength="254" autocomplete="username" placeholder="sen@email.com" required />
           </label>
           <label>
             <span class="field-label">Şifre</span>
@@ -72,7 +72,7 @@
 
         <div class="auth-security-note">
           <span class="status-dot is-live" aria-hidden="true"></span>
-          <span>Şifren açık metin olarak saklanmaz</span>
+          <span>Oturum bu Chrome profilinde açık kalır. Şifre saklanmaz.</span>
         </div>
       </section>
 
@@ -81,6 +81,7 @@
           <img class="brand-mark brand-logo-image" src="fitmemory-logo.png" alt="FitMemory">
           <div>
             <div class="brand-name">FitMemory</div>
+            <div id="extension-version" class="text-[10px] font-semibold tracking-[0.04em] text-[#3f3f3b]" title="Dosyalar güncellendiyse tıkla: uzantıyı yeniden yükler">v1.25.8</div>
           </div>
         </div>
         <div class="flex items-center gap-2 rounded-full border border-line bg-[#f8f7f4] px-3 py-1.5" title="Yerel API durumu">
@@ -395,8 +396,8 @@
                 <input id="weight-kg" name="weightKg" class="field" type="number" min="30" max="300" step="0.1" inputmode="decimal" placeholder="74" required />
               </label>
               <label>
-                <span class="field-label">Omuz · cm</span>
-                <input id="shoulder-width-cm" name="shoulderWidthCm" class="field" type="number" min="25" max="80" step="0.1" inputmode="decimal" placeholder="47" required />
+                <span class="field-label">Omuz çevresi · cm</span>
+                <input id="shoulder-width-cm" name="shoulderWidthCm" class="field" type="number" min="50" max="180" step="0.1" inputmode="decimal" placeholder="94" required />
               </label>
               <label>
                 <span class="field-label">Göğüs çevresi · cm</span>
@@ -431,7 +432,7 @@
             <summary>Bağlantı ayarı</summary>
             <label class="mt-3 block">
               <span class="field-label">API adresi</span>
-              <input id="api-base-url" name="apiBaseUrl" class="field" type="url" spellcheck="false" value="https://fitmemory-api.onrender.com" readonly required />
+              <input id="api-base-url" name="apiBaseUrl" class="field" type="url" spellcheck="false" value="http://localhost:8788" required />
             </label>
           </details>
 

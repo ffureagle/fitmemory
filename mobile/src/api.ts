@@ -29,6 +29,7 @@ type ApiOptions = {
   token?: string | null;
   allowNotFound?: boolean;
   timeoutMs?: number;
+  retries?: number;
   signal?: AbortSignal;
 };
 
@@ -62,6 +63,16 @@ export class FitMemoryApi {
       },
       );
     } catch (reason) {
+      if (options.signal?.aborted) {
+        throw reason;
+      }
+      if ((options.retries ?? 0) > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+        return this.request<T>(path, {
+          ...options,
+          retries: (options.retries ?? 0) - 1,
+        });
+      }
       if (reason instanceof Error && reason.name === "AbortError") {
         throw new Error("Sunucu zamanında yanıt vermedi. Lütfen tekrar deneyin.");
       }
@@ -73,6 +84,13 @@ export class FitMemoryApi {
 
     if (options.allowNotFound && response.status === 404) {
       return null as T;
+    }
+    if ([502, 503, 504].includes(response.status) && (options.retries ?? 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+      return this.request<T>(path, {
+        ...options,
+        retries: (options.retries ?? 0) - 1,
+      });
     }
     if (response.status === 204) {
       return undefined as T;
@@ -114,6 +132,7 @@ export class FitMemoryApi {
     return this.request<AuthSession>("/api/auth/login", {
       method: "POST",
       body: { email, password },
+      timeoutMs: 90_000,
     });
   }
 
@@ -121,6 +140,7 @@ export class FitMemoryApi {
     return this.request<AuthSession>("/api/auth/register", {
       method: "POST",
       body: { displayName, email, password },
+      timeoutMs: 90_000,
     });
   }
 
@@ -178,7 +198,13 @@ export class FitMemoryApi {
   ) {
     return this.request<Profile>(
       `/api/profiles/${encodeURIComponent(userId)}`,
-      { method: "PUT", token, body: profile },
+      {
+        method: "PUT",
+        token,
+        body: profile,
+        timeoutMs: 90_000,
+        retries: 1,
+      },
     );
   }
 
@@ -217,6 +243,7 @@ export class FitMemoryApi {
     snapshot: ProductSnapshot,
     userAdjustmentNote = "",
     isReconsideration = false,
+    signal?: AbortSignal,
   ) {
     return this.request<Recommendation>("/api/recommendations/analyze", {
       method: "POST",
@@ -229,6 +256,9 @@ export class FitMemoryApi {
         isReconsideration,
         language: this.language,
       },
+      retries: 1,
+      timeoutMs: 50_000,
+      signal,
     });
   }
 
@@ -335,8 +365,9 @@ export class FitMemoryApi {
   getFavoriteOutfits(userId: string, token: string) {
     return this.request<FavoriteOutfit[]>(
       `/api/style-board/favorites?userId=${encodeURIComponent(userId)}`,
-      { token },
-    );
+      { token, allowNotFound: true },
+    ).then((items) => items ?? []);
+  }
   }
 
   saveFavoriteOutfit(

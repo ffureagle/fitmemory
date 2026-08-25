@@ -1,7 +1,10 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = "1.18.0";
+  const CONTENT_SCRIPT_VERSION = "1.25.8";
   if (globalThis.__fitMemoryContentScriptVersion === CONTENT_SCRIPT_VERSION) {
     return;
+  }
+  if (typeof globalThis.__fitMemoryContentCleanup === "function") {
+    globalThis.__fitMemoryContentCleanup();
   }
   globalThis.__fitMemoryContentScriptVersion = CONTENT_SCRIPT_VERSION;
 
@@ -31,14 +34,28 @@
   const ORDER_CARD_SELECTORS = [
     '[data-testid*="order" i]',
     '[data-testid*="purchase" i]',
+    '[data-qa*="order" i]',
+    '[data-qa*="product" i]',
     "order-item",
     "purchase-order",
     '[class*="order-card" i]',
     '[class*="order-item" i]',
     '[class*="order-product" i]',
+    '[class*="orderDetail" i]',
+    '[class*="order-detail" i]',
     '[class*="purchase-item" i]',
     '[class*="product-item" i]',
+    '[class*="product-card" i]',
+    '[class*="productCard" i]',
     '[class*="shipment-item" i]',
+    '[class*="checkout" i]',
+    '[class*="summary-item" i]',
+    '[class*="line-item" i]',
+    '[class*="lineitem" i]',
+    '[class*="basket-item" i]',
+    '[class*="cart-item" i]',
+    '[class*="product-line" i]',
+    '[data-qa-qualifier*="product" i]',
     '[id*="order-item" i]',
     '[role="listitem"]'
   ];
@@ -51,7 +68,7 @@
   let isCollectingSizeChart = false;
   const observedRoots = new WeakSet();
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  function onFitMemoryMessage(message, _sender, sendResponse) {
     if (message?.type === "SCRAPE_FITMEMORY_PAGE" ||
         message?.type === "SCRAPE_FITMEMORY_PAGE_V120") {
       scrapePageAsync()
@@ -96,7 +113,9 @@
       document.getElementById("fitmemory-page-card-host")?.remove();
       sendResponse({ cleared: true });
     }
-  });
+  }
+
+  chrome.runtime.onMessage.addListener(onFitMemoryMessage);
 
   const observer = new MutationObserver(() => {
     clearTimeout(rootObservationTimer);
@@ -115,6 +134,13 @@
   } else {
     reportSnapshot();
   }
+
+  globalThis.__fitMemoryContentCleanup = () => {
+    chrome.runtime.onMessage.removeListener(onFitMemoryMessage);
+    observer.disconnect();
+    clearTimeout(reportTimer);
+    clearTimeout(rootObservationTimer);
+  };
 
   function reportSnapshot() {
     if (isCollectingSizeChart) {
@@ -151,9 +177,37 @@
   }
 
   async function scrapeOrderHistoryAsync() {
-    await expandOrderDetails();
-    await hydrateVisibleOrderImages();
-    return scrapeOrderHistory();
+    try {
+      await expandOrderDetails();
+    } catch (error) {
+      console.info("FitMemory sipariş ayrıntısı açılamadı.", error);
+    }
+    try {
+      await hydrateVisibleOrderImages();
+    } catch (error) {
+      console.info("FitMemory sipariş görselleri yüklenemedi.", error);
+    }
+    try {
+      return scrapeOrderHistory();
+    } catch (error) {
+      console.info("FitMemory DOM sipariş taraması hata verdi; metinden okunacak.", error);
+      const harvested = harvestOrderBlocksFromPageText(siteBrand());
+      return {
+        pageUrl: safePageUrl().slice(0, 1_000),
+        pageTitle: cleanText(document.title).slice(0, 240),
+        retailer: siteBrand().slice(0, 120),
+        sanitizedText: harvested.map((card, index) =>
+          `KART ${index + 1}: ${card.text}`).join("\n\n").slice(0, 30_000),
+        orderCards: harvested,
+        cropRect: null,
+        redactionRects: [],
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio || 1
+        }
+      };
+    }
   }
 
   async function scrapeProductResearchAsync() {
@@ -771,20 +825,6 @@
 
   function scrapeSizeChart() {
     const roots = collectOpenRoots();
-    const interactivePanel = findInteractiveMeasurePanel(roots);
-    if (interactivePanel) {
-      const panelText = cleanText(interactivePanel.root.textContent);
-      return {
-        found: true,
-        title: "Ürün ölçüleri",
-        unit: inferUnit(panelText),
-        headers: [],
-        rows: [],
-        rawText: panelText.slice(0, MAX_RAW_TEXT),
-        requiresInteraction: true
-      };
-    }
-
     const tableCandidates = deepQuerySelectorAll("table, [role='table']", roots)
       .filter(isVisible)
       .map((element) => {
@@ -798,20 +838,39 @@
       .filter((candidate) => candidate.matrix.length > 1)
       .sort((left, right) => right.score - left.score);
 
-    const bestTable = tableCandidates[0];
-    if (bestTable && bestTable.score >= 4) {
-      const headers = inferHeaders(bestTable.matrix);
-      const dataRows = headers.consumedFirstRow ? bestTable.matrix.slice(1) : bestTable.matrix;
+    const completeTable = tableCandidates.find((candidate) =>
+      isCompleteSizeMatrix(candidate.matrix) && candidate.score >= 3
+    ) || (tableCandidates[0] && tableCandidates[0].score >= 4
+      ? tableCandidates[0]
+      : null);
+
+    if (completeTable) {
+      const headers = inferHeaders(completeTable.matrix);
+      const dataRows = headers.consumedFirstRow ? completeTable.matrix.slice(1) : completeTable.matrix;
       return {
         found: true,
-        title: findChartTitle(bestTable.element),
-        unit: inferUnit(bestTable.matrix.flat().join(" ")),
+        title: findChartTitle(completeTable.element),
+        unit: inferUnit(completeTable.matrix.flat().join(" ")),
         headers: headers.values,
         rows: dataRows.slice(0, MAX_ROWS).map((cells) => ({
           cells: padCells(cells, headers.values.length)
         })),
-        rawText: bestTable.matrix.map((row) => row.join(" | ")).join("\n").slice(0, MAX_RAW_TEXT),
+        rawText: completeTable.matrix.map((row) => row.join(" | ")).join("\n").slice(0, MAX_RAW_TEXT),
         requiresInteraction: false
+      };
+    }
+
+    const interactivePanel = findInteractiveMeasurePanel(roots);
+    if (interactivePanel) {
+      const panelText = cleanText(interactivePanel.root.textContent);
+      return {
+        found: true,
+        title: "Ürün ölçüleri",
+        unit: inferUnit(panelText),
+        headers: [],
+        rows: [],
+        rawText: panelText.slice(0, MAX_RAW_TEXT),
+        requiresInteraction: true
       };
     }
 
@@ -867,9 +926,10 @@
           : panelRoot.textContent || ""
       ).toLocaleLowerCase("tr");
       const looksLikeMeasures =
-        /(ölçüler|ölçüleri|measurements?|size guide)/i.test(rootText) &&
+        /(ölçüler|ölçüleri|measurements?|size guide|beden tablosu)/i.test(rootText) &&
         /(göğüs|gogus|chest|bel|waist|uzunluk|length|kol|sleeve)/i.test(rootText);
-      if (looksLikeMeasures && sizeButtons.length >= 2) {
+      const tableMatrix = extractMatrix(table);
+      if (looksLikeMeasures && sizeButtons.length >= 2 && !isCompleteSizeMatrix(tableMatrix)) {
         return { root: panelRoot, table, sizeButtons };
       }
     }
@@ -1111,8 +1171,14 @@
   function normalizeMeasurementLabel(value) {
     const normalized = cleanText(value);
     const lower = normalized.toLocaleLowerCase("tr");
-    if (/^(göğüs|gogus|chest|bust)$/.test(lower)) {
-      return "Göğüs eni";
+    if (/göğüs|gogus|chest|bust/.test(lower)) {
+      if (/çevre|cevre|circum/.test(lower)) {
+        return "Göğüs çevresi";
+      }
+      if (/eni|width|flat|half/.test(lower)) {
+        return "Göğüs eni";
+      }
+      return "Göğüs";
     }
     if (/ön uzunluk|front length/.test(lower)) {
       return "Ön uzunluk";
@@ -1121,18 +1187,48 @@
       return "Kol uzunluğu";
     }
     if (/bel|waist/.test(lower)) {
-      return "Bel eni";
+      if (/çevre|cevre|circum/.test(lower)) {
+        return "Bel çevresi";
+      }
+      if (/eni|width|flat/.test(lower)) {
+        return "Bel eni";
+      }
+      return "Bel";
     }
     if (/kalça|kalca|hip/.test(lower)) {
-      return "Kalça eni";
+      if (/çevre|cevre|circum/.test(lower)) {
+        return "Kalça çevresi";
+      }
+      if (/eni|width/.test(lower)) {
+        return "Kalça eni";
+      }
+      return "Kalça";
     }
     if (/omuz|shoulder/.test(lower)) {
+      if (/çevre|cevre|circum/.test(lower)) {
+        return "Omuz çevresi";
+      }
+      if (/eni|width|flat/.test(lower)) {
+        return "Omuz eni";
+      }
       return "Omuz";
     }
     if (/iç bacak|ic bacak|inseam/.test(lower)) {
       return "İç bacak";
     }
     return normalized.slice(0, 120);
+  }
+
+  function isCompleteSizeMatrix(matrix) {
+    if (!Array.isArray(matrix) || matrix.length < 2) {
+      return false;
+    }
+    const dataRows = matrix.slice(1);
+    const numericRows = dataRows.filter((row) =>
+      row.some((cell) => /\d/.test(cell))).length;
+    const labeledRows = dataRows.filter((row) =>
+      isSizeLabel(row[0] || "")).length;
+    return numericRows >= 2 && (labeledRows >= 1 || numericRows >= 3);
   }
 
   function isSizeLabel(value) {
@@ -1173,6 +1269,16 @@
       for (const element of elements) {
         if (element.shadowRoot && !visited.has(element.shadowRoot)) {
           queue.push(element.shadowRoot);
+        }
+        if (element.tagName === "IFRAME" || element.tagName === "FRAME") {
+          try {
+            const doc = element.contentDocument;
+            if (doc && !visited.has(doc)) {
+              queue.push(doc);
+            }
+          } catch {
+            // Cross-origin size guides are scraped from their own frame on rescan.
+          }
         }
       }
     }
@@ -1452,16 +1558,18 @@
         .slice(0, 12)
         .map((heading) => heading.textContent)
     ].join(" ")).toLowerCase();
+    const bodyHint = cleanText((document.body?.innerText || "").slice(0, 2_000));
     const looksLikeOrderPage =
-      /(orders?|purchases?|order.?history|sipari[sş]|satın.?al|geçmiş)/i.test(pageContext);
-    const isBershkaOrderDetail =
+      /(orders?|purchases?|order.?history|sipari[sş]|satın.?al|geçmiş|online-order|my.?purchases|user\/order|alışveriş.?özet|alisveris.?ozet|order.?summary|sipariş.?özet|teslim.?edildi|checkout)/i
+        .test(`${pageContext} ${bodyHint.toLowerCase()}`) ||
       isBershkaOrderDetailPage();
+    const isBershkaOrderDetail = isBershkaOrderDetailPage();
     if (looksLikeOrderPage) {
-      deepQuerySelectorAll("article, li, [role='listitem']", roots)
+      deepQuerySelectorAll("article, li, [role='listitem'], section, [class*='product' i]", roots)
         .slice(0, 800)
         .forEach((element) => candidates.add(element));
     }
-    if (isBershkaOrderDetail) {
+    if (looksLikeOrderPage || isBershkaOrderDetail) {
       collectBershkaOrderDetailCandidates(roots)
         .forEach((element) => candidates.add(element));
     }
@@ -1493,9 +1601,9 @@
         };
       })
       .filter((candidate) =>
-        candidate.text.length >= 16 &&
+        candidate.text.length >= 8 &&
         candidate.text.length <= 4_000 &&
-        candidate.score >= (looksLikeOrderPage ? 5 : 8))
+        candidate.score >= (looksLikeOrderPage ? 4 : 8))
       .sort((left, right) =>
         right.score - left.score ||
         elementArea(left.element) - elementArea(right.element));
@@ -1516,7 +1624,16 @@
 
     const orderCards = selected.map(({ element, text }) => {
       const scopedRoots = collectOpenRoots(element);
-      const structured = extractBershkaOrderFields(element);
+      let structured = {
+        brand: "",
+        productName: "",
+        purchasedSize: ""
+      };
+      try {
+        structured = extractOrderFields(element);
+      } catch (error) {
+        console.info("FitMemory sipariş kartı alanları okunamadı.", error);
+      }
       const links = deepQuerySelectorAll("a[href]", scopedRoots)
         .map((link) => cleanProductUrl(link.href))
         .filter(Boolean)
@@ -1528,6 +1645,17 @@
         alt: "",
         productUrl: ""
       };
+      if (!structured.productName) {
+        structured.productName = findProductNameFromBlob(
+          [text, primaryImage.alt].filter(Boolean).join(" · ")
+        );
+      }
+      if (!structured.purchasedSize) {
+        structured.purchasedSize = findSizeInText(text);
+      }
+      if (!structured.brand) {
+        structured.brand = siteBrand();
+      }
       return {
         text,
         brand: structured.brand,
@@ -1539,20 +1667,23 @@
         images
       };
     });
+    const harvestedCards = harvestOrderBlocksFromPageText(siteBrand());
+    const mergedCards = mergeOrderCardLists(orderCards, harvestedCards);
     const selectedElements = selected.map((candidate) => candidate.element);
     const cropRect = unionVisibleRects(selectedElements);
     const redactionRects = findSensitiveRects(selectedElements);
     const retailer =
       cleanText(getMeta("property", "og:site_name")) ||
+      siteBrand() ||
       location.hostname.replace(/^www\./, "").split(".")[0];
 
     return {
       pageUrl: safePageUrl().slice(0, 1_000),
       pageTitle: cleanText(document.title).slice(0, 240),
       retailer: retailer.slice(0, 120),
-      sanitizedText: selected.map((candidate, index) =>
-        `KART ${index + 1}: ${candidate.text}`).join("\n\n").slice(0, 30_000),
-      orderCards,
+      sanitizedText: mergedCards.map((card, index) =>
+        `KART ${index + 1}: ${card.text}`).join("\n\n").slice(0, 30_000),
+      orderCards: mergedCards,
       cropRect,
       redactionRects,
       viewport: {
@@ -1563,25 +1694,126 @@
     };
   }
 
+  function isOrderPageHeading(value) {
+    const text = cleanText(value);
+    return /^(alışveriş|alisveriş|alisveris|sipariş|siparis|order|shopping)\s+(özeti|ozeti|summary|details?|ayrıntısı|ayrintisi)$/i.test(text) ||
+      /^(toplam|ara toplam|kargo|ücretsiz kargo|teslim edildi|delivered|adet|beden|renk)$/i.test(text);
+  }
+
+  function harvestOrderBlocksFromPageText(retailer) {
+    const raw = String(document.body?.innerText || document.body?.textContent || "")
+      .replace(/\u00a0/g, " ");
+    const lines = raw.split(/\n+/).map((line) => cleanText(line)).filter(Boolean);
+    const cards = [];
+    const used = new Set();
+    for (let index = 0; index < lines.length; index += 1) {
+      if (used.has(index)) {
+        continue;
+      }
+      const name = lines[index];
+      if (isOrderPageHeading(name) || isPlausiblePurchasedSize(name)) {
+        continue;
+      }
+      if (!isPlausibleProductName(name) && !isClothingProductName(name)) {
+        continue;
+      }
+      const look = [];
+      let end = index;
+      for (let cursor = index + 1; cursor < lines.length && cursor <= index + 12; cursor += 1) {
+        const line = lines[cursor];
+        const nextProduct =
+          !isOrderPageHeading(line) &&
+          !isPlausiblePurchasedSize(line) &&
+          (isPlausibleProductName(line) || isClothingProductName(line)) &&
+          !/(?:₺|\btl\b|\beur\b|\busd\b|€|\$|\d+[.,]\d{2})/i.test(line);
+        if (nextProduct) {
+          break;
+        }
+        look.push(line);
+        end = cursor;
+      }
+      const blob = [name, ...look].join(" · ");
+      const hasPrice = /(?:₺|\btl\b|\beur\b|\busd\b|€|\$|\d+[.,]\d{2})/i.test(blob);
+      const size = findSizeInText(blob);
+      if (!hasPrice || !size) {
+        continue;
+      }
+      cards.push({
+        text: blob.slice(0, 4_000),
+        brand: String(retailer || "").slice(0, 120),
+        productName: name.slice(0, 240),
+        purchasedSize: String(size).toUpperCase().slice(0, 30),
+        productLinks: [],
+        imageAlt: "",
+        imageUrl: "",
+        images: []
+      });
+      for (let mark = index; mark <= end; mark += 1) {
+        used.add(mark);
+      }
+    }
+    return cards;
+  }
+
+  function mergeOrderCardLists(primary, extra) {
+    const keyOf = (card) =>
+      `${cleanText(card?.productName).toLocaleLowerCase("tr")}|${cleanText(card?.purchasedSize).toUpperCase()}`;
+    const complete = (card) => Boolean(card?.productName && card?.purchasedSize);
+    const extraComplete = extra.filter(complete);
+    const primaryComplete = primary.filter(complete);
+    const source =
+      extraComplete.length >= 2 && extraComplete.length >= primaryComplete.length
+        ? extraComplete
+        : [...primary];
+    const seen = new Set();
+    const merged = [];
+    for (const card of source) {
+      const key = keyOf(card);
+      if (key === "|" || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(card);
+    }
+    if (source !== extraComplete) {
+      for (const card of extraComplete) {
+        const key = keyOf(card);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        merged.push(card);
+      }
+    }
+    return merged.slice(0, 25);
+  }
+
   function isBershkaOrderDetailPage() {
+    const host = location.hostname.toLowerCase();
+    const path = location.pathname.toLowerCase();
     const retailer =
       cleanText(getMeta("property", "og:site_name")) ||
       cleanText(document.title);
     const brandSignal =
-      /(^|\.)bershka\.com$/i.test(location.hostname) ||
-      /\bbershka\b/i.test(retailer);
+      /(^|\.)(bershka|pullandbear|zara|stradivarius|massimodutti|oysho|lefties)\.com$/.test(host) ||
+      /\b(bershka|pull\s*&\s*bear|zara)\b/i.test(retailer);
     const headingSignal = deepQuerySelectorAll(
       "h1, h2",
       collectOpenRoots()
     )
-      .slice(0, 12)
+      .slice(0, 16)
       .some((heading) =>
-        /sipariş\s*no|order\s*(?:no|number)/i.test(
+        /sipariş\s*no|order\s*(?:no|number)|alışveriş\s*özeti|sipariş\s*özeti|order\s*summary|teslim\s*edildi/i.test(
           cleanText(heading.textContent)));
-    return brandSignal && (
-      /\/online-order-detail(?:\.html)?$/i.test(location.pathname) ||
-      headingSignal
-    );
+    const pathSignal =
+      /online-order|\/order|siparis|checkout|summary|ozet|özet|purchase|my-account/.test(path);
+    const bodySignal =
+      /alışveriş özeti|alisveris ozeti|sipariş özeti|order summary|teslim edildi/i.test(
+        (document.body?.innerText || "").slice(0, 2_500)
+      );
+    return (brandSignal && (pathSignal || headingSignal || bodySignal)) ||
+      headingSignal ||
+      bodySignal;
   }
 
   function collectBershkaOrderDetailCandidates(roots) {
@@ -1609,10 +1841,10 @@
           Number(image.naturalWidth || 0) *
           Number(image.naturalHeight || 0);
         return (
-          rect.width >= 80 &&
-          rect.height >= 100 &&
-          rect.width * rect.height >= 12_000
-        ) || naturalArea >= 30_000;
+          rect.width >= 40 &&
+          rect.height >= 48 &&
+          rect.width * rect.height >= 1_600
+        ) || naturalArea >= 4_000;
       })
       .forEach((image) => {
         const container =
@@ -1642,23 +1874,20 @@
   }
 
   function hasBershkaProductEvidence(element) {
-    const fields = extractBershkaOrderFields(element);
-    if (!fields.productName || !fields.purchasedSize) {
-      return false;
-    }
+    const fields = extractOrderFields(element);
     const text = cleanText(deepElementText(element));
     const hasPrice =
       /(?:₺|\btl\b|\beur\b|\busd\b|€|\$|\d+[.,]\d{2})/i
         .test(text);
-    const hasImage = deepQuerySelectorAll(
-      "img",
-      collectOpenRoots(element)
-    ).some((image) => isVisible(image));
-    return hasPrice && hasImage;
+    const hasNameOrClothing =
+      Boolean(fields.productName) || isClothingProductName(text);
+    const hasSize =
+      Boolean(fields.purchasedSize) || Boolean(findSizeInText(text));
+    return hasNameOrClothing && hasSize && hasPrice;
   }
 
-  function extractBershkaOrderFields(element) {
-    if (!isBershkaOrderDetailPage() || !element) {
+  function extractOrderFields(element) {
+    if (!element) {
       return {
         brand: "",
         productName: "",
@@ -1669,38 +1898,121 @@
     const candidates = [
       element,
       ...deepQuerySelectorAll(
-        'h1, h2, h3, h4, h5, h6, a, p, span, div, dt, dd, [class*="name" i], [class*="title" i], [class*="size" i], [data-qa*="name" i], [data-qa*="size" i], [data-testid*="name" i], [data-testid*="size" i]',
+        'h1, h2, h3, h4, h5, h6, a, p, span, div, dt, dd, img, [class*="name" i], [class*="title" i], [class*="size" i], [data-qa*="name" i], [data-qa*="size" i], [data-testid*="name" i], [data-testid*="size" i]',
         collectOpenRoots(element))
     ];
     const directLines = candidates
-      .map((candidate) => ({
-        element: candidate,
-        text: directElementText(candidate)
-      }))
+      .flatMap((candidate) => {
+        const lines = [];
+        const direct = directElementText(candidate);
+        if (direct) {
+          lines.push({ element: candidate, text: direct });
+        }
+        const compact = cleanText(candidate.textContent);
+        if (compact && compact.length <= 80 && compact !== direct) {
+          lines.push({ element: candidate, text: compact });
+        }
+        const labeled =
+          cleanText(candidate.getAttribute?.("alt")) ||
+          cleanText(candidate.getAttribute?.("aria-label"));
+        if (labeled) {
+          lines.push({ element: candidate, text: labeled });
+        }
+        return lines;
+      })
       .filter((candidate) => candidate.text);
 
+    const blob = sanitizeOrderText(element);
     const purchasedSize = directLines
       .map((candidate) => candidate.text)
-      .find(isPlausiblePurchasedSize) || "";
+      .find(isPlausiblePurchasedSize) ||
+      findSizeInText(blob);
 
     const productName = directLines
       .filter((candidate) =>
-        isPlausibleBershkaProductName(candidate.text))
+        isPlausibleProductName(candidate.text))
       .map((candidate) => ({
         ...candidate,
-        score: scoreBershkaProductName(
+        score: scoreProductName(
           candidate.element,
           candidate.text)
       }))
       .sort((left, right) =>
         right.score - left.score ||
-        right.text.length - left.text.length)[0]?.text || "";
+        right.text.length - left.text.length)[0]?.text ||
+      findProductNameFromBlob(blob);
 
     return {
-      brand: "Bershka",
-      productName: productName.slice(0, 240),
-      purchasedSize: purchasedSize.toUpperCase().slice(0, 30)
+      brand: siteBrand(),
+      productName: String(productName || "").slice(0, 240),
+      purchasedSize: String(purchasedSize || "").toUpperCase().slice(0, 30)
     };
+  }
+
+  function extractBershkaOrderFields(element) {
+    return extractOrderFields(element);
+  }
+
+  function siteBrand() {
+    if (/(^|\.)bershka\.com$/i.test(location.hostname) ||
+        /\bbershka\b/i.test(cleanText(document.title))) {
+      return "Bershka";
+    }
+    if (/(^|\.)zara\.com$/i.test(location.hostname)) {
+      return "Zara";
+    }
+    if (/(^|\.)pullandbear\.com$/i.test(location.hostname)) {
+      return "Pull&Bear";
+    }
+    if (/(^|\.)stradivarius\.com$/i.test(location.hostname)) {
+      return "Stradivarius";
+    }
+    if (/(^|\.)massimodutti\.com$/i.test(location.hostname)) {
+      return "Massimo Dutti";
+    }
+    const og = cleanText(getMeta("property", "og:site_name"));
+    if (og) {
+      return og.slice(0, 120);
+    }
+    const host = location.hostname.replace(/^www\./, "").split(".")[0] || "";
+    return host ? host.charAt(0).toUpperCase() + host.slice(1) : "";
+  }
+
+  function findSizeInText(text) {
+    const upper = String(text || "").toUpperCase();
+    const labeled = upper.match(
+      /(?:^|[\s·|/:(])(?:BEDEN|SIZE|TALLA|TAILLE|TAGLIA)\s*[:.]?\s*([A-Z]{1,5}|\d{1,2})/
+    );
+    if (labeled && isPlausiblePurchasedSize(labeled[1])) {
+      return labeled[1];
+    }
+    const region = upper.match(
+      /(?:^|[\s·|/:(])(?:EU|UK)\s*[:.]?\s*(\d{1,2})/
+    );
+    if (region && isPlausiblePurchasedSize(region[1])) {
+      return region[1];
+    }
+    const tokens = upper.split(/[^A-Z0-9ÇĞİÖŞÜ]+/);
+    return tokens.find(isPlausiblePurchasedSize) || "";
+  }
+
+  function findProductNameFromBlob(text) {
+    const chunks = String(text || "")
+      .split(/[·\n|/]+/)
+      .map((chunk) => cleanText(chunk))
+      .filter(Boolean);
+    const named = chunks.filter(isPlausibleProductName);
+    named.sort((left, right) => {
+      const leftCloth = isClothingProductName(left) ? 1 : 0;
+      const rightCloth = isClothingProductName(right) ? 1 : 0;
+      return rightCloth - leftCloth || left.length - right.length;
+    });
+    return (named[0] || "").slice(0, 240);
+  }
+
+  function isClothingProductName(value) {
+    return /(jean|denim|pantolon|trouser|pants|tişört|tisort|t-?shirt|shirt|gömlek|sweat|hoodie|kazak|hırka|ceket|jacket|mont|kaban|coat|parka|şort|short|etek|skirt|elbise|dress|tulum|jumpsuit|top|polo|bluz|blouse|yelek|vest|oversize|baggy|muscle|cargo|atlet|tayt|legging|triko|blazer|body)/i
+      .test(cleanText(value));
   }
 
   function directElementText(element) {
@@ -1724,6 +2036,29 @@
     return numeric >= 24 && numeric <= 60;
   }
 
+  function isPlausibleProductName(value) {
+    return isPlausibleBershkaProductName(value) || isGenericProductTitle(value);
+  }
+
+  function scoreProductName(element, text) {
+    return scoreBershkaProductName(element, text);
+  }
+
+  function isGenericProductTitle(value) {
+    const text = cleanText(value);
+    if (
+      text.length < 4 ||
+      text.length > 160 ||
+      isPlausiblePurchasedSize(text) ||
+      /(?:₺|\btl\b|\beur\b|\busd\b|€|\$|\d+[.,]\d{2})/i.test(text) ||
+      /(sipariş|alışveriş tarihi|alışveriş özeti|sipariş özeti|order summary|son iade|ürün$|e-?fatura|merhaba|profilim|iadeler|oturumu kapat|teslim edildi|kargoda|hazırlanıyor)/i.test(text)
+    ) {
+      return false;
+    }
+    return /[a-zçğıöşü]/i.test(text) &&
+      text.split(/\s+/).filter(Boolean).length >= 2;
+  }
+
   function isPlausibleBershkaProductName(value) {
     const text = cleanText(value);
     if (
@@ -1731,12 +2066,11 @@
       text.length > 160 ||
       isPlausiblePurchasedSize(text) ||
       /(?:₺|\btl\b|\beur\b|\busd\b|€|\$|\d+[.,]\d{2})/i.test(text) ||
-      /(sipariş|alışveriş tarihi|son iade|ürün$|e-?fatura|merhaba|profilim|iadeler|oturumu kapat)/i.test(text)
+      /(sipariş|alışveriş tarihi|alışveriş özeti|sipariş özeti|order summary|son iade|ürün$|e-?fatura|merhaba|profilim|iadeler|oturumu kapat)/i.test(text)
     ) {
       return false;
     }
-    return /[a-zçğıöşü]/i.test(text) &&
-      /(jean|denim|pantolon|trouser|pants|tişört|t-?shirt|shirt|gömlek|sweat|hoodie|kazak|hırka|ceket|jacket|mont|kaban|coat|parka|şort|short|etek|skirt|elbise|dress|tulum|jumpsuit|top|polo|bluz|blouse|yelek|vest)/i.test(text);
+    return /[a-zçğıöşü]/i.test(text) && isClothingProductName(text);
   }
 
   function scoreBershkaProductName(element, text) {
@@ -1764,7 +2098,7 @@
     const controls = deepQuerySelectorAll("button, [role='button']")
       .filter((element) => isVisible(element) && intersectsViewport(element))
       .filter((element) =>
-        /^(?:ayrıntıları|detayları)\s+göster$|^show\s+details$/i.test(
+        /(ayrıntıları|detayları)\s+(göster|gizle)|show\s+details|hide\s+details/i.test(
           cleanText(element.textContent)
         ))
       .slice(0, 16);
@@ -1852,10 +2186,10 @@
       element.getAttribute("aria-label")
     ].filter((value) => typeof value === "string").join(" ").toLowerCase();
     let score = 0;
-    if (/(order|purchase|shipment|sipari[sş]|satın)/i.test(signature)) {
+    if (/(order|purchase|shipment|sipari[sş]|satın|özet|summary|checkout|line-item)/i.test(signature)) {
       score += 4;
     }
-    if (/\b(size|beden)\b/i.test(lower)) {
+    if (/\b(size|beden|xxs|xs|\bs\b|\bm\b|\bl\b|xl|xxl)\b/i.test(lower)) {
       score += 4;
     }
     if (/(delivered|returned|cancelled|shipped|teslim|iade|iptal|kargoda|hazırlanıyor)/i.test(lower)) {
@@ -1878,13 +2212,22 @@
       score += 1;
     }
     if (isBershkaOrderDetail) {
-      const fields = extractBershkaOrderFields(element);
-      if (fields.productName) {
-        score += 5;
-      }
-      if (fields.purchasedSize) {
-        score += 5;
-      }
+      score += 2;
+    }
+    const fields = extractOrderFields(element);
+    if (fields.productName) {
+      score += 5;
+    }
+    if (fields.purchasedSize) {
+      score += 5;
+    }
+    const visibleImages = deepQuerySelectorAll("img", scopedRoots)
+      .filter((image) => isVisible(image));
+    if (visibleImages.length === 1) {
+      score += 3;
+    }
+    if (visibleImages.length >= 4) {
+      score -= 6;
     }
     if (text.length > 2_500) {
       score -= 3;

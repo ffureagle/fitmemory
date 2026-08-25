@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Siparişlerim</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f4f4f4; color: #111; }
+      main { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+      h1 { font-size: 28px; margin: 0 0 20px; }
+      article {
+        display: grid;
+        grid-template-columns: 112px 1fr;
+        gap: 16px;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      img { width: 112px; height: 148px; object-fit: cover; background: #dbe4f0; border-radius: 8px; }
+      h2 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 0 0 6px; color: #333; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Siparişlerim</h1>
+      <article class="order-item" data-testid="order-product">
+        <img alt="Baggy jean" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='112' height='148'%3E%3Crect fill='%231e3a5f' width='112' height='148'/%3E%3C/svg%3E" width="112" height="148" />
+        <div>
+          <h2>Baggy jean</h2>
+          <p>1.790,00 TL</p>
+          <p>Beden 38</p>
+          <p>Lacivert</p>
+        </div>
+      </article>
+      <article class="order-item" data-testid="order-product">
+        <img alt="Muscle fit tişört" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='112' height='148'%3E%3Crect fill='%23f7f7f7' width='112' height='148'/%3E%3C/svg%3E" width="112" height="148" />
+        <div>
+          <h2>Muscle fit tişört</h2>
+          <p>490,00 TL</p>
+          <p>Beden S</p>
+          <p>Beyaz</p>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

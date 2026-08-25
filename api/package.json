@@ -1,0 +1,22 @@
+{
+  "name": "fitmemory-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FitMemory API — Supabase when configured, local SQLite otherwise.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test src/engine.test.js src/config.test.js src/local-backend.test.js",
+    "sync:edge": "bash ../supabase/functions/api/sync.sh"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "bcryptjs": "^3.0.2",
+    "hono": "^4.9.6",
+    "jose": "^6.0.12"
+  }
+}

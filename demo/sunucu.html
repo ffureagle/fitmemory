@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FitMemory — sunucuyu düzelt</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #111; color: #fff; }
+      main { max-width: 640px; margin: 0 auto; padding: 32px 20px 80px; }
+      h1 { font-size: 32px; line-height: 1.15; margin: 0 0 16px; }
+      p, li { font-size: 18px; line-height: 1.5; color: #ddd; }
+      ol { padding-left: 22px; }
+      .warn { background: #3a1c12; color: #ffd0c0; padding: 14px 16px; border-radius: 12px; }
+      .ok { background: #14301c; color: #c6f4d0; padding: 14px 16px; border-radius: 12px; }
+      a.btn {
+        display: block; text-align: center; margin: 24px 0;
+        background: #ffe14a; color: #111; text-decoration: none;
+        padding: 22px 18px; border-radius: 18px; font-size: 22px; font-weight: 800;
+      }
+      code { color: #ffe14a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>FitMemory</p>
+      <h1>Klasör kopyalama. Yapıştır.</h1>
+      <p class="warn">Bu sayfanın adresini telefona yazma. Cursor’daki <strong>Preview</strong> düğmesine bas. Kırmızı Failed ekranında aynı başlat düğmesine basma; o düğme eski dosyaları tekrar dener ve yine düşer.</p>
+      <p>Klasör taşıyamıyorsan bu ekrandan zip indirme. Cursor’da <strong>Preview</strong> ile çalışan sunucu sayfasını aç; sarı <strong>GitHub’a yapıştır</strong> düğmesi dokuz kutuyu getirir. 1’den 9’a sırayla. 2 ve 3 yeni dosya; 4’ten önce onları kaydet.</p>
+      <a class="btn" href="./FitMemory-yeni-dosyalar.zip" download="FitMemory-yeni-dosyalar.zip">Dosyayı indir</a>
+      <ol>
+        <li>Dokuz kutuyu yapıştırıp kaydettikten sonra <a href="https://github.com/ffureagle/fitmemory">github.com/ffureagle/fitmemory</a> sayfasını yenile. En üstteki yazı <strong>bugün</strong> olmalı. Hâlâ 1 Ağustos ve “persistent mobile content scanner” yazıyorsa dur; sunucuyu başlatma.</li>
+        <li>Sunucu sayfasında sağ üstte <strong>Manual Deploy</strong> → <strong>Deploy latest commit</strong>. Yeşil / çalışıyor yazana kadar bekle. Kırmızı Failed görürsen aynı düğmeye tekrar basma, yaz bana.</li>
+      </ol>
+      <p class="ok">Sayfada <code>fitmemory-api</code> ve Docker yazısı kalsın. Başka türe geçme. Chrome’da uzantıyı Kaldır’a basma.</p>
+      <p>Telefon: Expo Go’yu tamamen kapat, aç. Profilde <strong>Mobil · 1.25.13</strong> görünsün.</p>
+      <p>Mor şerit: ücretsiz sunucu uykuya dalınca ilk açılış bir dakika sürebilir. Bu, kırmızı çökme değil.</p>
+      <p><a href="./expo-go.html">Expo Go QR</a> · <a href="./indir.html">Chrome uzantısı</a></p>
+    </main>
+  </body>
+</html>

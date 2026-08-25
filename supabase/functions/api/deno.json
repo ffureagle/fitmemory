@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "hono": "npm:hono@4.9.6",
+    "hono/cors": "npm:hono@4.9.6/cors",
+    "jose": "npm:jose@6.0.12",
+    "bcryptjs": "npm:bcryptjs@3.0.2",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.4"
+  }
+}

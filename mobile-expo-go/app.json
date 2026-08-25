@@ -3,7 +3,7 @@
     "name": "FitMemory Go",
     "slug": "fitmemory-go",
     "owner": "fstudio",
-    "version": "1.0.0",
+    "version": "1.25.13",
     "scheme": "fitmemorygo",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -17,6 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mfurkangokbag.fitmemory.go",
+      "buildNumber": "5",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
@@ -25,6 +26,7 @@
     },
     "android": {
       "package": "com.mfurkangokbag.fitmemory.go",
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/fitmemory-logo.png",
         "backgroundColor": "#000000"

@@ -65,4 +65,23 @@ public sealed class ProductScanEvidenceValidatorTests
         Assert.True(ProductScanEvidenceValidator.IsVerifiedChart(product, valid));
         Assert.False(ProductScanEvidenceValidator.IsVerifiedChart(product, invalid));
     }
+
+    [Fact]
+    public void AcceptsJeanWaistChartAsVerifiedProductMeasurement()
+    {
+        var product = new ProductDto
+        {
+            Url = "https://www.pullandbear.com/tr/straight-jean-l01234",
+            Name = "Straight jean",
+            Brand = "Pull&Bear",
+            Category = "Jeans"
+        };
+        var chart = new SizeChartDto
+        {
+            Found = true,
+            Headers = ["Beden", "Bel"],
+            Rows = [new SizeChartRowDto { Cells = ["34", "36"] }]
+        };
+        Assert.True(ProductScanEvidenceValidator.IsVerifiedChart(product, chart));
+    }
 }

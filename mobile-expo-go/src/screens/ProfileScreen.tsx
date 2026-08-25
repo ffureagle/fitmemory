@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -19,6 +19,16 @@ import { colors } from "../theme";
 import { useFeedback } from "../feedback";
 import { LanguageSwitch, Text } from "../i18n";
 import type { FitPreference, Profile } from "../types";
+import {
+  clearProfileDraft,
+  initialProfileForm,
+  profileForServerSync,
+  readProfileDraft,
+  shoulderCircumferenceCm,
+  writePendingProfile,
+  writeProfileDraft,
+  type ProfileFormState,
+} from "../profilePersistence";
 
 const preferences: {
   value: FitPreference;
@@ -47,20 +57,6 @@ const preferences: {
   },
 ];
 
-function initialForm(profile: Profile | null) {
-  return {
-    age: profile?.age?.toString() ?? "",
-    height: profile?.heightCm?.toString() ?? "",
-    weight: profile?.weightKg?.toString() ?? "",
-    shoulder: profile?.shoulderWidthCm?.toString() ?? "",
-    chest: profile?.chestCircumferenceCm?.toString() ?? "",
-    waist: profile?.waistCircumferenceCm?.toString() ?? "",
-    foot: profile?.footLengthCm?.toString() ?? "",
-    shoe: profile?.usualShoeSizeEu?.toString() ?? "",
-    preference: profile?.fitPreference ?? "TrueToSize" as FitPreference,
-  };
-}
-
 function number(value: string, name: string) {
   const parsed = Number.parseFloat(value.replace(",", "."));
   if (!Number.isFinite(parsed)) {
@@ -72,7 +68,9 @@ function number(value: string, name: string) {
 export function ProfileScreen() {
   const session = useSession();
   const feedback = useFeedback();
-  const [form, setForm] = useState(() => initialForm(session.profile));
+  const [form, setForm] = useState<ProfileFormState>(() =>
+    initialProfileForm(session.profile),
+  );
   const [editingMeasurements, setEditingMeasurements] = useState(
     !session.profile,
   );
@@ -82,24 +80,53 @@ export function ProfileScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const savedForm = initialForm(session.profile);
+  const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
+  const savedForm = initialProfileForm(session.profile);
   const formChanged = JSON.stringify(form) !== JSON.stringify(savedForm);
 
   useEffect(() => {
-    setForm(initialForm(session.profile));
-    if (session.profile) setEditingMeasurements(false);
-  }, [session.profile]);
+    let cancelled = false;
+    void (async () => {
+      const draft = await readProfileDraft(session.account?.userId);
+      if (cancelled || savingRef.current) return;
+      if (draft) {
+        dirtyRef.current = true;
+        setForm(draft.form);
+        setEditingMeasurements(true);
+        return;
+      }
+      if (dirtyRef.current) return;
+      setForm(initialProfileForm(session.profile));
+      if (session.profile) setEditingMeasurements(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.account?.userId, session.profile]);
 
   useEffect(() => {
     setApiUrl(session.apiBaseUrl);
   }, [session.apiBaseUrl]);
 
-  const set = (key: keyof typeof form, value: string) => {
+  useEffect(() => {
+    if (!session.account?.userId || !formChanged || savingRef.current) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void writeProfileDraft(session.account!.userId, form);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [form, formChanged, session.account]);
+
+  const set = (key: keyof ProfileFormState, value: string) => {
+    dirtyRef.current = true;
     setForm((current) => ({ ...current, [key]: value }));
   };
 
   const save = async () => {
     if (!session.account || !session.token) return;
+    savingRef.current = true;
     setSaving(true);
     setError("");
     setSuccess("");
@@ -108,26 +135,48 @@ export function ProfileScreen() {
         age: number(form.age, "Yaş"),
         heightCm: number(form.height, "Boy"),
         weightKg: number(form.weight, "Kilo"),
-        shoulderWidthCm: number(form.shoulder, "Omuz"),
+        shoulderWidthCm: number(form.shoulder, "Omuz çevresi"),
         chestCircumferenceCm: number(form.chest, "Göğüs"),
         waistCircumferenceCm: number(form.waist, "Bel"),
         footLengthCm: number(form.foot, "Ayak uzunluğu"),
         usualShoeSizeEu: number(form.shoe, "Ayakkabı numarası"),
         fitPreference: form.preference,
       };
-      const updated = await session.api.saveProfile(
-        session.account.userId,
-        session.token,
-        body,
-      );
-      session.updateProfile(updated);
-      setSuccess("Beden profilin güncellendi.");
+      const localProfile: Profile = {
+        userId: session.account.userId,
+        ...body,
+        createdAt: session.profile?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await writePendingProfile(localProfile);
+      session.updateProfile(localProfile, true);
+      await clearProfileDraft();
+      dirtyRef.current = false;
+      setEditingMeasurements(false);
+      setSuccess("Ölçüler bu telefonda kaydoldu.");
       feedback.success();
+      const userId = session.account.userId;
+      const token = session.token;
+      void (async () => {
+        try {
+          await session.api.health(90_000).catch(() => undefined);
+          const updated = await session.api.saveProfile(
+            userId,
+            token,
+            profileForServerSync(body),
+          );
+          session.updateProfile(updated);
+          await clearProfileDraft();
+        } catch {
+          // Sunucu uyanınca oturum açılışında yeniden denenecek.
+        }
+      })();
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Profil kaydedilemedi.",
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -176,7 +225,9 @@ export function ProfileScreen() {
           text: "Kaydetmeden çık",
           style: "destructive",
           onPress: () => {
-            setForm(initialForm(session.profile));
+            dirtyRef.current = false;
+            void clearProfileDraft();
+            setForm(initialProfileForm(session.profile));
             setEditingMeasurements(false);
             setError("");
           },
@@ -264,8 +315,7 @@ export function ProfileScreen() {
         <View style={styles.onboarding}>
           <Text style={styles.onboardingTitle}>Önce beden haritanı çıkar.</Text>
           <Text style={styles.onboardingCopy}>
-            Ölçüleri santimetre olarak gir. Omuz genişliği tek taraftan diğer
-            tarafa; göğüs ve bel ise çevre ölçüsüdür.
+            Ölçüleri santimetre olarak gir. Omuz, göğüs ve bel çevre ölçüsüdür.
           </Text>
         </View>
       ) : null}
@@ -290,7 +340,7 @@ export function ProfileScreen() {
             {session.profile.age} yaş · {session.profile.heightCm} cm · {session.profile.weightKg} kg
           </Text>
           <Text style={styles.measurementSummaryMeta}>
-            Omuz {session.profile.shoulderWidthCm} · Göğüs {session.profile.chestCircumferenceCm} · Bel {session.profile.waistCircumferenceCm} cm
+            Omuz {shoulderCircumferenceCm(session.profile.shoulderWidthCm)} · Göğüs {session.profile.chestCircumferenceCm} · Bel {session.profile.waistCircumferenceCm} cm
           </Text>
         </Card>
       ) : (
@@ -328,8 +378,9 @@ export function ProfileScreen() {
           </View>
           <View style={styles.half}>
             <Field
+              hint="Çevre ölçüsü"
               keyboardType="decimal-pad"
-              label="Omuz · cm"
+              label="Omuz çevresi · cm"
               onChangeText={(value) => set("shoulder", value)}
               placeholder=""
               value={form.shoulder}
@@ -384,12 +435,13 @@ export function ProfileScreen() {
           {preferences.map((preference) => (
             <Pressable
               key={preference.value}
-              onPress={() =>
+              onPress={() => {
+                dirtyRef.current = true;
                 setForm((current) => ({
                   ...current,
                   preference: preference.value,
-                }))
-              }
+                }));
+              }}
               style={[
                 styles.preference,
                 form.preference === preference.value &&
@@ -514,7 +566,7 @@ export function ProfileScreen() {
       </Card>
       <View style={styles.footerBrand}>
         <Brand compact />
-        <Text style={styles.version}>Mobil beta · 1.0.0</Text>
+        <Text style={styles.version}>Mobil · 1.25.13</Text>
       </View>
     </ScrollView>
   );

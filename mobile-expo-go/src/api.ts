@@ -63,6 +63,9 @@ export class FitMemoryApi {
       },
       );
     } catch (reason) {
+      if (options.signal?.aborted) {
+        throw reason;
+      }
       if ((options.retries ?? 0) > 0) {
         await new Promise((resolve) => setTimeout(resolve, 1400));
         return this.request<T>(path, {
@@ -128,6 +131,7 @@ export class FitMemoryApi {
     return this.request<AuthSession>("/api/auth/login", {
       method: "POST",
       body: { email, password },
+      timeoutMs: 90_000,
     });
   }
 
@@ -135,6 +139,7 @@ export class FitMemoryApi {
     return this.request<AuthSession>("/api/auth/register", {
       method: "POST",
       body: { displayName, email, password },
+      timeoutMs: 90_000,
     });
   }
 
@@ -197,7 +202,13 @@ export class FitMemoryApi {
   ) {
     return this.request<Profile>(
       `/api/profiles/${encodeURIComponent(userId)}`,
-      { method: "PUT", token, body: profile },
+      {
+        method: "PUT",
+        token,
+        body: profile,
+        timeoutMs: 90_000,
+        retries: 1,
+      },
     );
   }
 
@@ -236,6 +247,7 @@ export class FitMemoryApi {
     snapshot: ProductSnapshot,
     userAdjustmentNote = "",
     isReconsideration = false,
+    signal?: AbortSignal,
   ) {
     return this.request<Recommendation>("/api/recommendations/analyze", {
       method: "POST",
@@ -250,6 +262,7 @@ export class FitMemoryApi {
       },
       retries: 1,
       timeoutMs: 90_000,
+      signal,
     });
   }
 
@@ -335,6 +348,8 @@ export class FitMemoryApi {
         saveToStudio: target === "studio",
         saveToCloset: target === "saved",
       },
+      retries: 1,
+      timeoutMs: 90_000,
     });
   }
 
@@ -348,8 +363,8 @@ export class FitMemoryApi {
   getFavoriteOutfits(userId: string, token: string) {
     return this.request<FavoriteOutfit[]>(
       `/api/style-board/favorites?userId=${encodeURIComponent(userId)}`,
-      { token },
-    );
+      { token, allowNotFound: true },
+    ).then((items) => items ?? []);
   }
 
   saveFavoriteOutfit(

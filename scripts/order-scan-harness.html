@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Alışveriş özeti</title>
+    <meta property="og:site_name" content="Pull&amp;Bear" />
+    <style>
+      body { font-family: sans-serif; margin: 0; }
+      main { max-width: 420px; margin: 0 auto; padding: 24px 16px; }
+      .line { display: grid; grid-template-columns: 56px 1fr; gap: 12px; padding: 14px 0; }
+      img { width: 56px; height: 72px; background: #111; }
+    </style>
+    <script>
+      globalThis.__fitmemoryHarness = { listener: null, last: null };
+      globalThis.chrome = {
+        runtime: {
+          onMessage: {
+            addListener(fn) { globalThis.__fitmemoryHarness.listener = fn; }
+          },
+          sendMessage() {}
+        }
+      };
+    </script>
+    <script src="../extension/content.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Alışveriş özeti</h1>
+      <div class="checkout-summary">
+        <div class="line">
+          <img alt="" width="56" height="72" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='72'%3E%3Crect fill='%23222' width='56' height='72'/%3E%3C/svg%3E" />
+          <div>
+            <h2>STWD grafitili t-shirt</h2>
+            <p>920.00 TL</p>
+            <p>1</p>
+            <p>M</p>
+            <p>Siyah</p>
+          </div>
+        </div>
+        <div class="line">
+          <img alt="" width="56" height="72" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='72'%3E%3Crect fill='%23111' width='56' height='72'/%3E%3C/svg%3E" />
+          <div>
+            <h2>İşlemeli STWD şişme mont</h2>
+            <p>1.190,00 TL</p>
+            <p>1</p>
+            <p>M</p>
+            <p>Siyah</p>
+          </div>
+        </div>
+        <div>
+          <p>Teslim edildi</p>
+          <p>18.05.2026</p>
+          <p>2.199,00 TL</p>
+        </div>
+      </div>
+    </main>
+    <pre id="out">waiting</pre>
+    <script>
+      (async () => {
+        const out = document.getElementById("out");
+        try {
+          const listener = globalThis.__fitmemoryHarness.listener;
+          if (!listener) {
+            out.textContent = JSON.stringify({
+              error: "no listener",
+              version: globalThis.__fitMemoryContentScriptVersion || null
+            });
+            return;
+          }
+          const response = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("timeout")), 8000);
+            const maybeAsync = listener(
+              { type: "SCAN_FITMEMORY_ORDERS_V120" },
+              {},
+              (value) => {
+                clearTimeout(timer);
+                resolve(value);
+              }
+            );
+            if (maybeAsync !== true) {
+              clearTimeout(timer);
+              resolve({ error: "listener did not return true" });
+            }
+          });
+          out.textContent = JSON.stringify({
+            version: globalThis.__fitMemoryContentScriptVersion || null,
+            error: response?.error || null,
+            count: response?.history?.orderCards?.length || 0,
+            cards: (response?.history?.orderCards || []).map((card) => ({
+              productName: card.productName,
+              purchasedSize: card.purchasedSize,
+              brand: card.brand
+            }))
+          }, null, 2);
+        } catch (error) {
+          out.textContent = JSON.stringify({ error: String(error && error.stack || error) });
+        }
+      })();
+    </script>
+  </body>
+</html>
