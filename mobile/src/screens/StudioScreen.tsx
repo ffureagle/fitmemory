@@ -290,7 +290,7 @@ export function StudioScreen() {
       </View>
       <Text style={styles.intro}>
         {tab === "saved"
-          ? "Taradığın ürünler burada durur. Fotoğrafa dokununca mağaza sayfası açılır."
+          ? "Henüz almadığın, bedenini bulduğun ürünler. Satın aldığın parçalar Dolabım’dadır."
           : tab === "studio"
           ? "Taradığın aday parçaları kategori kategori seç; AI kesim, renk, mevsim ve yaş uyumunu birlikte yorumlar."
           : "Beğendiğin stüdyo kombinleri burada saklanır. Ürün görseline dokunarak resmi ürün sayfasını açabilirsin."}
@@ -301,7 +301,7 @@ export function StudioScreen() {
       {tab === "saved" ? (
         !savedItems.length ? (
           <EmptyState
-            copy="Bir ürün taradıktan sonra “Ürünü kaydet” dersen marka, beden ve fotoğrafıyla burada görünür."
+            copy="Bir ürün taradıktan sonra “Ürünü kaydet” dersen henüz almadığın aday burada durur. Satın aldığın parçalar Dolabım’dadır."
             symbol="▣"
             title="Henüz kayıt yok"
           />
