@@ -13,7 +13,8 @@ public static class GitHubPastePage
         ("backend/Services/LocalFitRecommendationEngine.cs", false, "6. Pantolon 42"),
         ("backend/Services/PlaywrightProductAgentService.cs", false, "7. Tarayıcı yoksa düşmesin"),
         ("backend/Services/GeminiRecommendationClient.cs", false, "8. AI talimatı"),
-        ("backend/Services/OpenAiRecommendationClient.cs", false, "9. AI talimatı")
+        ("backend/Services/OpenAiRecommendationClient.cs", false, "9. AI talimatı"),
+        ("backend/Models/OrderOutcome.cs", false, "10. Derleme — Türkçe dolap özeti")
     ];
 
     public static IResult Page()
