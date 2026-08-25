@@ -126,9 +126,12 @@ if (!string.IsNullOrWhiteSpace(configuredPostgresHost))
             ?? "postgres",
         Password = configuredPostgresPassword,
         SslMode = SslMode.Require,
+        Timeout = 30,
+        CommandTimeout = 30,
         IncludeErrorDetail = false
     };
     postgresConnection["GSS Encryption Mode"] = "Disable";
+    postgresConnection["Channel Binding"] = "Prefer";
     connectionString = postgresConnection.ConnectionString;
 }
 var configuredDatabaseProvider = (
@@ -324,9 +327,12 @@ app.MapGet(
             databaseHealthy = await db.Database.CanConnectAsync(
                 cancellationToken);
         }
-        catch
+        catch (Exception exception)
         {
             databaseHealthy = false;
+            app.Logger.LogError(
+                exception,
+                "Health check could not reach the database.");
         }
         return Results.Ok(new
         {
