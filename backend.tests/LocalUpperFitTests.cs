@@ -55,6 +55,8 @@ public sealed class LocalUpperFitTests
 
         Assert.NotEqual("Bilinmiyor", result.RecommendedSize);
         Assert.Equal("M", result.RecommendedSize);
+        Assert.True(result.Explanation.Length >= 160);
+        Assert.Contains("rahat", result.Explanation, StringComparison.OrdinalIgnoreCase);
     }
 
     private static RecommendationResult AnalyzeTee(

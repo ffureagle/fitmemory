@@ -5,6 +5,7 @@ import {
   BackHandler,
   Image,
   Keyboard,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -306,8 +307,11 @@ export function ScanScreen({
         result.recommendedSize === "Bilinmiyor" ||
         result.dataSource === "local-insufficient"
       ) {
+        const rowCount = nextSnapshot.sizeChart.rows.length;
         throw new Error(
-          "Ürün ölçüleri okunmadan beden önerisi verilmedi. Ölçüler sekmesini açık bırakıp Açık ölçüleri oku.",
+          rowCount <= 1
+            ? "Açık panelde yalnız seçili bedenin milimleri okundu; diğer bedenler toplanamadı. Ölçü tablosunu açık bırakıp tekrar dene."
+            : "Ürün ölçüleri okundu ama bu kalıpta ölçülerinle güvenle örtüşen bir beden bulunamadı. Tablodaki komşu bedenleri kontrol edip tekrar dene.",
         );
       }
       setSnapshot(nextSnapshot);
@@ -595,10 +599,8 @@ export function ScanScreen({
       );
       await session.refresh();
       feedback.success();
-      setSnapshot(null);
-      setRecommendation(null);
-      setNote("");
-      setStatus("");
+      setStatus("Stüdyo → Kaydedilenler sekmesine eklendi.");
+      setTimeout(() => setStatus(""), 5000);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ürün kaydedilemedi.");
     } finally {
@@ -849,10 +851,18 @@ export function ScanScreen({
               <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={styles.resultProduct}>
                   {snapshot.product.imageUrl ? (
-                    <Image
-                      source={{ uri: snapshot.product.imageUrl }}
-                      style={styles.resultImage}
-                    />
+                    <Pressable
+                      onPress={() =>
+                        snapshot.product.url
+                          ? void Linking.openURL(snapshot.product.url)
+                          : undefined
+                      }
+                    >
+                      <Image
+                        source={{ uri: snapshot.product.imageUrl }}
+                        style={styles.resultImage}
+                      />
+                    </Pressable>
                   ) : (
                     <View style={styles.resultImageFallback}>
                       <Text style={styles.resultImageFallbackText}>FM</Text>

@@ -15,6 +15,21 @@ const scannerBootstrap = String.raw`
     .replace(/ç/g, "c")
     .replace(/ö/g, "o")
     .replace(/ü/g, "u");
+  const parseDisplayedMeasure = (value) => {
+    const text = String(value || "");
+    const cm = text.match(/(\d{1,3}(?:[.,]\d+)?)\s*(?:cm|santimetre)\b/i);
+    if (cm) return cm[1].replace(",", ".");
+    const folded = fold(text);
+    const slash = text.match(/(\d{1,3}(?:[.,]\d+)?)\s*(?:cm|santimetre)?\s*\/\s*(\d{1,3}(?:[.,]\d+)?)/i);
+    if (slash && /\b(inc|inch)\b/.test(folded)) return slash[1].replace(",", ".");
+    return (text.replace(",", ".").match(/\d{1,3}(?:\.\d+)?/) || [""])[0];
+  };
+  const chartUnitFromText = (text) => {
+    const folded = fold(text);
+    if (/\bcm\b|santimetre/.test(folded)) return "Centimeters";
+    if (/\b(inch|inc)\b/.test(folded)) return "Inches";
+    return "Centimeters";
+  };
   const visible = (element) => {
     if (!element || !(element instanceof Element)) return false;
     const style = getComputedStyle(element);
@@ -412,7 +427,16 @@ const scannerBootstrap = String.raw`
     } catch (error) { recordDiagnostic("scanner-operation", error); }
     }
     try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
-    await sleep(45);
+    const input = target.tagName === "INPUT" ? target :
+      target.querySelector?.("input[type='radio'], input[type='checkbox']");
+    if (input && "checked" in input) {
+      try {
+        input.checked = true;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch (error) { recordDiagnostic("input-check", error); }
+    }
+    await sleep(90);
     roots(true);
     return true;
   };
@@ -1207,7 +1231,7 @@ const scannerBootstrap = String.raw`
     const seen = new Set();
     const add = (label, value) => {
       const normalized = normalizeMeasurementLabel(label);
-      const numeric = clean(value).replace(",", ".").match(/\d{1,3}(?:\.\d+)?/)?.[0] || "";
+      const numeric = parseDisplayedMeasure(value);
       if (!normalized || !numeric || seen.has(normalized)) return;
       if (!/^[1-9]\d(?:\.\d+)?$|^[1-9]\d{2}(?:\.\d+)?$/.test(numeric)) return;
       if (Number(numeric) < 10) return;
@@ -1229,7 +1253,7 @@ const scannerBootstrap = String.raw`
         .map((element) => ownText(element))
         .filter((value) => value && value.length <= 90)
     ].join("\n"));
-    const pattern = /(gogus|chest|bust|on\s*uzunluk|front\s*length|sirt\s*genisligi|back\s*width|kol\s*genisligi|arm\s*width|kol\s*uzunlugu|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunluk|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*(?:cm\s*)?(\d{1,3}(?:[.,]\d+)?)/gi;
+    const pattern = /(gogus|chest|bust|on\s*uzunlu[gk]u?|front\s*length|sirt\s*genisligi|back\s*width|kol\s*genisligi|arm\s*width|kol\s*uzunlu[gk]u?|sleeve(?:\s*length)?|bel|waist|kalca|basen|hip|omuz|shoulder|ic\s*bacak|inseam|uyluk|thigh|paca|leg\s*opening|ag\s*yuksekligi|rise|uzunlu[gk]u?|length)(?:\s+(?:cevresi|genisligi|eni|width))?\s*[:\-.]?\s*((?:\d{1,3}(?:[.,]\d+)?\s*(?:cm|santimetre)?\s*(?:\/\s*\d{1,3}(?:[.,]\d+)?(?:\s*(?:inc|inch|inç))?)?)|\d{1,3}(?:[.,]\d+)?)/gi;
     for (const match of text.matchAll(pattern)) add(match[1], match[2]);
     if (measurements.length < 2) {
       const labels = all("th, td, dt, dd, [role='rowheader'], p, span, div")
@@ -1241,10 +1265,10 @@ const scannerBootstrap = String.raw`
         let row = labelElement.parentElement;
         for (let depth = 0; row && depth < 4; depth += 1) {
           const label = clean(labelElement.innerText || labelElement.textContent);
-          const values = (clean(row.innerText || row.textContent).match(/\d{1,3}(?:[.,]\d+)?/g) || [])
-            .filter((item) => /^\d{2,3}(?:[.,]\d+)?$/.test(item));
-          if (clean(row.innerText || "").length > 120) { row = row.parentElement; continue; }
-          if (values.length) { add(label, values[0]); break; }
+          const rowText = clean(row.innerText || row.textContent);
+          if (rowText.length > 160) { row = row.parentElement; continue; }
+          const preferred = parseDisplayedMeasure(rowText);
+          if (preferred) { add(label, rowText); break; }
           row = row.parentElement;
         }
       }
@@ -1268,7 +1292,7 @@ const scannerBootstrap = String.raw`
     return {
       found: true,
       title: "Urun olculeri",
-      unit: /\b(inch|inc)\b/i.test(fold(panelText(scope))) ? "Inches" : "Centimeters",
+      unit: chartUnitFromText(panelText(scope)),
       headers,
       rows: [row],
       rawText: [headers.join(" | "), row.cells.join(" | ")].join("\n")
@@ -1279,59 +1303,107 @@ const scannerBootstrap = String.raw`
     if (!panel) return "";
     return extractMeasurements(panel).map((item) => item.label + ":" + item.value).join("|") || panelText(panel).slice(0, 1000);
   };
+  const containedSizeButtons = (panel) => {
+    if (!panel || panel === document || panel === document.body) return [];
+    const result = [];
+    const seen = new Set();
+    for (const element of all(
+      "button, [role='radio'], [role='option'], [role='button'], [role='tab'], input[type='radio'], li, label, span"
+    )) {
+      if (!visible(element) || !panel.contains(element)) continue;
+      const label = sizeLabelFromText(controlText(element));
+      if (!label || !sizePattern.test(label)) continue;
+      let target = clickable(element);
+      if (target && !panel.contains(target)) target = element;
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      result.push(target);
+    }
+    return result.slice(0, 24);
+  };
+  const measurementOverlay = () => {
+    const panel = findMeasurePanel();
+    if (!panel) return findSizePanel();
+    let current = panel;
+    for (let depth = 0; current && depth < 12; depth += 1) {
+      if (containedSizeButtons(current).length >= 2) return current;
+      current = current.parentElement;
+    }
+    return panel;
+  };
+  const overlaySizeControl = (overlay, size) => {
+    const exact = containedSizeButtons(overlay).find((button) =>
+      sizeLabelFromText(controlText(button)) === size);
+    if (exact) return exact;
+    return all("button, [role='radio'], [role='option'], [role='button'], [role='tab'], span, div, li, label")
+      .filter(visible)
+      .filter((element) => overlay.contains(element) &&
+        sizeLabelFromText(ownText(element) || controlText(element)) === size &&
+        clean(ownText(element) || controlText(element)).length <= 8)
+      .sort((left, right) => left.childElementCount - right.childElementCount)[0] || null;
+  };
   const panelChart = async () => {
-    let panel = findMeasurePanel() || findSizePanel() || document.body;
-    if (!panel) return null;
-    const availableButtons = () => {
-      const local = findSizeButtons(panel);
-      return local.length ? local : findSizeButtons(document);
+    let overlay = measurementOverlay() || findMeasurePanel() || findSizePanel() || document.body;
+    if (!overlay) return null;
+    const sizeControls = () => {
+      const local = containedSizeButtons(overlay);
+      if (local.length >= 2) return local;
+      const nearby = findSizeButtons(overlay);
+      return nearby.length ? nearby : findSizeButtons(document);
     };
-    const initial = availableButtons().find(selectedSizeButton);
+    const initial = sizeControls().find(selectedSizeButton);
     const initialLabel = sizeLabelFromText(controlText(initial));
-    const labels = availableButtons()
+    const labels = sizeControls()
       .map((button) => sizeLabelFromText(controlText(button)))
       .filter(Boolean)
       .filter((size, index, values) => values.indexOf(size) === index);
     const records = [];
     let headers = null;
-    const targets = labels;
-    if (!targets.length) return null;
-    for (const size of targets.slice(0, 10)) {
+    if (!labels.length) return null;
+    for (const size of labels.slice(0, 10)) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
-      panel = findMeasurePanel() || findSizePanel() || panel;
-      const localButtons = findSizeButtons(panel);
-      const button = (localButtons.length ? localButtons : findSizeButtons(document)).find((candidate) =>
-        sizeLabelFromText(controlText(candidate)) === size);
+      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const button = overlaySizeControl(overlay, size) ||
+        sizeControls().find((candidate) => sizeLabelFromText(controlText(candidate)) === size);
       if (button) {
+        const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
         await clickElement(button);
-        await waitFor(() => selectedSizeButton(button) || extractMeasurements(findMeasurePanel() || panel).length >= 2 || measureSignature() !== before, 3200, 70);
-        await waitForStable(() => measureSignature() || extractMeasurements(findMeasurePanel() || document.body).map((item) => item.value).join("|"), 1600, 120);
+        const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
+          sizeLabelFromText(ownText(node) || controlText(node)) === size);
+        if (inner && inner !== button) await clickElement(inner);
+        await waitFor(() => {
+          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+          const afterValues = extractMeasurements(nextOverlay).map((item) => item.value).join("|");
+          return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
+        }, 4200, 70);
+        await waitForStable(() => {
+          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+          return extractMeasurements(nextOverlay).map((item) => item.value).join("|") || measureSignature();
+        }, 1800, 110);
       }
-      panel = findMeasurePanel() || findSizePanel() || panel;
-      const measurements = extractMeasurements(panel);
+      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const measurements = extractMeasurements(overlay);
       if (!measurements.length) continue;
       headers ||= ["Beden", ...measurements.map((item) => item.label)];
       const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
-      records.push({
-        cells: [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")]
-      });
+      const cells = [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")];
+      const existing = records.find((row) => row.cells[0] === size);
+      if (existing) existing.cells = cells;
+      else records.push({ cells: cells });
     }
     if (initialLabel) {
-      panel = findMeasurePanel() || findSizePanel() || panel;
-       const restoreButtons = findSizeButtons(panel);
-       const restore = (restoreButtons.length ? restoreButtons : findSizeButtons(document)).find((button) =>
-        sizeLabelFromText(controlText(button)) === initialLabel);
+      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const restore = overlaySizeControl(overlay, initialLabel);
       if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
-    const finalText = panelText(findMeasurePanel() || findSizePanel() || panel);
+    const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
     if (!records.length || !headers) return null;
     return {
       found: true,
       title: "Ürün ölçüleri",
-      unit: /\bcm\b/i.test(finalText) ? "Centimeters" :
-        /\b(inch|inç)\b/i.test(finalText) ? "Inches" : "Centimeters",
+      unit: chartUnitFromText(finalText),
       headers,
       rows: records.slice(0, 30),
       rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
@@ -1382,7 +1454,9 @@ const scannerBootstrap = String.raw`
       await revealWideTables();
       const table = await safeChart(() => tableChart());
       if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
-      if (metricLabelsVisible() && findSizeButtons(document).length >= 2) {
+      const overlay = measurementOverlay();
+      const overlayButtons = overlay ? containedSizeButtons(overlay) : [];
+      if (metricLabelsVisible() && (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2)) {
         const walked = await safeChart(() => panelChart());
         if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
       }

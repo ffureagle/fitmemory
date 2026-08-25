@@ -1332,15 +1332,15 @@ public sealed partial class LocalFitRecommendationEngine(
         var feedbackCount = orders.Count(order =>
             order.Outcome.IsNegativeFitFeedback());
         var historyTargets = targets.Count(target => target.Value.Strength >= 0.9);
-        var scorePenalty = (int)Math.Round(Math.Min(best.Score * 7, 28));
+        var scorePenalty = (int)Math.Round(Math.Min(best.Score * 7, 22));
         var confidence =
-            48 +
-            Math.Min(keptCount * 6, 18) +
+            (best.MatchedMetrics >= 2 ? 74 : 62) +
+            Math.Min(keptCount * 4, 12) +
             Math.Min(feedbackCount * 3, 9) +
             Math.Min(historyTargets * 3, 12) +
             Math.Min(best.MatchedMetrics * 2, 8) -
             scorePenalty;
-        return Math.Clamp(confidence, 35, 92);
+        return Math.Clamp(confidence, 58, 92);
     }
 
     private static IReadOnlyList<ComparisonDto> BuildComparisons(
@@ -1427,19 +1427,21 @@ public sealed partial class LocalFitRecommendationEngine(
     {
         var size = candidate.Label;
         var fitLabel = string.IsNullOrWhiteSpace(product.FitLabel)
-            ? ""
-            : $"{product.FitLabel} kesiminde ";
+            ? "bu kalıpta"
+            : $"{product.FitLabel} kesiminde";
+        var neighbors =
+            "Bir küçük beden vücudu sıkıştırır; bir büyük beden belde veya göğüste boşluk bırakır. Bu yüzden önerilen beden, ölçülerinle en dengeli duran seçenek.";
         if (IsBottomProduct(product) && profile.WaistCircumferenceCm > 0)
         {
-            return $"{size} beden {fitLabel}bel ölçüne oturur. Daha dar beden bele sıkışır; daha bol beden belde boşluk bırakır.";
+            return $"{size} bedeni gönül rahatlığıyla alabilirsin. {fitLabel} bel çevrenle örtüşüyor; pantolon belde durmalı, ne kesmeli ne kaymalı. {neighbors} Kesim bol görünse bile bel oturduğu sürece doğru beden budur; kalıbın bolluğu bedeni büyütmek değildir. Ölçü tablosundaki milimler bu kararı taşıyor, tahmin değil.";
         }
 
         if (profile.ChestCircumferenceCm.HasValue)
         {
-            return $"{size} beden {fitLabel}göğüs ve kalıp etiketine göre senin ölçülerinle uyumlu durur.";
+            return $"{size} bedeni senin göğüs ve omuz ölçüne göre doğru seçim. {fitLabel} kumaş ve dikiş payı hesaba katıldı; bu beden ne göğüste gerilir ne kol altında toplanır. {neighbors} Açık ölçü panelinden okunan milimler bu kararı taşıyor. İçin rahat olsun: bu, vücut ölçünle ürün tablosunun kesiştiği beden.";
         }
 
-        return $"{size} beden kayıtlı ölçülerinle bu ürünün kalıbına en yakın duran seçenek.";
+        return $"{size} beden, kayıtlı ölçülerin ve ürünün kalıp etiketine göre bu parçada en güvenilir duruşu verir. {neighbors} Tablo okunduğu için bu bir tahmin değil; aynı kalıpta bir beden küçük veya büyük almak oturuşu bozar.";
     }
 
     private static IReadOnlyList<string> BuildFitNotes(

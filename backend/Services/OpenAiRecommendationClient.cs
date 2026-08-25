@@ -380,12 +380,13 @@ public sealed class OpenAiRecommendationClient(
                 omuz veya kıyafet bedeni ayakkabı numarası kanıtı değildir. Marka tablosu olmadan santimetreden
                 kesin EU dönüşümü uydurma; alışılan EU numarasını yalnız düşük güvenli başlangıç kabul et.
             10. Write every user-facing field in {responseLanguage}.
-            10.1 verdict tek ve kısa bir karar cümlesi olsun. explanation 2-4 kısa cümleyi geçmesin:
-                 önce önerilen beden ve ana gerekçe, sonra yalnız kullanıcı için önemli kalıp/boy uyarısı.
-                 Hedef, cm formülü, bolluk hesabı veya teknik karşılaştırma yazma. Kullanıcıyı ikna eden
-                 sade dil kullan. İç sistem adlarını ve hesap günlüğünü yazma.
-            11. Güven puanı kesinlik değildir. Asla 100 verme; ölçülü ve doğrulanmış kategori kanıtı
-                sınırlıysa 50-70 aralığını kullan.
+            10.1 verdict tek ve kısa bir karar cümlesi olsun. explanation 5-8 cümle olsun:
+                 kullanıcıyı rahatlat. Bu bedenin neden doğru oturduğunu, komşu bedenlerin neden
+                 kaçacağını, kesimin nasıl duracağını anlat. “En güçlü eşleşme” yetmez.
+                 Hedef, cm formülü, bolluk hesabı veya teknik karşılaştırma yazma. İç sistem
+                 adlarını ve hesap günlüğünü yazma.
+            11. Güven puanı kesinlik değildir. Resmi tablo okundu ve beden netse 74-88 kullan;
+                %55 gibi düşük bırakma. Kanıt zayıfsa 55-68 kullan. Asla 100 verme.
             """;
 
         return new

@@ -416,13 +416,18 @@ public sealed class GeminiRecommendationClient(
                 omuz veya kıyafet bedeni ayakkabı numarası kanıtı değildir. Marka tablosu olmadan santimetreden
                 kesin EU dönüşümü uydurma; alışılan EU numarasını yalnız düşük güvenli başlangıç kabul et.
             10. Write every user-facing field in {responseLanguage}.
-            10.1 verdict tek ve kısa bir karar cümlesi olsun. explanation 2-4 kısa cümleyi geçmesin:
-                 önce önerilen beden ve ana gerekçe, sonra yalnız kullanıcı için önemli kalıp/boy uyarısı.
+            10.1 verdict tek ve kısa bir karar cümlesi olsun. explanation 5-8 cümle olsun:
+                 kullanıcıyı rahatlat. Bu bedenin neden doğru oturduğunu, bir küçük/bir büyük bedenin
+                 neden kaçacağını, kesimin ve kumaşın nasıl duracağını anlat. “En güçlü eşleşme”
+                 tek başına yetmez; içini rahatlatan, somut ve sakin bir dil kullan.
                  Hedef, cm formülü, bolluk hesabı, “kayıtlı profilinize en yakın”, veri kaynağı kodu
-                 veya teknik karşılaştırma yazma. Kullanıcıyı ikna eden, güvenirliği anlatan sade dil kullan.
-                 İç sistem adlarını, hesap günlüğünü, aynı sayının tekrarını yazma.
-            11. Güven puanı kesinlik değildir. Kanıt sınırlıysa 50-70 aralığını kullan; birden fazla
-                resmi ölçü ve kullanıcı geri bildirimi yoksa 90 üzerine çıkma. Asla 100 verme.
+                 veya teknik karşılaştırma yazma. İç sistem adlarını, hesap günlüğünü, aynı sayının
+                 tekrarını yazma. Ölçü yoksa beden uydurma.
+            11. Güven puanı kesinlik değildir. Resmi ürün ölçü tablosu okundu ve bir beden net
+                oturuyorsa 74-88 aralığını kullan. %55 gibi düşük puan “emin değilim” diye okunur;
+                tablo varken kullanıcıyı tedirgin etme. Kanıt gerçekten zayıfsa (tek satır, eksik
+                milim, çelişen iade) 55-68 kullan. Birden fazla resmi ölçü ve kullanıcı geri
+                bildirimi yoksa 90 üzerine çıkma. Asla 100 verme.
             """;
 
         return new
@@ -443,8 +448,10 @@ public sealed class GeminiRecommendationClient(
                             tahminden üstün tut. Aynı beden etiketini farklı kalıplarda eşit sayma:
                             Straight ile Super Baggy, Slim ile Wide Leg, Boxy ile Oversized ayrı kanıt
                             aileleridir. Boxy'yi Oversized sayma; ürün kalıbının kendi bolluğunu
-                            kullanıcı tercihine ekleyerek iki kez büyütme. Yalnız sağlanan
-                            kanıta dayalı, kısa ve kararlı bir beden kararı üret. Asla ölçü uydurma.
+                            kullanıcı tercihine ekleyerek iki kez büyütme. Yalnız sağlanan kanıta dayalı,
+                            kararlı bir beden kararı üret. Asla ölçü uydurma.
+                            Kullanıcıya bu bedenin doğru olduğunu sakin ve yeterli uzunlukta anlat;
+                            tek cümlelik “en güçlü eşleşme” ile bırakma.
                             Kombin yorumu ikincildir; asıl işin doğru bedeni seçmektir.
                             Beden analizinde kategorileri kesin biçimde izole et. Stil analizinde ise
                             yalnız wardrobe listesindeki gerçek, iade edilmemiş parçalarla yaş bağlamını

@@ -54,7 +54,7 @@ function slot(item: StyleBoardItem) {
 
 export function StudioScreen() {
   const session = useSession();
-  const [tab, setTab] = useState<"studio" | "favorites">("studio");
+  const [tab, setTab] = useState<"studio" | "saved" | "favorites">("studio");
   const [analysis, setAnalysis] = useState<StyleBoardAnalysis | null>(
     null,
   );
@@ -80,6 +80,7 @@ export function StudioScreen() {
   const studioFavorites = session.favoriteOutfits.filter(
     (item) => !item.title.startsWith("Dolap · "),
   );
+  const savedItems = session.styleBoard.filter((item) => item.isSaved);
 
   const selectItem = async (item: StyleBoardItem) => {
     if (!session.token || !session.account) return;
@@ -141,6 +142,34 @@ export function StudioScreen() {
         reason instanceof Error ? reason.message : "Parça silinemedi.",
       );
     }
+  };
+
+  const deleteSaved = async (item: StyleBoardItem) => {
+    if (!session.token || !session.account) return;
+    setError("");
+    try {
+      await session.api.deleteSavedItem(
+        item.id,
+        session.account.userId,
+        session.token,
+      );
+      session.updateStyleBoard(
+        item.isInStudio
+          ? session.styleBoard.map((candidate) =>
+              candidate.id === item.id ? { ...candidate, isSaved: false } : candidate,
+            )
+          : session.styleBoard.filter((candidate) => candidate.id !== item.id),
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Kayıt kaldırılamadı.",
+      );
+    }
+  };
+
+  const openProduct = (item: StyleBoardItem) => {
+    if (!item.productUrl) return;
+    void Linking.openURL(item.productUrl);
   };
 
   const saveFavorite = async () => {
@@ -245,6 +274,7 @@ export function StudioScreen() {
       <View accessibilityRole="tablist" style={styles.tabs}>
         {([
           ["studio", "Stüdyo"],
+          ["saved", `Kaydedilenler · ${savedItems.length}`],
           ["favorites", `Favoriler · ${studioFavorites.length}`],
         ] as const).map(([key, label]) => (
           <Pressable
@@ -259,14 +289,56 @@ export function StudioScreen() {
         ))}
       </View>
       <Text style={styles.intro}>
-        {tab === "studio"
+        {tab === "saved"
+          ? "Taradığın ürünler burada durur. Fotoğrafa dokununca mağaza sayfası açılır."
+          : tab === "studio"
           ? "Taradığın aday parçaları kategori kategori seç; AI kesim, renk, mevsim ve yaş uyumunu birlikte yorumlar."
           : "Beğendiğin stüdyo kombinleri burada saklanır. Ürün görseline dokunarak resmi ürün sayfasını açabilirsin."}
       </Text>
       {error ? (
         <ErrorNotice message={error} onDismiss={() => setError("")} />
       ) : null}
-      {tab === "favorites" ? (
+      {tab === "saved" ? (
+        !savedItems.length ? (
+          <EmptyState
+            copy="Bir ürün taradıktan sonra “Ürünü kaydet” dersen marka, beden ve fotoğrafıyla burada görünür."
+            symbol="▣"
+            title="Henüz kayıt yok"
+          />
+        ) : (
+          <View style={styles.savedList}>
+            {savedItems.map((item) => (
+              <Card key={item.id} style={styles.savedCard}>
+                <Pressable onPress={() => openProduct(item)} style={styles.savedImagePress}>
+                  {item.imageUrl ? (
+                    <Image source={{ uri: item.imageUrl }} style={styles.savedImage} />
+                  ) : (
+                    <View style={styles.savedFallback}>
+                      <Text style={styles.savedFallbackText}>FM</Text>
+                    </View>
+                  )}
+                </Pressable>
+                <View style={styles.savedCopy}>
+                  <Text style={styles.savedBrand}>{item.brand}</Text>
+                  <Text numberOfLines={2} style={styles.savedName}>{item.productName}</Text>
+                  <View style={styles.savedMetaRow}>
+                    {item.recommendedSize ? (
+                      <Text style={styles.size}>{item.recommendedSize}</Text>
+                    ) : null}
+                    {item.fitLabel ? (
+                      <Text numberOfLines={1} style={styles.fit}>{item.fitLabel}</Text>
+                    ) : null}
+                  </View>
+                  {item.price ? <Text style={styles.savedPrice}>{item.price}</Text> : null}
+                  <Pressable onPress={() => void deleteSaved(item)}>
+                    <Text style={styles.clearText}>Kayıttan çıkar</Text>
+                  </Pressable>
+                </View>
+              </Card>
+            ))}
+          </View>
+        )
+      ) : tab === "favorites" ? (
         !studioFavorites.length ? (
           <EmptyState copy="Stilist yorumunu aldıktan sonra kombini favorilerine ekleyebilirsin." symbol="♡" title="Favori kombin yok" />
         ) : (
@@ -471,9 +543,26 @@ const styles = StyleSheet.create({
     minHeight: 42,
   },
   tabActive: { backgroundColor: colors.card },
-  tabText: { color: colors.muted, fontSize: 11, fontWeight: "800" },
+  tabText: { color: colors.muted, fontSize: 10, fontWeight: "800", textAlign: "center" },
   tabTextActive: { color: colors.ink },
   favoriteList: { gap: 12 },
+  savedList: { gap: 12 },
+  savedCard: { flexDirection: "row", gap: 12, padding: 12 },
+  savedImagePress: { flexShrink: 0 },
+  savedImage: { backgroundColor: "#EEECE6", borderRadius: 10, height: 118, resizeMode: "cover", width: 88 },
+  savedFallback: { alignItems: "center", backgroundColor: "#EEECE6", borderRadius: 10, height: 118, justifyContent: "center", width: 88 },
+  savedFallbackText: { color: colors.muted, fontSize: 12, fontWeight: "900" },
+  savedCopy: { flex: 1, gap: 6, justifyContent: "center" },
+  savedBrand: {
+    color: colors.blue,
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  savedName: { color: colors.ink, fontSize: 14, fontWeight: "800", lineHeight: 18 },
+  savedMetaRow: { alignItems: "center", flexDirection: "row", gap: 6 },
+  savedPrice: { color: colors.muted, fontSize: 12, fontWeight: "700" },
   favoriteCard: { gap: 11 },
   favoriteImages: { gap: 7 },
   favoriteImage: { backgroundColor: "#EEECE6", borderRadius: 9, height: 128, resizeMode: "cover", width: 96 },

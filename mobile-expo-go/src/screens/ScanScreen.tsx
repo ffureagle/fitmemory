@@ -6,6 +6,7 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -53,23 +54,46 @@ const shops = [
 function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null {
   const selected = pageText.match(/\[selected\]\s*(XXXL|XXL|XL|L|M|S|XS|XXS|\d{2,3})\b/i)?.[1]?.toUpperCase();
   if (!selected) return null;
-  const metrics: Array<[RegExp, string]> = [
-    [/(?:göğüs|gogus|chest|bust)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Göğüs"],
-    [/(?:omuz|shoulder)(?:\s+(?:genişliği|genisligi|width))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Omuz"],
-    [/(?:bel|waist)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Bel"],
-    [/(?:kalça|kalca|basen|hip)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Kalça"],
-    [/(?:ön uzunluk|on uzunluk|front length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Ön uzunluk"],
-    [/(?:kol uzunluğu|kol uzunlugu|sleeve length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i, "Kol uzunluğu"],
-  ];
-  const found = metrics.map(([pattern, label]) => [label, pageText.match(pattern)?.[1]?.replace(",", ".")] as const)
-    .filter((item): item is readonly [string, string] => Boolean(item[1]));
-  if (!found.length) return null;
+  const pick = (...patterns: RegExp[]) => {
+    for (const pattern of patterns) {
+      const match = pageText.match(pattern);
+      if (match?.[1]) return match[1].replace(",", ".");
+    }
+    return "";
+  };
+  const metrics: Array<[string, string]> = [
+    ["Göğüs", pick(
+      /(?:göğüs|gogus|chest|bust)[^\n]{0,48}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:göğüs|gogus|chest|bust)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+    ["Omuz", pick(
+      /(?:omuz|shoulder)[^\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:omuz|shoulder)(?:\s+(?:genişliği|genisligi|width))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+    ["Bel", pick(
+      /(?:bel|waist)[^\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:bel|waist)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+    ["Kalça", pick(
+      /(?:kalça|kalca|basen|hip)[^\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:kalça|kalca|basen|hip)(?:\s+(?:çevresi|cevresi|eni))?\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+    ["Ön uzunluk", pick(
+      /(?:ön uzunluk|on uzunluk|front length)[^\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:ön uzunluk|on uzunluk|front length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+    ["Kol uzunluğu", pick(
+      /(?:kol uzunluğu|kol uzunlugu|sleeve length)[^\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*cm/i,
+      /(?:kol uzunluğu|kol uzunlugu|sleeve length)\s*[:.-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    )],
+  ].filter((item): item is [string, string] => Boolean(item[1]));
+  if (!metrics.length) return null;
   return {
     found: true,
     title: "Ekranda okunan ürün ölçüleri",
     unit: /\bcm\b/i.test(pageText) ? "Centimeters" : "Unknown",
-    headers: ["Beden", ...found.map(([label]) => label)],
-    rows: [{ cells: [selected, ...found.map(([, value]) => value)] }],
+    headers: ["Beden", ...metrics.map(([label]) => label)],
+    rows: [{ cells: [selected, ...metrics.map(([, value]) => value)] }],
     rawText: pageText.slice(0, 12000),
   };
 }
@@ -377,8 +401,11 @@ export function ScanScreen({
         result.recommendedSize === "Bilinmiyor" ||
         result.dataSource === "local-insufficient"
       ) {
+        const rowCount = nextSnapshot.sizeChart.rows.length;
         throw new Error(
-          "Ürün ölçüleri okunmadan beden önerisi verilmedi. Ölçüler sekmesini açık bırakıp Açık ölçüleri oku.",
+          rowCount <= 1
+            ? "Açık panelde yalnız seçili bedenin milimleri okundu; diğer bedenler toplanamadı. Ölçü tablosunu açık bırakıp tekrar dene."
+            : "Ürün ölçüleri okundu ama bu kalıpta ölçülerinle güvenle örtüşen bir beden bulunamadı. Tablodaki komşu bedenleri kontrol edip tekrar dene.",
         );
       }
       setSnapshot(nextSnapshot);
@@ -448,7 +475,7 @@ export function ScanScreen({
     if (
       localSnapshot &&
       hasVerifiedSnapshot(localSnapshot) &&
-      localSnapshot.sizeChart.rows.length >= 2
+      localSnapshot.sizeChart.rows.length >= 1
     ) {
       await analyzeSnapshot(localSnapshot);
       return;
@@ -645,10 +672,8 @@ export function ScanScreen({
         ...session.styleBoard.filter((item) => item.id !== saved.id),
       ]);
       feedback.success();
-      setSnapshot(null);
-      setRecommendation(null);
-      setNote("");
-      setStatus("");
+      setStatus("Stüdyo → Kaydedilenler sekmesine eklendi.");
+      setTimeout(() => setStatus(""), 5000);
       void session.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ürün kaydedilemedi.");
@@ -913,10 +938,18 @@ export function ScanScreen({
               >
                 <View style={styles.resultProduct}>
                   {snapshot.product.imageUrl ? (
-                    <Image
-                      source={{ uri: snapshot.product.imageUrl }}
-                      style={styles.resultImage}
-                    />
+                    <Pressable
+                      onPress={() =>
+                        snapshot.product.url
+                          ? void Linking.openURL(snapshot.product.url)
+                          : undefined
+                      }
+                    >
+                      <Image
+                        source={{ uri: snapshot.product.imageUrl }}
+                        style={styles.resultImage}
+                      />
+                    </Pressable>
                   ) : (
                     <View style={styles.resultImageFallback}>
                       <Text style={styles.resultImageFallbackText}>FM</Text>
