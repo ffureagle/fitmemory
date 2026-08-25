@@ -18,7 +18,14 @@ public sealed class SaveStyleBoardItemRequest
 
     public bool SaveToStudio { get; init; } = true;
 
+    // Legacy JSON name. This flag means Studio → Kaydedilenler (unbought
+    // products), never Dolabım → Kaydedilenler (owned-piece outfits).
     public bool SaveToCloset { get; init; }
+
+    public bool SaveToStudioSaved { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool WantsStudioSaved => SaveToStudioSaved || SaveToCloset;
 }
 
 public sealed class SelectStyleBoardItemRequest
@@ -118,7 +125,8 @@ public sealed record FavoriteOutfitResponse(
     string Title,
     StyleBoardAnalysisResponse Analysis,
     IReadOnlyList<StyleBoardItemResponse> Items,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string Source);
 
 public sealed record StyleBoardAnalysisResponse(
     string Verdict,

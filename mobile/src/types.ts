@@ -231,6 +231,7 @@ export type FavoriteOutfit = {
   analysis: StyleBoardAnalysis;
   items: StyleBoardItem[];
   createdAt: string;
+  source?: "wardrobe" | "studio";
 };
 
 export type StyleBoardAnalysis = {
