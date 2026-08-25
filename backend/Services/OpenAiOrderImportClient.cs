@@ -260,7 +260,7 @@ public sealed class OpenAiOrderImportClient(
             outcome,
             Limit(item.Evidence.Trim(), 240),
             NormalizeMeasurement(item.ChestWidthCm, 20, 150),
-            NormalizeMeasurement(item.ShoulderWidthCm, 20, 100),
+            NormalizeMeasurement(item.ShoulderWidthCm, 20, 180),
             NormalizeMeasurement(item.WaistWidthCm, 20, 130),
             NormalizeMeasurement(item.LengthCm, 20, 180),
             NormalizeMeasurement(item.SleeveLengthCm, 10, 120),

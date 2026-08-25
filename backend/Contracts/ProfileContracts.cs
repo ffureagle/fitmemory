@@ -14,7 +14,7 @@ public sealed class UpsertProfileRequest
     [Range(30, 300)]
     public decimal WeightKg { get; init; }
 
-    [Range(25, 80)]
+    [Range(25, 180)]
     public decimal ShoulderWidthCm { get; init; }
 
     [Range(60, 180)]

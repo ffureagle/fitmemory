@@ -43,4 +43,17 @@ public static class OrderOutcomeExtensions
         return outcome.IsBaggyFeedback() ||
                outcome.IsTightFeedback();
     }
+
+    public static string ToTurkishFitSummary(this OrderOutcome outcome)
+    {
+        return outcome switch
+        {
+            OrderOutcome.KeptGoodFit => "sende iyi olmuştu",
+            OrderOutcome.KeptTooBaggy => "bol gelmişti, dolapta kaldı",
+            OrderOutcome.KeptTooTight => "dar gelmişti, dolapta kaldı",
+            OrderOutcome.ReturnedTooBaggy => "bol geldiği için iade edilmişti",
+            OrderOutcome.ReturnedTooTight => "dar geldiği için iade edilmişti",
+            _ => "uyum notu henüz belirsizdi"
+        };
+    }
 }

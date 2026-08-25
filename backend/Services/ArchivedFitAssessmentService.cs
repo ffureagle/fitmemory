@@ -143,7 +143,13 @@ public sealed class ArchivedFitAssessmentService(
             return;
         }
 
-        var ease = (double)(order.ShoulderWidthCm.Value - profile.ShoulderWidthCm);
+        var orderWidth = order.ShoulderWidthCm.Value >= 70
+            ? order.ShoulderWidthCm.Value / 2
+            : order.ShoulderWidthCm.Value;
+        var bodyWidth = profile.ShoulderWidthCm >= 70
+            ? profile.ShoulderWidthCm / 2
+            : profile.ShoulderWidthCm;
+        var ease = (double)(orderWidth - bodyWidth);
         var target = profile.FitPreference switch
         {
             FitPreference.Slim => 0d,

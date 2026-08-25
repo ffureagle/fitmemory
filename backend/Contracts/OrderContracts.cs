@@ -34,7 +34,7 @@ public sealed class SaveOrderRequest
     [Range(20, 150)]
     public decimal? ChestWidthCm { get; init; }
 
-    [Range(20, 100)]
+    [Range(20, 180)]
     public decimal? ShoulderWidthCm { get; init; }
 
     [Range(20, 130)]
