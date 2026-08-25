@@ -30,23 +30,8 @@ const scannerBootstrap = String.raw`
     if (/\b(inch|inc)\b/.test(folded)) return "Inches";
     return "Centimeters";
   };
-  const pageOverflowLocked = () => {
+  const unlockPageScroll = () => {
     try {
-      const overflow = [
-        document.body ? getComputedStyle(document.body).overflow : "",
-        getComputedStyle(document.documentElement).overflow
-      ].join(" ");
-      return /(hidden|clip)/i.test(overflow);
-    } catch (error) {
-      recordDiagnostic("overflow-lock", error);
-      return false;
-    }
-  };
-  const unlockPageScroll = (force = false) => {
-    try {
-      // Inditex ölçü katmanı body overflow:hidden ile durur. Bunu açmak
-      // paneli kapatır; sonra Tara ürün SKU bedenlerine basıp yanlış tablo okur.
-      if (!force && pageOverflowLocked()) return;
       const style = document.getElementById("fitmemory-scroll-unlock") || document.createElement("style");
       style.id = "fitmemory-scroll-unlock";
       style.textContent = "html,body{overflow:auto!important;height:auto!important;overscroll-behavior:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}#app,main,[data-qa-qualifier='main']{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}";
@@ -58,6 +43,7 @@ const scannerBootstrap = String.raw`
       }
     } catch (error) { recordDiagnostic("scroll-unlock", error); }
   };
+  unlockPageScroll();
   const visible = (element) => {
     if (!element || !(element instanceof Element)) return false;
     const style = getComputedStyle(element);
@@ -809,10 +795,6 @@ const scannerBootstrap = String.raw`
     return Boolean(chart);
   };
   const openPullAndBearMeasurements = async () => {
-    if (metricLabelsVisible() && findMeasurePanel()) {
-      guideStage = "Pull&Bear ölçü paneli zaten açık";
-      return true;
-    }
     const patterns = [
       /^olculeri goruntule$/i, /^olculeri gor$/i, /^view measurements?$/i,
       /^product measurements?$/i, /^size guide$/i
@@ -958,7 +940,6 @@ const scannerBootstrap = String.raw`
     await sleep(70);
   };
   const revealWideTables = async () => {
-    if (metricLabelsVisible() && findMeasurePanel()) return;
     unlockPageScroll();
     const surfaces = [];
     for (const table of all("table, [role='table']").slice(0, 12)) {
@@ -1479,16 +1460,8 @@ const scannerBootstrap = String.raw`
       rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
     };
   };
-  const listedSizeLabels = () => {
-    const overlay = measurementOverlay() || findMeasurePanel();
-    const fromOverlay = overlay ? containedSizeButtons(overlay) : [];
-    const source = fromOverlay.length >= 2 ? fromOverlay : findSizeButtons(document);
-    return source
-      .map((button) => sizeLabelFromText(controlText(button)))
-      .filter(Boolean)
-      .filter((size, index, values) => values.indexOf(size) === index);
-  };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
+    unlockPageScroll();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1611,14 +1584,7 @@ const scannerBootstrap = String.raw`
         modelWornSize: model.size,
         modelEvidence: model.evidence
       },
-      sizeChart: {
-        ...chart,
-        availableSizes: listedSizeLabels(),
-        rawText: [
-          chart.rawText || "",
-          listedSizeLabels().length ? "Mevcut bedenler: " + listedSizeLabels().join(" ") : ""
-        ].filter(Boolean).join("\n").slice(0, 8000)
-      },
+      sizeChart: chart,
       capturedAt: new Date().toISOString()
     };
   };
@@ -1745,7 +1711,7 @@ const scannerBootstrap = String.raw`
     return cards;
   };
   const scrapeOrders = async () => {
-    unlockPageScroll(true);
+    unlockPageScroll();
     const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
     const junkImage = (url, alt) =>
       !url ||
@@ -1966,7 +1932,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.27";
+  window.__fitmemoryScannerVersion = "1.25.18";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2003,7 +1969,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.27" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

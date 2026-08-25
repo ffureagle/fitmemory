@@ -22,8 +22,7 @@ import {
 import { useSession } from "../session";
 import { colors } from "../theme";
 import { Text, useI18n } from "../i18n";
-import type { FavoriteOutfit, Order, WardrobeOutfit } from "../types";
-import { closetSavedOutfits } from "../savedPlaces";
+import type { FavoriteOutfit, Order, StyleBoardItem, WardrobeOutfit } from "../types";
 
 const categoryNames: Record<string, string> = {
   Tops: "Tişört & Üst",
@@ -119,7 +118,8 @@ export function ClosetScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"closet" | "saved">("closet");
-  const savedOutfits = closetSavedOutfits(session.favoriteOutfits);
+  const savedOutfits = session.favoriteOutfits.filter((item) => item.title.startsWith("Dolap · "));
+  const savedProducts = session.styleBoard.filter((item) => item.isSaved);
   const [outfitPrompt, setOutfitPrompt] = useState("");
   const [outfitBusy, setOutfitBusy] = useState(false);
   const [outfitError, setOutfitError] = useState("");
@@ -337,6 +337,22 @@ export function ClosetScreen() {
     }
   };
 
+  const deleteSavedProduct = async (item: StyleBoardItem) => {
+    if (!session.token || !session.account) return;
+    try {
+      await session.api.deleteSavedItem(item.id, session.account.userId, session.token);
+      session.updateStyleBoard(
+        item.isInStudio
+          ? session.styleBoard.map((candidate) =>
+              candidate.id === item.id ? { ...candidate, isSaved: false } : candidate,
+            )
+          : session.styleBoard.filter((candidate) => candidate.id !== item.id),
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kayıt kaldırılamadı.");
+    }
+  };
+
   const deleteSaved = (item: FavoriteOutfit) => {
     if (!session.account || !session.token) return;
     Alert.alert("Kaydı kaldır", `${item.title.replace("Dolap · ", "")} kaydedilenlerden kaldırılsın mı?`, [
@@ -367,7 +383,7 @@ export function ClosetScreen() {
         <View accessibilityRole="tablist" style={styles.tabs}>
           {([
             ["closet", "Dolabım"],
-            ["saved", `Kaydedilenler · ${savedOutfits.length}`],
+            ["saved", `Kaydedilenler · ${savedOutfits.length + savedProducts.length}`],
           ] as const).map(([key, label]) => (
             <Pressable
               accessibilityRole="tab"
@@ -382,17 +398,36 @@ export function ClosetScreen() {
         </View>
         <Text style={styles.intro}>
           {tab === "saved"
-            ? "Dolabındaki parçalarla AI kombin kurup kaydettiğin yer. Stüdyodaki kaydedilenler buraya düşmez."
-            : "Satın aldığın parçalar burada. Fotoğrafa basıp seç, AI kombin kursun; beğenirsen Kaydedilenler’e al."}
+            ? "Kaydettiğin dolap kombinleri ve ürünler burada durur. Fotoğrafa dokununca mağaza sayfası açılır."
+            : "Satın aldığın parçalar burada yaşar. İki veya daha fazla parçayı seçip Stüdyo gibi kombin yaptırabilirsin."}
         </Text>
         {error ? (
           <ErrorNotice message={error} onDismiss={() => setError("")} />
         ) : null}
         {tab === "saved" ? (
-          !savedOutfits.length ? (
-            <EmptyState copy="Parçaları seç, kombin yap, Kombini kaydet. Beden bulup almadığın ürünler Stüdyo → Kaydedilenler’de kalır." symbol="♡" title="Henüz dolap kombini yok" />
+          !savedOutfits.length && !savedProducts.length ? (
+            <EmptyState copy="Dolabındaki parçalarla kombin yapıp kaydet; taradığın ürünler de ‘Ürünü kaydet’ ile buraya gelir." symbol="♡" title="Henüz kayıt yok" />
           ) : (
             <View style={styles.savedGrid}>
+              {savedProducts.map((item) => (
+                <Card key={`product-${item.id}`} style={styles.savedProductCard}>
+                  <Pressable onPress={() => item.productUrl ? void Linking.openURL(item.productUrl) : undefined}>
+                    {item.imageUrl ? (
+                      <Image source={{ uri: item.imageUrl }} style={styles.savedImage} />
+                    ) : (
+                      <View style={styles.savedFallback}><Text>FM</Text></View>
+                    )}
+                  </Pressable>
+                  <View style={styles.savedCopy}>
+                    <Text style={styles.brand}>{item.brand}</Text>
+                    <Text numberOfLines={2} style={styles.productName}>{item.productName}</Text>
+                    {item.recommendedSize ? <Text style={styles.savedMeta}>Beden {item.recommendedSize}</Text> : null}
+                  </View>
+                  <Pressable onPress={() => void deleteSavedProduct(item)} style={styles.savedRemove}>
+                    <Text style={styles.deleteText}>Kaldır</Text>
+                  </Pressable>
+                </Card>
+              ))}
               {savedOutfits.map((item) => (
                 <Card key={item.id} style={styles.savedCard}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -426,9 +461,9 @@ export function ClosetScreen() {
           <View style={styles.groups}>
             <Card style={styles.outfitMaker}>
               <Text style={styles.outfitEyebrow}>DOLAPTAN KOMBİN</Text>
-              <Text style={styles.outfitTitle}>Dolabındakilerle kombin kur</Text>
+              <Text style={styles.outfitTitle}>Stüdyodaki gibi, dolabındakilerle dene</Text>
               <Text style={styles.outfitHint}>
-                {picked.length ? `${picked.length} parça seçili. Kombini kaydet, Dolabım → Kaydedilenler’e gider.` : "Parçanın fotoğrafına dokunarak seç; ya da nasıl görünmek istediğini yaz. Kaydettiğin kombin Dolabım → Kaydedilenler’de durur, Stüdyo’da değil."}
+                {picked.length ? `${picked.length} parça seçili.` : "Parçanın fotoğrafına dokunarak seç; ya da nasıl görünmek istediğini yaz."}
               </Text>
               <TextInput
                 maxLength={500}
@@ -698,6 +733,12 @@ const styles = StyleSheet.create({
   },
   savedGrid: {
     gap: 10,
+  },
+  savedProductCard: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    padding: 10,
   },
   outfitMaker: { gap: 10, padding: 16 },
   outfitEyebrow: { color: colors.blue, fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },

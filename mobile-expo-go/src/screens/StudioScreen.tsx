@@ -19,7 +19,6 @@ import { useSession } from "../session";
 import { colors } from "../theme";
 import { Text } from "../i18n";
 import type { StyleBoardAnalysis, StyleBoardItem } from "../types";
-import { studioFavoriteOutfits, studioSavedProducts } from "../savedPlaces";
 
 const slotOrder = ["upper", "bottom", "outer", "shoe", "one", "other"];
 const slotNames: Record<string, string> = {
@@ -78,8 +77,10 @@ export function StudioScreen() {
 
   const selected = session.styleBoard.filter((item) => item.isInStudio && item.isSelected);
   const studioItems = session.styleBoard.filter((item) => item.isInStudio);
-  const studioFavorites = studioFavoriteOutfits(session.favoriteOutfits);
-  const savedItems = studioSavedProducts(session.styleBoard);
+  const studioFavorites = session.favoriteOutfits.filter(
+    (item) => !item.title.startsWith("Dolap · "),
+  );
+  const savedItems = session.styleBoard.filter((item) => item.isSaved);
 
   const selectItem = async (item: StyleBoardItem) => {
     if (!session.token || !session.account) return;
@@ -289,10 +290,10 @@ export function StudioScreen() {
       </View>
       <Text style={styles.intro}>
         {tab === "saved"
-          ? "Bedenini bulup henüz almadığın ürünler. Fotoğrafa basınca mağaza açılır. Dolap kombinleri burada durmaz."
+          ? "Taradığın ürünler burada durur. Fotoğrafa dokununca mağaza sayfası açılır."
           : tab === "studio"
           ? "Taradığın aday parçaları kategori kategori seç; AI kesim, renk, mevsim ve yaş uyumunu birlikte yorumlar."
-          : "Stüdyoda almadığın parçalardan kurduğun kombinler. Dolap kombinleri Dolabım → Kaydedilenler’de."}
+          : "Beğendiğin stüdyo kombinleri burada saklanır. Ürün görseline dokunarak resmi ürün sayfasını açabilirsin."}
       </Text>
       {error ? (
         <ErrorNotice message={error} onDismiss={() => setError("")} />
@@ -300,7 +301,7 @@ export function StudioScreen() {
       {tab === "saved" ? (
         !savedItems.length ? (
           <EmptyState
-            copy="Taramada Ürünü kaydet dersen buraya gelir. Dolabındakilerle kurduğun kombinler Dolabım → Kaydedilenler’dedir."
+            copy="Bir ürün taradıktan sonra “Ürünü kaydet” dersen marka, beden ve fotoğrafıyla burada görünür."
             symbol="▣"
             title="Henüz kayıt yok"
           />

@@ -43,33 +43,6 @@ public sealed partial class LocalFitRecommendationEngine(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var measuredWithMetrics = candidates
-            .Where(candidate => candidate.Measurements.Count > 0)
-            .Select(candidate => candidate.Label)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var listedSizes = (request.SizeChart.AvailableSizes ?? [])
-            .Where(label => !string.IsNullOrWhiteSpace(label))
-            .Concat(availableSizes)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (measuredWithMetrics.Count(IsLetterSizeLabel) == 1 &&
-            listedSizes.Count(IsLetterSizeLabel) >= 2)
-        {
-            return new RecommendationResult(
-                "Bilinmiyor",
-                0,
-                "Yalnız bir bedenin milimi okundu; diğer bedenler toplanamadı.",
-                "Ölçü paneli açıkken tek bedenin sayıları geldi. FitMemory bu yüzden o tek satırı senin bedenin diye önermedi. Paneldeki tüm bedenleri tek tek gezdirip yeniden dene.",
-                [
-                    "Ölçüleri görüntüle açık kalsın; Tara ürün sayfasına dönmesin.",
-                    "Açık tabloda her beden chip'ine basılınca milimler değişmeli."
-                ],
-                [],
-                BuildEvidenceSummary(orders),
-                "local-insufficient");
-        }
-
         if (availableSizes.Length == 0)
         {
             return new RecommendationResult(
@@ -1642,9 +1615,6 @@ public sealed partial class LocalFitRecommendationEngine(
         .Replace('ö', 'o')
         .Replace('ü', 'u');
 
-    private static bool IsLetterSizeLabel(string value) =>
-        LetterSizeLabelRegex().IsMatch(value.Trim());
-
     private static string NormalizeSizeLabel(string value)
     {
         var label = value.Trim();
@@ -1702,9 +1672,6 @@ public sealed partial class LocalFitRecommendationEngine(
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9 /+.-]{0,29}$", RegexOptions.CultureInvariant)]
     private static partial Regex SizeLabelRegex();
-
-    [GeneratedRegex(@"^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex LetterSizeLabelRegex();
 
     [GeneratedRegex(@"\b(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|XXXXL)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TextSizeRegex();

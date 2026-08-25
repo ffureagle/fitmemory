@@ -14,28 +14,6 @@ export function hasVerifiedNumericChart(snapshot: ProductSnapshot): boolean {
     }));
 }
 
-export function listedSizeLabels(snapshot: ProductSnapshot): string[] {
-  const fromChart = (snapshot.sizeChart.availableSizes || [])
-    .map((label) => String(label).trim().toUpperCase())
-    .filter((label) => sizePattern.test(label));
-  if (fromChart.length >= 2) return [...new Set(fromChart)];
-  const fromText = String(snapshot.sizeChart.rawText || "").match(
-    /\b(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/gi,
-  ) || [];
-  return [...new Set(fromText.map((label) => label.toUpperCase()))];
-}
-
-export function isIncompleteWalkedChart(snapshot: ProductSnapshot): boolean {
-  const letterSizePattern = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)$/i;
-  const measured = [...new Set(
-    snapshot.sizeChart.rows
-      .map((row) => String(row.cells[0] ?? "").trim().toUpperCase())
-      .filter((label) => letterSizePattern.test(label)),
-  )];
-  const listed = listedSizeLabels(snapshot).filter((label) => letterSizePattern.test(label));
-  return listed.length >= 2 && measured.length < 2;
-}
-
 export function agentResultToSnapshot(
   agent: ProductAgentResult,
   fallback: ProductSnapshot["product"],

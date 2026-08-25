@@ -59,42 +59,6 @@ public sealed class LocalUpperFitTests
         Assert.Contains("rahat", result.Explanation, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void SingleMeasuredSizeAmongListedSizesIsInsufficient()
-    {
-        var result = AnalyzeTee(new SizeChartDto
-        {
-            Found = true,
-            Title = "Ürün ölçüleri",
-            Unit = "Centimeters",
-            Headers = ["Beden", "Göğüs"],
-            Rows = [new SizeChartRowDto { Cells = ["M", "53"] }],
-            RawText = "M | Göğüs 53\nMevcut bedenler: S M L XL",
-            AvailableSizes = ["S", "M", "L", "XL"]
-        });
-
-        Assert.Equal("Bilinmiyor", result.RecommendedSize);
-        Assert.Equal("local-insufficient", result.DataSource);
-        Assert.Contains("tek beden", result.Explanation, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void OneSizeGarmentWithSingleRowIsNotTreatedAsIncompleteWalk()
-    {
-        var result = AnalyzeTee(new SizeChartDto
-        {
-            Found = true,
-            Title = "Ürün ölçüleri",
-            Unit = "Centimeters",
-            Headers = ["Beden", "Göğüs"],
-            Rows = [new SizeChartRowDto { Cells = ["M", "53"] }],
-            RawText = "M | Göğüs 53",
-            AvailableSizes = ["M"]
-        });
-
-        Assert.DoesNotContain("diğer bedenler toplanamadı", result.Explanation, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static RecommendationResult AnalyzeTee(
         SizeChartDto chart,
         string merchantAdvice = "")

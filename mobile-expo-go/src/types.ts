@@ -60,7 +60,6 @@ export type SizeChart = {
   headers: string[];
   rows: { cells: string[] }[];
   rawText: string;
-  availableSizes?: string[];
 };
 
 export type ProductSnapshot = {
@@ -232,7 +231,6 @@ export type FavoriteOutfit = {
   analysis: StyleBoardAnalysis;
   items: StyleBoardItem[];
   createdAt: string;
-  source?: "wardrobe" | "studio";
 };
 
 export type StyleBoardAnalysis = {
