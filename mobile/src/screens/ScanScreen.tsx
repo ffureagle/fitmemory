@@ -499,7 +499,19 @@ export function ScanScreen({
       } else if (message.type === "fitmemory-product-fallback") {
         await analyzeVisualFallback(message.snapshot);
       } else {
-        setPendingOrders(message.snapshot);
+        const seen = new Map<string, (typeof message.snapshot)["orderCards"][number]>();
+        for (const card of message.snapshot.orderCards) {
+          const key = `${card.productName}`.toLocaleLowerCase("tr-TR") + "|" + card.purchasedSize.toUpperCase();
+          const previous = seen.get(key);
+          if (!previous) seen.set(key, card);
+          else if (!previous.imageUrl && card.imageUrl) {
+            seen.set(key, { ...previous, imageUrl: card.imageUrl });
+          }
+        }
+        setPendingOrders({
+          ...message.snapshot,
+          orderCards: [...seen.values()],
+        });
         setStatus("");
         setScanStage("completed");
         webViewRef.current?.injectJavaScript("window.__fitmemoryRestoreRedactions?.();true;");
@@ -736,7 +748,6 @@ export function ScanScreen({
             style={styles.webViewWrap}
           >
             <WebView
-              allowsBackForwardNavigationGestures
               allowsInlineMediaPlayback
               decelerationRate="normal"
               domStorageEnabled
@@ -744,6 +755,8 @@ export function ScanScreen({
               injectedJavaScriptBeforeContentLoaded={createScannerInstallScript()}
               javaScriptEnabled
               mediaPlaybackRequiresUserAction={false}
+              nestedScrollEnabled
+              overScrollMode="content"
               onShouldStartLoadWithRequest={(request) => {
                 if (request.isTopFrame === false) return true;
                 const allowed = isAllowedShopUrl(request.url);
@@ -779,7 +792,12 @@ export function ScanScreen({
                 setAddress(state.url);
                 setCanGoBack(state.canGoBack);
               }}
-              pullToRefreshEnabled
+              onOpenWindow={(event) => {
+                const url = event.nativeEvent.targetUrl;
+                if (url && isAllowedShopUrl(url)) {
+                  setAuthWindowUrl(url);
+                }
+              }}
               ref={webViewRef}
               setSupportMultipleWindows={true}
               sharedCookiesEnabled
@@ -787,12 +805,6 @@ export function ScanScreen({
               startInLoadingState
               thirdPartyCookiesEnabled
               userAgent={shopUserAgent}
-              onOpenWindow={(event) => {
-                const url = event.nativeEvent.targetUrl;
-                if (url && isAllowedShopUrl(url)) {
-                  setAuthWindowUrl(url);
-                }
-              }}
             />
             {pageLoading && (
               <View pointerEvents="none" style={styles.pageLoader}>

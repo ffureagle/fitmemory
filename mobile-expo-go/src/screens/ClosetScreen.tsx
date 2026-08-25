@@ -3,6 +3,7 @@ import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
   Alert,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -21,7 +22,7 @@ import {
 import { useSession } from "../session";
 import { colors } from "../theme";
 import { Text, useI18n } from "../i18n";
-import type { FavoriteOutfit, Order } from "../types";
+import type { FavoriteOutfit, Order, StyleBoardItem, WardrobeOutfit } from "../types";
 
 const categoryNames: Record<string, string> = {
   Tops: "Tişört & Üst",
@@ -117,7 +118,14 @@ export function ClosetScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"closet" | "saved">("closet");
-  const savedItems = session.favoriteOutfits.filter((item) => item.title.startsWith("Dolap · "));
+  const savedOutfits = session.favoriteOutfits.filter((item) => item.title.startsWith("Dolap · "));
+  const savedProducts = session.styleBoard.filter((item) => item.isSaved);
+  const [outfitPrompt, setOutfitPrompt] = useState("");
+  const [outfitBusy, setOutfitBusy] = useState(false);
+  const [outfitError, setOutfitError] = useState("");
+  const [wardrobeOutfit, setWardrobeOutfit] = useState<WardrobeOutfit | null>(null);
+  const [wardrobeFavoriteBusy, setWardrobeFavoriteBusy] = useState(false);
+  const [picked, setPicked] = useState<number[]>([]);
 
   const groups = useMemo(() => {
     const map = new Map<string, Order[]>();
@@ -273,6 +281,78 @@ export function ClosetScreen() {
     );
   };
 
+  const togglePicked = (order: Order) => {
+    setPicked((current) =>
+      current.includes(order.id)
+        ? current.filter((id) => id !== order.id)
+        : [...current, order.id],
+    );
+    setOutfitError("");
+  };
+
+  const createClosetOutfit = async () => {
+    if (!session.token || !session.account) return;
+    const selected = session.orders.filter((order) => picked.includes(order.id) && !isReturned(order.outcome));
+    const prompt = outfitPrompt.trim() || (
+      selected.length >= 2
+        ? `Şu dolap parçalarımla giyilebilir bir kombin kur: ${selected.map((order) => `${order.brand} ${order.productName} (${order.purchasedSize})`).join(", ")}.`
+        : ""
+    );
+    if (prompt.length < 3) {
+      setOutfitError("En az iki parça seç veya nasıl görünmek istediğini yaz.");
+      return;
+    }
+    setOutfitBusy(true);
+    setOutfitError("");
+    setWardrobeOutfit(null);
+    try {
+      setWardrobeOutfit(
+        await session.api.createWardrobeOutfit(session.account.userId, session.token, prompt),
+      );
+    } catch (reason) {
+      setOutfitError(reason instanceof Error ? reason.message : "Kombin oluşturulamadı.");
+    } finally {
+      setOutfitBusy(false);
+    }
+  };
+
+  const saveClosetOutfit = async () => {
+    if (!wardrobeOutfit || !session.token || !session.account) return;
+    setWardrobeFavoriteBusy(true);
+    setError("");
+    try {
+      const favorite = await session.api.saveWardrobeFavorite(
+        session.account.userId,
+        session.token,
+        wardrobeOutfit.analysis.headline || "Dolabımdan kombin",
+        wardrobeOutfit.analysis,
+        wardrobeOutfit.pieces.map((piece) => piece.orderId),
+      );
+      session.updateFavoriteOutfits([favorite, ...session.favoriteOutfits]);
+      setTab("saved");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kombin kaydedilemedi.");
+    } finally {
+      setWardrobeFavoriteBusy(false);
+    }
+  };
+
+  const deleteSavedProduct = async (item: StyleBoardItem) => {
+    if (!session.token || !session.account) return;
+    try {
+      await session.api.deleteSavedItem(item.id, session.account.userId, session.token);
+      session.updateStyleBoard(
+        item.isInStudio
+          ? session.styleBoard.map((candidate) =>
+              candidate.id === item.id ? { ...candidate, isSaved: false } : candidate,
+            )
+          : session.styleBoard.filter((candidate) => candidate.id !== item.id),
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kayıt kaldırılamadı.");
+    }
+  };
+
   const deleteSaved = (item: FavoriteOutfit) => {
     if (!session.account || !session.token) return;
     Alert.alert("Kaydı kaldır", `${item.title.replace("Dolap · ", "")} kaydedilenlerden kaldırılsın mı?`, [
@@ -303,7 +383,7 @@ export function ClosetScreen() {
         <View accessibilityRole="tablist" style={styles.tabs}>
           {([
             ["closet", "Dolabım"],
-            ["saved", `Kaydedilenler · ${savedItems.length}`],
+            ["saved", `Kaydedilenler · ${savedOutfits.length + savedProducts.length}`],
           ] as const).map(([key, label]) => (
             <Pressable
               accessibilityRole="tab"
@@ -318,22 +398,43 @@ export function ClosetScreen() {
         </View>
         <Text style={styles.intro}>
           {tab === "saved"
-            ? "AI Kombin Asistanı'nın yalnızca dolabındaki parçalarla hazırladığı ve kaydettiğin kombinler burada görünür."
-            : "Satın aldığın parçalar burada yaşar. Dar ve bol notları yalnız aynı kategori, ürün ailesi ve benzer kesimlerde kullanılır."}
+            ? "Kaydettiğin dolap kombinleri ve ürünler burada durur. Fotoğrafa dokununca mağaza sayfası açılır."
+            : "Satın aldığın parçalar burada yaşar. İki veya daha fazla parçayı seçip Stüdyo gibi kombin yaptırabilirsin."}
         </Text>
         {error ? (
           <ErrorNotice message={error} onDismiss={() => setError("")} />
         ) : null}
         {tab === "saved" ? (
-          !savedItems.length ? (
-            <EmptyState copy="AI Kombin Asistanı ile dolabından bir kombin oluşturup ‘Kombini kaydet’ seçeneğine dokun." symbol="♡" title="Henüz kayıt yok" />
+          !savedOutfits.length && !savedProducts.length ? (
+            <EmptyState copy="Dolabındaki parçalarla kombin yapıp kaydet; taradığın ürünler de ‘Ürünü kaydet’ ile buraya gelir." symbol="♡" title="Henüz kayıt yok" />
           ) : (
             <View style={styles.savedGrid}>
-              {savedItems.map((item) => (
+              {savedProducts.map((item) => (
+                <Card key={`product-${item.id}`} style={styles.savedProductCard}>
+                  <Pressable onPress={() => item.productUrl ? void Linking.openURL(item.productUrl) : undefined}>
+                    {item.imageUrl ? (
+                      <Image source={{ uri: item.imageUrl }} style={styles.savedImage} />
+                    ) : (
+                      <View style={styles.savedFallback}><Text>FM</Text></View>
+                    )}
+                  </Pressable>
+                  <View style={styles.savedCopy}>
+                    <Text style={styles.brand}>{item.brand}</Text>
+                    <Text numberOfLines={2} style={styles.productName}>{item.productName}</Text>
+                    {item.recommendedSize ? <Text style={styles.savedMeta}>Beden {item.recommendedSize}</Text> : null}
+                  </View>
+                  <Pressable onPress={() => void deleteSavedProduct(item)} style={styles.savedRemove}>
+                    <Text style={styles.deleteText}>Kaldır</Text>
+                  </Pressable>
+                </Card>
+              ))}
+              {savedOutfits.map((item) => (
                 <Card key={item.id} style={styles.savedCard}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {item.items.map((piece) => piece.imageUrl ? (
-                      <Image key={piece.id} source={{ uri: piece.imageUrl }} style={styles.savedImage} />
+                      <Pressable key={piece.id} onPress={() => piece.productUrl ? void Linking.openURL(piece.productUrl) : undefined}>
+                        <Image source={{ uri: piece.imageUrl }} style={styles.savedImage} />
+                      </Pressable>
                     ) : (
                       <View key={piece.id} style={styles.savedFallback}><Text>FM</Text></View>
                     ))}
@@ -358,6 +459,50 @@ export function ClosetScreen() {
           />
         ) : (
           <View style={styles.groups}>
+            <Card style={styles.outfitMaker}>
+              <Text style={styles.outfitEyebrow}>DOLAPTAN KOMBİN</Text>
+              <Text style={styles.outfitTitle}>Stüdyodaki gibi, dolabındakilerle dene</Text>
+              <Text style={styles.outfitHint}>
+                {picked.length ? `${picked.length} parça seçili.` : "Parçanın fotoğrafına dokunarak seç; ya da nasıl görünmek istediğini yaz."}
+              </Text>
+              <TextInput
+                maxLength={500}
+                multiline
+                onChangeText={(value) => {
+                  setOutfitPrompt(value);
+                  if (outfitError) setOutfitError("");
+                }}
+                placeholder={translate("Örn. Akşam yemeği için sade, rahat ve yaşımı yansıtan bir kombin.")}
+                placeholderTextColor="#918E85"
+                style={styles.outfitPrompt}
+                value={outfitPrompt}
+              />
+              <Button
+                busy={outfitBusy}
+                disabled={outfitPrompt.trim().length < 3 && picked.length < 2}
+                label={picked.length >= 2 ? "Seçilenlerle kombin yap" : "Dolabımla kombin oluştur"}
+                onPress={() => void createClosetOutfit()}
+                small
+                tone="blue"
+              />
+              {outfitError ? (
+                <ErrorNotice message={outfitError} onDismiss={() => setOutfitError("")} />
+              ) : null}
+              {wardrobeOutfit ? (
+                <View style={styles.outfitResult}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {wardrobeOutfit.pieces.map((piece) => piece.imageUrl ? (
+                      <Image key={piece.orderId} source={{ uri: piece.imageUrl }} style={styles.outfitImage} />
+                    ) : (
+                      <View key={piece.orderId} style={styles.outfitFallback}><Text style={styles.productFallbackText}>FM</Text></View>
+                    ))}
+                  </ScrollView>
+                  <Text style={styles.productName}>{wardrobeOutfit.analysis.headline}</Text>
+                  <Text style={styles.savedMeta}>{wardrobeOutfit.analysis.explanation}</Text>
+                  <Button busy={wardrobeFavoriteBusy} label="Kombini kaydet" onPress={() => void saveClosetOutfit()} small />
+                </View>
+              ) : null}
+            </Card>
             {groups.map(([key, orders]) => {
               const isOpen = expanded === key;
               return (
@@ -385,17 +530,22 @@ export function ClosetScreen() {
                   {isOpen ? (
                     <View style={styles.products}>
                       {orders.map((order) => (
-                        <View key={order.id} style={styles.product}>
-                          {order.imageUrl ? (
-                            <Image
-                              source={{ uri: order.imageUrl }}
-                              style={styles.productImage}
-                            />
-                          ) : (
-                            <View style={styles.productFallback}>
-                              <Text style={styles.productFallbackText}>FM</Text>
-                            </View>
-                          )}
+                        <View key={order.id} style={[styles.product, picked.includes(order.id) && styles.productPicked]}>
+                          <Pressable onPress={() => key === "Returns" ? undefined : togglePicked(order)} style={styles.pickHit}>
+                            {order.imageUrl ? (
+                              <Image
+                                source={{ uri: order.imageUrl }}
+                                style={styles.productImage}
+                              />
+                            ) : (
+                              <View style={styles.productFallback}>
+                                <Text style={styles.productFallbackText}>FM</Text>
+                              </View>
+                            )}
+                            {picked.includes(order.id) ? (
+                              <View style={styles.pickedFlag}><Text style={styles.pickedFlagText}>SEÇİLİ</Text></View>
+                            ) : null}
+                          </Pressable>
                           <View style={styles.productCopy}>
                             <Text style={styles.brand}>{order.brand}</Text>
                             <Text numberOfLines={2} style={styles.productName}>
@@ -584,6 +734,30 @@ const styles = StyleSheet.create({
   savedGrid: {
     gap: 10,
   },
+  savedProductCard: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    padding: 10,
+  },
+  outfitMaker: { gap: 10, padding: 16 },
+  outfitEyebrow: { color: colors.blue, fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  outfitTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" },
+  outfitHint: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+  outfitPrompt: {
+    backgroundColor: "#F2F0EA",
+    borderColor: colors.line,
+    borderRadius: 12,
+    borderWidth: 1,
+    color: colors.ink,
+    fontSize: 12,
+    minHeight: 72,
+    padding: 12,
+    textAlignVertical: "top",
+  },
+  outfitResult: { borderTopColor: colors.line, borderTopWidth: 1, gap: 8, paddingTop: 12 },
+  outfitImage: { backgroundColor: "#ECEAE4", borderRadius: 10, height: 118, marginRight: 8, resizeMode: "cover", width: 88 },
+  outfitFallback: { alignItems: "center", backgroundColor: "#ECEAE4", borderRadius: 10, height: 118, justifyContent: "center", marginRight: 8, width: 88 },
   savedCard: {
     alignItems: "center",
     flexDirection: "row",
@@ -708,6 +882,24 @@ const styles = StyleSheet.create({
     gap: 11,
     padding: 14,
   },
+  productPicked: {
+    backgroundColor: "#F3F6FF",
+  },
+  pickedFlag: {
+    backgroundColor: colors.ink,
+    borderRadius: 4,
+    left: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    position: "absolute",
+    top: 6,
+  },
+  pickedFlagText: {
+    color: colors.card,
+    fontSize: 7,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
   productImage: {
     backgroundColor: "#EEECE6",
     borderRadius: 9,
@@ -715,6 +907,7 @@ const styles = StyleSheet.create({
     resizeMode: "cover",
     width: 64,
   },
+  pickHit: { position: "relative" },
   productFallback: {
     alignItems: "center",
     backgroundColor: "#EEECE6",

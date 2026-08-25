@@ -30,6 +30,20 @@ const scannerBootstrap = String.raw`
     if (/\b(inch|inc)\b/.test(folded)) return "Inches";
     return "Centimeters";
   };
+  const unlockPageScroll = () => {
+    try {
+      const style = document.getElementById("fitmemory-scroll-unlock") || document.createElement("style");
+      style.id = "fitmemory-scroll-unlock";
+      style.textContent = "html,body{overflow:auto!important;height:auto!important;overscroll-behavior:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}#app,main,[data-qa-qualifier='main']{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}";
+      (document.head || document.documentElement).appendChild(style);
+      document.documentElement.style.touchAction = "pan-x pan-y";
+      if (document.body) {
+        document.body.style.touchAction = "pan-x pan-y";
+        document.body.style.overflow = "auto";
+      }
+    } catch (error) { recordDiagnostic("scroll-unlock", error); }
+  };
+  unlockPageScroll();
   const visible = (element) => {
     if (!element || !(element instanceof Element)) return false;
     const style = getComputedStyle(element);
@@ -896,21 +910,58 @@ const scannerBootstrap = String.raw`
     }
     return null;
   };
+  const pointerSwipe = async (element, distance) => {
+    if (!element || !element.getBoundingClientRect) return;
+    const rect = element.getBoundingClientRect();
+    const y = rect.top + Math.min(rect.height / 2, 80);
+    const startX = rect.left + Math.max(40, rect.width * 0.72);
+    const endX = Math.max(rect.left + 16, startX + distance);
+    const fire = (type, x) => {
+      try {
+        const event = typeof PointerEvent !== "undefined"
+          ? new PointerEvent(type, {
+              bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+              isPrimary: true, clientX: x, clientY: y
+            })
+          : new MouseEvent(type === "pointerdown" ? "mousedown" : type === "pointerup" ? "mouseup" : "mousemove", {
+              bubbles: true, cancelable: true, clientX: x, clientY: y, view: window
+            });
+        element.dispatchEvent(event);
+      } catch (error) { recordDiagnostic("swipe", error); }
+    };
+    fire("pointerdown", startX);
+    fire("touchstart", startX);
+    await sleep(20);
+    fire("pointermove", (startX + endX) / 2);
+    await sleep(20);
+    fire("pointermove", endX);
+    fire("pointerup", endX);
+    fire("touchend", endX);
+    await sleep(70);
+  };
   const revealWideTables = async () => {
-    const tables = all("table, [role='table']");
-    for (const table of tables.slice(0, 12)) {
+    unlockPageScroll();
+    const surfaces = [];
+    for (const table of all("table, [role='table']").slice(0, 12)) {
       const scroller = findScrollableX(table) || findScrollableX(table.parentElement);
-      if (!scroller) continue;
-      const start = scroller.scrollLeft;
-      const step = Math.max(72, Math.floor(scroller.clientWidth * 0.65));
-      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      if (scroller && !surfaces.includes(scroller)) surfaces.push(scroller);
+    }
+    for (const node of all("[class*='swiper' i], [class*='carousel' i], [class*='gallery' i], [class*='slider' i], [class*='media' i], [class*='measure' i]")) {
+      const scroller = findScrollableX(node) || (node.scrollWidth > node.clientWidth + 16 ? node : null);
+      if (scroller && !surfaces.includes(scroller)) surfaces.push(scroller);
+    }
+    for (const scroller of surfaces.slice(0, 10)) {
+      const start = scroller.scrollLeft || 0;
+      const step = Math.max(72, Math.floor((scroller.clientWidth || innerWidth) * 0.65));
+      const max = Math.max(0, (scroller.scrollWidth || 0) - (scroller.clientWidth || 0));
       for (let x = 0; x <= max + 1; x += step) {
-        scroller.scrollLeft = x;
-        await sleep(80);
+        try { scroller.scrollLeft = x; } catch (error) { recordDiagnostic("scroll-x", error); }
+        await pointerSwipe(scroller, -step);
+        await sleep(70);
       }
-      scroller.scrollLeft = 0;
-      await sleep(50);
-      scroller.scrollLeft = start;
+      try { scroller.scrollLeft = start; } catch (error) { recordDiagnostic("scroll-x", error); }
+      await pointerSwipe(scroller, step);
+      await sleep(40);
     }
   };
   const tableChart = () => {
@@ -1410,6 +1461,7 @@ const scannerBootstrap = String.raw`
     };
   };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
+    unlockPageScroll();
     const structured = productJson();
     const title = clean(
       structured?.name ||
@@ -1634,8 +1686,11 @@ const scannerBootstrap = String.raw`
       const blob = [name].concat(look).join(" · ");
       const hasPrice = /(₺|\btl\b|\beur\b|€|\$|\d+[.,]\d{2})/i.test(blob);
       const lineSize = look.find((line) => sizeOk(line)) || "";
-      const purchasedSize = lineSize || "";
+      const purchasedSize = String(lineSize || "").toUpperCase();
       if (!hasPrice || !purchasedSize) continue;
+      if (/(siparis no|order no|fatura|qr|e-fatura|standart teslimat)/i.test(fold(name))) continue;
+      const identity = fold(name) + "|" + purchasedSize;
+      if (cards.some((card) => fold(card.productName) + "|" + card.purchasedSize === identity)) continue;
       const clientKeySource = [name, purchasedSize].join("|").toUpperCase();
       let clientHash = 2166136261;
       for (let i = 0; i < clientKeySource.length; i += 1) { clientHash ^= clientKeySource.charCodeAt(i); clientHash = Math.imul(clientHash, 16777619); }
@@ -1656,13 +1711,37 @@ const scannerBootstrap = String.raw`
     return cards;
   };
   const scrapeOrders = async () => {
+    unlockPageScroll();
     const postOrderProgress = (message) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: "fitmemory-progress", message }));
-    const orderCountHint = () => all("[class*='order-item' i], [class*='order-product' i], [data-testid*='order' i] img, main img").length;
+    const junkImage = (url, alt) =>
+      !url ||
+      /^(data:|blob:)/i.test(url) ||
+      /(logo|icon|avatar|sprite|placeholder|spacer|pixel|1x1|favicon|qr|barcode|invoice|fatura|payment|transparent|blank)/i.test(url + " " + (alt || ""));
+    const listedProductCount = () => {
+      const text = fold((document.body && (document.body.innerText || document.body.textContent)) || "");
+      const match = text.match(/\b(\d+)\s+urun\b/);
+      return match ? Number(match[1]) : 0;
+    };
+    const isOrderDetailPage = () => {
+      const path = location.pathname + " " + location.href;
+      if (/online-order-det|order-detail|siparis.*detay|order\/(?:detail|view)/i.test(path)) return true;
+      return listedProductCount() === 1;
+    };
+    const orderCountHint = () => {
+      const listed = listedProductCount();
+      if (listed > 0) return listed;
+      const harvested = harvestOrdersFromPage().filter((card) => card.productName && card.purchasedSize);
+      return harvested.length;
+    };
     const loadAllOrderHistory = async () => {
+      if (isOrderDetailPage()) {
+        postOrderProgress("Sipariş detayı okunuyor · " + Math.max(1, orderCountHint()) + " ürün");
+        return;
+      }
       let stableRounds = 0;
       let previousCount = -1;
       for (let round = 0; round < 30 && stableRounds < 3; round += 1) {
-        postOrderProgress("Sipariş geçmişi yükleniyor · " + Math.max(0, orderCountHint()) + " öğe görüldü");
+        postOrderProgress("Sipariş geçmişi yükleniyor · " + Math.max(0, orderCountHint()) + " ürün görüldü");
         const controls = all("button, a[href], [role='button']").filter(visible)
           .filter((element) => /daha\s*fazla|daha\s*fazlasını\s*gör|tümünü\s*gör|load\s*more|show\s*more|sonraki|next/i.test(clean(element.innerText || element.textContent)))
           .filter((element) => !/sepet|cart|checkout|ödeme|payment|giriş|login/i.test(clean(element.innerText || element.textContent) + " " + (element.getAttribute("href") || "")));
@@ -1681,16 +1760,30 @@ const scannerBootstrap = String.raw`
     const pullAndBearOrderScanner = () => all("[data-testid*='order' i] [data-testid*='product' i], [class*='order-detail' i] [class*='product' i], [class*='order-product' i], [class*='order-item' i], [class*='checkout' i] [class*='product' i], [class*='summary' i] [class*='product' i], [class*='line-item' i], [data-qa-qualifier*='product' i]");
     await loadAllOrderHistory();
     const orderImageUrl = (image) => {
+      const srcsetLast = clean(image.getAttribute("srcset") || image.getAttribute("data-srcset")).split(",")
+        .map((part) => part.trim().split(/\s+/)[0]).filter(Boolean).pop() || "";
       const candidates = [
-        image.currentSrc,
-        image.src,
         image.getAttribute("data-src"),
         image.getAttribute("data-original"),
         image.getAttribute("data-lazy-src"),
         image.getAttribute("data-image-url"),
-        clean(image.getAttribute("srcset")).split(",").map((part) => part.trim().split(/\s+/)[0]).pop()
-      ].map(absoluteUrl).filter(Boolean);
-      return candidates.find((value) => /^https?:\/\//i.test(value)) || candidates[0] || "";
+        srcsetLast,
+        image.currentSrc,
+        image.src
+      ].map(absoluteUrl).map(upgradeImageUrl).filter((value) => value && /^https?:\/\//i.test(value) && !junkImage(value, image.alt || ""));
+      return candidates[0] || "";
+    };
+    const imageFromRoot = (root) => {
+      let node = root;
+      for (let depth = 0; node && depth < 8; depth += 1) {
+        const images = [...(node.querySelectorAll ? node.querySelectorAll("img") : [])]
+          .map((image) => ({ image, url: orderImageUrl(image), rect: image.getBoundingClientRect() }))
+          .filter((item) => item.url && item.rect.width >= 40 && item.rect.height >= 40)
+          .sort((left, right) => (right.rect.width * right.rect.height) - (left.rect.width * left.rect.height));
+        if (images[0]) return images[0];
+        node = node.parentElement;
+      }
+      return null;
     };
     const controls = all("button, [role='button']")
       .filter(visible)
@@ -1707,7 +1800,8 @@ const scannerBootstrap = String.raw`
     const candidates = adapterCandidates;
     for (const image of all("main img, img")) {
       const rect = image.getBoundingClientRect();
-      if (rect.width < 36 || rect.height < 40) continue;
+      if (rect.width < 48 || rect.height < 56) continue;
+      if (junkImage(orderImageUrl(image) || image.src || "", image.alt || image.className || "")) continue;
       const container = closestProductContainer(image);
       if (container && !candidates.includes(container)) candidates.push(container);
     }
@@ -1734,7 +1828,12 @@ const scannerBootstrap = String.raw`
         .filter(Boolean)
         .filter((value, index, values) => values.indexOf(value) === index)
         .slice(0, 8);
-      const images = [...element.querySelectorAll("img")]
+      const picked = imageFromRoot(element);
+      const images = picked ? [{
+        url: picked.url,
+        alt: clean(picked.image.alt).slice(0, 500),
+        productUrl: absoluteUrl(picked.image.closest("a[href]")?.href || "")
+      }] : [...element.querySelectorAll("img")]
         .map((image) => {
           const link = image.closest("a[href]");
           return {
@@ -1778,24 +1877,43 @@ const scannerBootstrap = String.raw`
       };
     }).filter((card) =>
       card.text.length >= 8 &&
-      (card.productName || card.purchasedSize || card.images.length)
-    ).filter((card, index, cards) => cards.findIndex((candidate) => candidate.clientKey === card.clientKey) === index).slice(0, 300);
-    const harvested = harvestOrdersFromPage();
-    const completeHarvest = harvested.filter((card) => card.productName && card.purchasedSize);
-    const completeDom = orderCards.filter((card) => card.productName && card.purchasedSize);
-    if (completeHarvest.length >= 2 && completeHarvest.length >= completeDom.length) {
-      orderCards = completeHarvest;
-    } else {
-      const seen = {};
-      for (const card of orderCards) seen[(card.productName || "").toLowerCase() + "|" + (card.purchasedSize || "")] = true;
-      for (const card of completeHarvest) {
-        const key = (card.productName || "").toLowerCase() + "|" + (card.purchasedSize || "");
-        if (!seen[key]) {
-          seen[key] = true;
-          orderCards.push(card);
+      card.productName && card.purchasedSize
+    );
+    const collapseOrderCards = (cards) => {
+      const ranked = [...cards].sort((left, right) => {
+        const imgLeft = left.imageUrl && !junkImage(left.imageUrl, left.imageAlt) ? 1 : 0;
+        const imgRight = right.imageUrl && !junkImage(right.imageUrl, right.imageAlt) ? 1 : 0;
+        return (imgRight - imgLeft) || (right.productName.length - left.productName.length);
+      });
+      const seen = new Map();
+      for (const card of ranked) {
+        const key = fold(card.productName) + "|" + String(card.purchasedSize || "").toUpperCase();
+        const previous = seen.get(key);
+        if (!previous) {
+          seen.set(key, card);
+          continue;
         }
+        if (!previous.imageUrl && card.imageUrl) previous.imageUrl = card.imageUrl;
+        if (!previous.imageAlt && card.imageAlt) previous.imageAlt = card.imageAlt;
       }
+      let result = [...seen.values()];
+      const listed = listedProductCount();
+      if (listed === 1 && result.length > 1) result = result.slice(0, 1);
+      return result;
+    };
+    const harvested = harvestOrdersFromPage();
+    const completeHarvest = collapseOrderCards(harvested.filter((card) => card.productName && card.purchasedSize));
+    orderCards = collapseOrderCards(orderCards);
+    if (completeHarvest.length && (orderCards.length === 0 || completeHarvest.length <= orderCards.length)) {
+      const withImages = completeHarvest.map((card) => {
+        const match = orderCards.find((candidate) =>
+          fold(candidate.productName) === fold(card.productName) &&
+          String(candidate.purchasedSize).toUpperCase() === String(card.purchasedSize).toUpperCase());
+        return match?.imageUrl ? { ...card, imageUrl: match.imageUrl, images: match.images || card.images } : card;
+      });
+      orderCards = collapseOrderCards(withImages);
     }
+    orderCards = collapseOrderCards(orderCards);
     if (!orderCards.length) {
       throw new Error(
         "Görünür sipariş ürünü bulunamadı. Siparişlerim, sipariş detayı veya alışveriş özeti sayfasını açın; ürün adı, beden ve fiyat görünsün."
