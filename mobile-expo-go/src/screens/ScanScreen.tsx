@@ -28,8 +28,13 @@ import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
 import { hasVerifiedNumericChart as hasVerifiedSnapshot } from "../scanValidation";
-import { recommendFromSnapshot } from "../localRecommend";
 import { isCurrentScanResponse, isSameShopPage, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
+import {
+  isAllowedShopUrl,
+  isShopStoreUrl,
+  shopUserAgent,
+  shouldCloseAuthWindow,
+} from "../shopBrowser";
 import type {
   ProductSnapshot,
   OrderSnapshot,
@@ -44,54 +49,6 @@ const shops = [
   { name: "Bershka", logo: "BERSHKA", url: "https://www.bershka.com/tr/" },
   { name: "Zara", logo: "ZARA", url: "https://www.zara.com/tr/" },
 ];
-
-const iosSafariUserAgent =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
-
-const allowedShopDomains = [
-  "pullandbear.com",
-  "bershka.com",
-  "zara.com",
-  "inditex.com",
-];
-
-const allowedAuthDomains = [
-  "accounts.google.com",
-  "google.com",
-  "googleapis.com",
-  "gstatic.com",
-  "googleusercontent.com",
-  "appleid.apple.com",
-  "apple.com",
-  "facebook.com",
-  "fb.com",
-  "fbcdn.net",
-  "instagram.com",
-  "login.microsoftonline.com",
-  "live.com",
-  "microsoftonline.com",
-];
-
-function isAllowedShopUrl(value: string) {
-  if (value === "about:blank" || value === "about:srcdoc") return true;
-  if (/^(about|intent|fitmemorygo):/i.test(value)) return true;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:") return false;
-    const host = url.hostname.replace(/^www\./, "");
-    return (
-      allowedShopDomains.some(
-        (domain) => host === domain || host.endsWith(`.${domain}`),
-      ) ||
-      allowedAuthDomains.some(
-        (domain) => host === domain || host.endsWith(`.${domain}`),
-      )
-    );
-  } catch (reason) {
-    void reason;
-    return false;
-  }
-}
 
 function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null {
   const selected = pageText.match(/\[selected\]\s*(XXXL|XXL|XL|L|M|S|XS|XXS|\d{2,3})\b/i)?.[1]?.toUpperCase();
@@ -191,6 +148,7 @@ export function ScanScreen({
   const [pendingOrders, setPendingOrders] = useState<OrderSnapshot | null>(null);
   const [orderImportBusy, setOrderImportBusy] = useState(false);
   const [aiReviewing, setAiReviewing] = useState(false);
+  const [authWindowUrl, setAuthWindowUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const show = Keyboard.addListener(
@@ -283,6 +241,7 @@ export function ScanScreen({
     setNote("");
     setError("");
     setPageLoading(false);
+    setAuthWindowUrl(null);
     setBrowserOpen(false);
   };
 
@@ -391,71 +350,57 @@ export function ScanScreen({
     aiReviewRef.current = { id: reviewId, controller };
     const userId = session.account.userId;
     const token = session.token;
-    setSnapshot(nextSnapshot);
+    setRecommendation(null);
+    setSnapshot(null);
     setScanMode(null);
-    const local = recommendFromSnapshot(
-      session.profile,
-      session.orders,
-      nextSnapshot,
-    );
-    setRecommendation(local);
-    setScanStage("completed");
+    setScanStage("recommending");
     setAiReviewing(true);
-    setStatus("AI kalıp, dikiş ve etiketleri denetliyor");
-    feedback.success();
-
-    void (async () => {
+    setStatus("AI ölçüleri inceliyor");
+    try {
       try {
-        try {
-          await session.syncPendingProfile();
-        } catch {
-          // Profil henüz sunucuda değilse analiz 404 verebilir; yerel taslak durur.
-        }
-        if (aiReviewRef.current?.id !== reviewId) return;
-        const result = await session.api.analyzeProduct(
-          userId,
-          token,
-          nextSnapshot,
-          "",
-          false,
-          controller.signal,
-        );
-        if (aiReviewRef.current?.id !== reviewId) return;
-        setRecommendation(result);
-        setAiReviewing(false);
-        setStatus("AI denetimi tamamlandı");
-        feedback.success();
-        setTimeout(() => {
-          if (aiReviewRef.current?.id === reviewId) {
-            setStatus("");
-            aiReviewRef.current = null;
-          }
-        }, 2200);
+        await session.syncPendingProfile();
       } catch {
-        if (aiReviewRef.current?.id !== reviewId || controller.signal.aborted) {
-          return;
-        }
-        setAiReviewing(false);
-        setRecommendation((current) =>
-          current
-            ? {
-                ...current,
-                fitNotes: [
-                  "AI kalıp denetimine ulaşılamadı; gösterilen beden yerel ölçü taslağıdır.",
-                  ...current.fitNotes,
-                ].slice(0, 6),
-              }
-            : current,
-        );
-        setStatus("AI'ya ulaşılamadı; yerel taslak korundu");
-        setTimeout(() => {
-          if (aiReviewRef.current?.id === reviewId) {
-            setStatus("");
-            aiReviewRef.current = null;
-          }
-        }, 4000);
+        // Profil henüz sunucuda değilse analiz 404 verebilir.
       }
-    })();
+      if (aiReviewRef.current?.id !== reviewId) return;
+      const result = await session.api.analyzeProduct(
+        userId,
+        token,
+        nextSnapshot,
+        "",
+        false,
+        controller.signal,
+      );
+      if (aiReviewRef.current?.id !== reviewId) return;
+      if (
+        !result.recommendedSize ||
+        result.recommendedSize === "Bilinmiyor" ||
+        result.dataSource === "local-insufficient"
+      ) {
+        throw new Error(
+          "Ürün ölçüleri okunmadan beden önerisi verilmedi. Ölçüler sekmesini açık bırakıp Açık ölçüleri oku.",
+        );
+      }
+      setSnapshot(nextSnapshot);
+      setRecommendation(result);
+      setScanStage("completed");
+      setAiReviewing(false);
+      setStatus("");
+      feedback.success();
+      aiReviewRef.current = null;
+    } catch (reason) {
+      if (aiReviewRef.current?.id !== reviewId || controller.signal.aborted) {
+        return;
+      }
+      setAiReviewing(false);
+      setRecommendation(null);
+      setSnapshot(null);
+      setScanStage("failed");
+      aiReviewRef.current = null;
+      throw reason instanceof Error
+        ? reason
+        : new Error("AI beden önerisi tamamlanamadı.");
+    }
   };
 
   const importOrderSnapshot = async (
@@ -500,7 +445,11 @@ export function ScanScreen({
       sizeChart: localChart,
       capturedAt: new Date().toISOString(),
     } : null;
-    if (localSnapshot && hasVerifiedSnapshot(localSnapshot)) {
+    if (
+      localSnapshot &&
+      hasVerifiedSnapshot(localSnapshot) &&
+      localSnapshot.sizeChart.rows.length >= 2
+    ) {
       await analyzeSnapshot(localSnapshot);
       return;
     }
@@ -891,7 +840,7 @@ export function ScanScreen({
               onOpenWindow={(event) => {
                 const url = event.nativeEvent.targetUrl;
                 if (url && isAllowedShopUrl(url)) {
-                  setBrowserUrl(url);
+                  setAuthWindowUrl(url);
                 }
               }}
               pullToRefreshEnabled
@@ -901,13 +850,52 @@ export function ScanScreen({
               source={{ uri: browserUrl }}
               startInLoadingState
               thirdPartyCookiesEnabled
-              userAgent={Platform.OS === "ios" ? iosSafariUserAgent : undefined}
+              userAgent={shopUserAgent}
             />
             {pageLoading && (
               <View pointerEvents="none" style={styles.pageLoader}>
                 <ActivityIndicator color={colors.blue} />
               </View>
             )}
+            {authWindowUrl ? (
+              <View style={styles.authWindow}>
+                <View style={styles.authWindowBar}>
+                  <Text style={styles.authWindowTitle}>Mağaza girişi</Text>
+                  <Pressable
+                    onPress={() => setAuthWindowUrl(null)}
+                    style={styles.authWindowClose}
+                  >
+                    <Text style={styles.authWindowCloseText}>Kapat</Text>
+                  </Pressable>
+                </View>
+                <WebView
+                  javaScriptEnabled
+                  onNavigationStateChange={(state) => {
+                    if (shouldCloseAuthWindow(state.url)) {
+                      setAuthWindowUrl(null);
+                      if (isShopStoreUrl(state.url)) {
+                        webViewRef.current?.reload();
+                      }
+                    }
+                  }}
+                  onOpenWindow={(event) => {
+                    const url = event.nativeEvent.targetUrl;
+                    if (url && isAllowedShopUrl(url)) {
+                      setAuthWindowUrl(url);
+                    }
+                  }}
+                  onShouldStartLoadWithRequest={(request) =>
+                    isAllowedShopUrl(request.url)
+                  }
+                  originWhitelist={["https://*", "http://*", "about:blank"]}
+                  setSupportMultipleWindows={true}
+                  sharedCookiesEnabled
+                  source={{ uri: authWindowUrl }}
+                  thirdPartyCookiesEnabled
+                  userAgent={shopUserAgent}
+                />
+              </View>
+            ) : null}
           </View>
 
           {error ? (
@@ -916,7 +904,7 @@ export function ScanScreen({
             </View>
           ) : null}
 
-          {recommendation && snapshot ? (
+          {recommendation && snapshot && !aiReviewing ? (
             <View style={[styles.result, keyboardOpen && styles.resultKeyboard]}>
               <ScrollView
                 keyboardShouldPersistTaps="handled"
@@ -944,6 +932,11 @@ export function ScanScreen({
                     {snapshot.product.fitLabel ? (
                       <Text style={styles.fitChip}>
                         {snapshot.product.fitLabel}
+                      </Text>
+                    ) : null}
+                    {snapshot.product.merchantFitAdvice ? (
+                      <Text numberOfLines={2} style={styles.fitChip}>
+                        {snapshot.product.merchantFitAdvice}
                       </Text>
                     ) : null}
                     {snapshot.product.materialSummary ? (
@@ -1343,6 +1336,8 @@ const styles = StyleSheet.create({
   },
   webViewWrap: {
     flex: 1,
+    overflow: "hidden",
+    position: "relative",
   },
   pageLoader: {
     alignItems: "center",
@@ -1353,6 +1348,34 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 0,
     top: 0,
+  },
+  authWindow: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.paper,
+    zIndex: 8,
+  },
+  authWindowBar: {
+    alignItems: "center",
+    backgroundColor: colors.card,
+    borderBottomColor: colors.line,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  authWindowTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  authWindowClose: {
+    paddingVertical: 6,
+  },
+  authWindowCloseText: {
+    color: colors.blue,
+    fontSize: 13,
+    fontWeight: "800",
   },
   browserError: {
     left: 12,

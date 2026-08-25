@@ -224,6 +224,7 @@ export function vaultFromState(input: {
         productReference: item.productReference,
         fitLabel: item.fitLabel,
         fitEvidence: item.fitEvidence,
+        merchantFitAdvice: "",
         description: item.description,
         materialSummary: item.materialSummary,
         materialEvidence: item.materialEvidence,

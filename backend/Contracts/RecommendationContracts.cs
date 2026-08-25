@@ -39,7 +39,7 @@ public sealed class ProductDto
     [StringLength(80)]
     public string Price { get; init; } = "";
 
-    [StringLength(1000)]
+    [StringLength(2000)]
     public string ImageUrl { get; init; } = "";
 
     [StringLength(120)]
@@ -50,6 +50,9 @@ public sealed class ProductDto
 
     [StringLength(300)]
     public string FitEvidence { get; init; } = "";
+
+    [StringLength(400)]
+    public string MerchantFitAdvice { get; init; } = "";
 
     [StringLength(1200)]
     public string Description { get; init; } = "";

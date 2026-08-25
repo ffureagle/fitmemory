@@ -120,65 +120,6 @@ public sealed partial class LocalFitRecommendationEngine(
                     "local-personal-boundary");
             }
 
-            var footwearEstimate = EstimateFootwearLabelSize(
-                profile,
-                request.Product,
-                availableSizes);
-            if (footwearEstimate is not null)
-            {
-                return new RecommendationResult(
-                    footwearEstimate.SelectedSize,
-                    footwearEstimate.Confidence,
-                    $"{footwearEstimate.SelectedSize}, kayıtlı EU ayakkabı numarana en yakın başlangıç.",
-                    $"Resmi tabloda ayak uzunluğuyla doğrudan eşleşen bir satır okunamadı. Bu nedenle sayfadaki seçenekler arasından alıştığın EU {profile.UsualShoeSizeEu:0.#} numaraya en yakın {footwearEstimate.SelectedSize} korundu. Marka kalıbı ve ayakkabının iç yapısı değişebileceği için bu sonuç düşük güvenlidir; ayak uzunluğu sütunu açıldığında yeniden hesaplanmalıdır.",
-                    [
-                        "Boy, kilo, göğüs ve omuz ölçüleri ayakkabı numarası hesabına katılmadı.",
-                        profile.FootLengthCm.HasValue
-                            ? $"{profile.FootLengthCm:0.#} cm ayak uzunluğun kayıtlı; ancak aktif marka tablosunda karşılaştırılabilir ayak uzunluğu satırı bulunmadı."
-                            : "Daha güçlü sonuç için topuktan en uzun parmağa ayak uzunluğunu profile ekle.",
-                        "EU numarası markalar arasında kesin iç uzunluk garantisi değildir."
-                    ],
-                    [
-                        new ComparisonDto(
-                            "Alışılan EU numarası",
-                            $"Profil {profile.UsualShoeSizeEu:0.#} · sayfada {string.Join(", ", availableSizes)}")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-footwear-size");
-            }
-
-            var modelEstimate = EstimateFromModelReference(
-                profile,
-                request.Product,
-                availableSizes);
-            if (modelEstimate is not null)
-            {
-                var fitText = string.IsNullOrWhiteSpace(
-                    request.Product.FitLabel)
-                    ? "Sayfada ayrı bir kalıp etiketi doğrulanmadı."
-                    : $"Resmi ürün açıklamasındaki kalıp {request.Product.FitLabel}.";
-                return new RecommendationResult(
-                    modelEstimate.Size,
-                    modelEstimate.Confidence,
-                    $"{modelEstimate.Size}, ürünün model referansına göre en mantıklı başlangıç.",
-                    $"Ürün açıklamasında {modelEstimate.ModelHeightCm} cm modelin {modelEstimate.Size} beden giydiği yazıyor. Sen {profile.HeightCm:0.#} cm olduğun için, ürün ölçüsü okunmadan {modelEstimate.Size} bedenin üstüne çıkmak desteklenmiyor. {fitText} Modelin göğüs ve kilo bilgisi verilmediğinden bu sonuç kesinlik değil, fakat L seçmekten daha güçlü ürün kanıtına dayanıyor.",
-                    [
-                        "Model boyu ve giydiği beden doğrudan ürün açıklamasından okundu.",
-                        "Modelin bilinmeyen göğüs ölçüsü uydurulmadı.",
-                        "Ürün ölçü paneli açıldığında göğüs eni bu model referansından daha güçlü kanıt sayılır."
-                    ],
-                    [
-                        new ComparisonDto(
-                            "Model referansı",
-                            $"{modelEstimate.ModelHeightCm} cm model · {modelEstimate.Size} beden"),
-                        new ComparisonDto(
-                            "Boy karşılaştırması",
-                            $"Sen {profile.HeightCm:0.#} cm · modelden {Math.Abs(modelEstimate.HeightDifferenceCm):0.#} cm {(modelEstimate.HeightDifferenceCm <= 0 ? "kısasın" : "uzunsun")}")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-model-reference");
-            }
-
             var bottomEstimate = EstimateBottomLabelSize(
                 profile,
                 request.Product,
@@ -186,7 +127,10 @@ public sealed partial class LocalFitRecommendationEngine(
             if (bottomEstimate is not null)
             {
                 return new RecommendationResult(
-                    bottomEstimate.SelectedSize,
+                    ApplyMerchantSizeShift(
+                        bottomEstimate.SelectedSize,
+                        request.Product,
+                        availableSizes),
                     bottomEstimate.Confidence,
                     $"{bottomEstimate.SelectedSize}, bel ölçüne göre en tutarlı beden.",
                     $"{bottomEstimate.SelectedSize} beden {bottomEstimate.WaistCm:0.#} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.",
@@ -203,89 +147,15 @@ public sealed partial class LocalFitRecommendationEngine(
                     "local-waist-label-estimate");
             }
 
-            var historySize = FindConfirmedCategorySize(
-                relevantOrders,
-                availableSizes);
-            if (!string.IsNullOrWhiteSpace(historySize))
-            {
-                var historyCount = relevantOrders.Count(order =>
-                    order.Outcome == OrderOutcome.KeptGoodFit &&
-                    order.PurchasedSize.Equals(
-                        historySize,
-                        StringComparison.OrdinalIgnoreCase) &&
-                    !regionalFeedback.HasNegativeSignal(
-                        order.UserFitNotes));
-                return new RecommendationResult(
-                    historySize.ToUpperInvariant(),
-                    Math.Clamp(
-                        (hasComparableMeasurements ? 40 : 46) +
-                        historyCount * 4,
-                        40,
-                        58),
-                    $"{historySize.ToUpperInvariant()}, aynı kategoride sende doğrulanmış beden.",
-                    hasComparableMeasurements
-                        ? $"Aktif tablodaki ölçüler okundu; ancak ayrıştırılan bedenlerin hiçbiri fiziksel uygunluk sınırından geçmedi. Bu nedenle FitMemory ölçüyü yok saymak veya güven uydurmak yerine, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini yalnız geçici taslak olarak korudu."
-                        : $"Aktif tablodan beden etiketleri okundu fakat yapılandırılmış ölçüye dönüşmedi. Bu nedenle FitMemory, aynı kategoride iyi uyduğunu belirttiğin {historySize.ToUpperInvariant()} bedenini sınırlı güvenle taslak olarak korudu.",
-                    hasComparableMeasurements
-                        ? [
-                            "Tablo değerleri profilinle karşılaştırıldı; sorun profil eksikliği değil, ölçülerin fiziksel uygunluk sınırının dışında kalmasıdır.",
-                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
-                            "Relaxed/oversize tercihi tek başına bir beden büyütme gerekçesi sayılmadı."
-                        ]
-                        : [
-                            "Profilindeki göğüs çevresi mevcut; yeniden girmen gerekmiyor.",
-                            "Beden düğmelerini ve santimetre sütununu açık tutarak yeniden tarayın.",
-                            "Boy veya kilodan göğüs ölçüsü tahmin edilmedi."
-                        ],
-                    [
-                        new ComparisonDto(
-                            "Kategori geçmişi",
-                            $"{historyCount} iyi uyum kaydı · {historySize.ToUpperInvariant()}")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-category-history");
-            }
-
-            var bodySizeEstimate = EstimateUpperBodyLabelSize(
-                profile,
-                request.Product,
-                availableSizes);
-            if (bodySizeEstimate is not null)
-            {
-                var fit = ProductFit(request.Product);
-                var fitContext = fit == ProductFitKind.Unknown
-                    ? "Resmi kalıp etiketi okunamadığı için ayrıca beden büyütülmedi."
-                    : $"{FitKindLabel(fit)} kesim ürünün siluetini değiştirir; beden etiketi tek başına büyütülmedi.";
-                return new RecommendationResult(
-                    bodySizeEstimate.SelectedSize,
-                    bodySizeEstimate.Confidence,
-                    $"{bodySizeEstimate.SelectedSize}, vücut ölçüne göre başlangıç tahmini.",
-                    $"Ürünün parça ölçüleri henüz okunamadı. {bodySizeEstimate.ChestCm:0.#} cm göğüs çevren {bodySizeEstimate.BodySize} üst giyim aralığına denk geliyor; sayfadaki mevcut seçeneklerden {bodySizeEstimate.SelectedSize} seçildi. {fitContext} Bu, ürün ölçü tablosu açıldığında yeniden hesaplanması gereken düşük güvenli bir tahmindir.",
-                    [
-                        "Boy veya kilodan göğüs ölçüsü üretilmedi; profile girdiğin gerçek göğüs çevresi kullanıldı.",
-                        "Tişört, mont veya pantolon geçmişi bu kategoriye taşınmadı.",
-                        "Ürün ölçülerini açıp yeniden taramak göğüs eni ve omuz karşılaştırmasını etkinleştirir."
-                    ],
-                    [
-                        new ComparisonDto(
-                            "Göğüs çevresi",
-                            $"Profil {bodySizeEstimate.ChestCm:0.#} cm · {bodySizeEstimate.BodySize} referans aralığı {bodySizeEstimate.RangeLow:0}-{bodySizeEstimate.RangeHigh:0} cm"),
-                        new ComparisonDto(
-                            "Mevcut beden",
-                            $"Sayfada {string.Join(", ", availableSizes)} · başlangıç seçimi {bodySizeEstimate.SelectedSize}")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-body-label-estimate");
-            }
 
             return new RecommendationResult(
                 "Bilinmiyor",
-                22,
-                "Bu tabloyla güvenilir beden çıkarılamadı.",
-                "Ürün tablosundaki ölçüler profilindeki ölçülerle aynı türde değil. FitMemory artık ortadaki bedeni seçmiyor ve boy/kilodan göğüs genişliği uydurmuyor.",
+                0,
+                "Ürün ölçüleri okunmadan beden önerilmedi.",
+                "Sayfadaki ölçü tablosu henüz sayısal giysi milimine dönüşmedi. FitMemory bu yüzden göğüs çevrenden veya model bedeninden ölçü uydurmadı. Ölçüler sekmesini açık bırakıp yeniden dene.",
                 [
-                    "Göğüs eni ile omuz genişliği birbirinin yerine kullanılmadı.",
-                    "Göğüs çevreni profile ekleyin veya aynı kategoriden ölçülü bir iyi uyum kaydı oluşturun."
+                    "Beden önerisi yalnız okunan ürün ölçülerinden üretilir.",
+                    "Mağazanın 'büyük beden, bir beden küçük al' uyarısı ölçü okunduktan sonra uygulanır."
                 ],
                 [],
                 BuildEvidenceSummary(relevantOrders),
@@ -310,10 +180,14 @@ public sealed partial class LocalFitRecommendationEngine(
             sameFamilyOrders,
             best);
 
-        return new RecommendationResult(
+        var selectedSize = ApplyMerchantSizeShift(
             best.Candidate.Label,
+            request.Product,
+            availableSizes);
+        return new RecommendationResult(
+            selectedSize,
             confidence,
-            $"{best.Candidate.Label}, ölçülerinize en güçlü eşleşme.",
+            $"{selectedSize}, ölçülerinize en güçlü eşleşme.",
             explanation,
             fitNotes,
             comparisons,
@@ -1666,6 +1540,78 @@ public sealed partial class LocalFitRecommendationEngine(
             _ => metric
         };
     }
+
+    private static readonly string[] LetterSizes =
+        ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "XXXXL"];
+
+    private static string ApplyMerchantSizeShift(
+        string size,
+        ProductDto product,
+        IReadOnlyList<string> availableSizes)
+    {
+        var text = Fold(
+            $"{product.FitEvidence} {product.Description} {product.Name} {product.MerchantFitAdvice}");
+        var delta = 0;
+        if (Regex.IsMatch(
+                text,
+                @"bir beden kucuk|runs large|size down|size smaller"))
+        {
+            delta = -1;
+        }
+        else if (Regex.IsMatch(
+                     text,
+                     @"bir beden buyuk|runs small|size up|size bigger"))
+        {
+            delta = 1;
+        }
+
+        if (delta == 0)
+        {
+            return size;
+        }
+
+        var ordered = availableSizes
+            .Select(NormalizeSizeLabel)
+            .Where(label => label.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var index = Array.FindIndex(
+            ordered,
+            label => label.Equals(size, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            var letterIndex = Array.FindIndex(
+                LetterSizes,
+                label => label.Equals(size, StringComparison.OrdinalIgnoreCase));
+            if (letterIndex < 0)
+            {
+                return size;
+            }
+
+            var neighbor = letterIndex + delta;
+            if (neighbor < 0 || neighbor >= LetterSizes.Length)
+            {
+                return size;
+            }
+
+            var match = ordered.FirstOrDefault(label =>
+                label.Equals(LetterSizes[neighbor], StringComparison.OrdinalIgnoreCase));
+            return match ?? size;
+        }
+
+        var shifted = index + delta;
+        return shifted >= 0 && shifted < ordered.Length ? ordered[shifted] : size;
+    }
+
+    private static string Fold(string? value) => (value ?? "")
+        .Trim()
+        .ToLowerInvariant()
+        .Replace('ı', 'i')
+        .Replace('ş', 's')
+        .Replace('ğ', 'g')
+        .Replace('ç', 'c')
+        .Replace('ö', 'o')
+        .Replace('ü', 'u');
 
     private static string NormalizeSizeLabel(string value)
     {

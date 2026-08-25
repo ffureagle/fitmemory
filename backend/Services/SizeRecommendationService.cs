@@ -39,6 +39,14 @@ public sealed class SizeRecommendationService(
         // Local engine is a draft only. Gemini/OpenAI is the final size controller.
         // Same-cut wardrobe history is supporting evidence for the AI, never a size lock.
         // Structural guard is the only post-AI override (physically impossible size).
+        if (string.Equals(localResult.RecommendedSize, "Bilinmiyor", StringComparison.OrdinalIgnoreCase) ||
+            localResult.DataSource is "local-insufficient" or "local-body-label-estimate")
+        {
+            return ApplyEvidenceScope(
+                localResult,
+                categoryOrders,
+                request);
+        }
         var provider = providerOptions.Value;
         var providerConfigured =
             provider.IsGemini && !string.IsNullOrWhiteSpace(geminiOptions.Value.ApiKey) ||

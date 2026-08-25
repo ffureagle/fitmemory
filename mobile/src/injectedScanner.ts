@@ -127,62 +127,107 @@ const scannerBootstrap = String.raw`
     }
     return "";
   };
+  const upgradeImageUrl = (value) => {
+    const url = absoluteUrl(value);
+    if (!url) return "";
+    try {
+      const parsed = new URL(url);
+      if (!/^https?:$/i.test(parsed.protocol)) return "";
+      if (parsed.protocol === "http:") parsed.protocol = "https:";
+      if (parsed.searchParams.has("imwidth")) parsed.searchParams.set("imwidth", "1400");
+      if (parsed.searchParams.has("w")) parsed.searchParams.set("w", "1400");
+      if (parsed.searchParams.has("width")) parsed.searchParams.set("width", "1400");
+      return parsed.href;
+    } catch (error) {
+      recordDiagnostic("image-url", error);
+      return url;
+    }
+  };
   const chooseProductImage = (structured, title) => {
     const fromSrcset = (image) => {
       const srcset = image.getAttribute("srcset") || image.getAttribute("data-srcset") || "";
       const parts = srcset.split(",").map((part) => part.trim().split(/\s+/)[0]).filter(Boolean);
       return parts[parts.length - 1] || "";
     };
-    const pickUrl = (image) => absoluteUrl(
+    const pickUrl = (image) => upgradeImageUrl(
       image.currentSrc ||
       image.src ||
       image.getAttribute("data-src") ||
       image.getAttribute("data-original") ||
+      image.getAttribute("data-zoom") ||
       fromSrcset(image) ||
       ""
     );
-    const fixed = [
-      firstImageValue(structured?.image),
-      meta("og:image"),
-      meta("og:image:secure_url"),
-      meta("twitter:image", false)
-    ].map(absoluteUrl).find(Boolean);
-    if (fixed) return fixed;
+    const reject = (url, context) =>
+      !url ||
+      /(logo|icon|avatar|payment|size.?guide|sprite|placeholder|spacer|pixel|1x1|favicon)/i.test(context + " " + url);
     const titleTokens = clean(title).toLocaleLowerCase("tr-TR")
       .split(" ").filter((part) => part.length > 3);
     const scoreImage = (image, requireVisible) => {
       if (requireVisible && !visible(image)) return null;
       const rect = image.getBoundingClientRect();
+      const url = pickUrl(image);
       const context = clean([
         image.alt,
         image.className,
         image.parentElement?.className,
-        pickUrl(image)
+        url
       ].join(" "));
-      if (/(logo|icon|avatar|payment|size.?guide|sprite|placeholder)/i.test(context)) return null;
+      if (reject(url, context)) return null;
       let score = Math.min(50, Math.sqrt(Math.max(rect.width, 80) * Math.max(rect.height, 80)) / 7);
       if (image.closest("main")) score += 18;
-      if (/(gallery|product|pdp|carousel|media)/i.test(context)) score += 20;
-      if (/(static\.(?:pullandbear|bershka|zara)|media\.|impolicy)/i.test(pickUrl(image))) score += 24;
+      if (/(gallery|product|pdp|carousel|media|swiper)/i.test(context)) score += 20;
+      if (/(static\.(?:pullandbear|bershka|zara)|itxassets|media\.|impolicy)/i.test(url)) score += 28;
       if (titleTokens.some((token) =>
         clean(image.alt).toLocaleLowerCase("tr-TR").includes(token))) {
         score += 12;
       }
-      const url = pickUrl(image);
-      if (!url) return null;
+      if (rect.width >= 180 && rect.height >= 180) score += 16;
       return { url, score };
     };
-    const visiblePick = all("main img, [class*='product' i] img, picture img, img")
+    const visiblePick = all("main img, [class*='product' i] img, [class*='gallery' i] img, picture img, img")
       .map((image) => scoreImage(image, true))
       .filter(Boolean)
       .sort((left, right) => right.score - left.score)[0]?.url;
     if (visiblePick) return visiblePick;
-    return all("img, picture source")
+    const hiddenPick = all("img, picture source")
       .map((image) => scoreImage(image, false))
       .filter(Boolean)
-      .sort((left, right) => right.score - left.score)[0]?.url || "";
+      .sort((left, right) => right.score - left.score)[0]?.url;
+    if (hiddenPick) return hiddenPick;
+    const html = document.documentElement?.innerHTML || "";
+    const asset = html.match(/https?:\/\/static\.(?:pullandbear|bershka|zara)\.[^"'\\s>]+\.(?:jpg|jpeg|png|webp)/i);
+    if (asset?.[0] && !reject(asset[0], asset[0])) return upgradeImageUrl(asset[0]);
+    const structuredUrl = upgradeImageUrl(firstImageValue(structured?.image));
+    if (structuredUrl && !reject(structuredUrl, structuredUrl)) return structuredUrl;
+    const og = ["og:image", "og:image:secure_url"].map((key) => upgradeImageUrl(meta(key)))
+      .find((url) => url && !reject(url, url));
+    return og || upgradeImageUrl(meta("twitter:image", false));
+  };
+  const merchantFitAdvice = () => {
+    const text = clean([
+      ...all("[class*='banner' i], [class*='fit' i], [class*='message' i], [class*='alert' i], [role='status'], main, body")
+        .filter(visible)
+        .map((element) => element.innerText || element.textContent)
+    ].join(" \n ")).slice(0, 80000);
+    const patterns = [
+      /büyük\s+beden[.!]?\s*bir\s+beden\s+küçük[^\n.]{0,80}/i,
+      /bir\s+beden\s+küçük\s+almanızı\s+öneririz/i,
+      /bir\s+beden\s+küçük\s+al/i,
+      /runs?\s+large[^\n.]{0,80}/i,
+      /runs?\s+small[^\n.]{0,80}/i,
+      /size\s+down[^\n.]{0,60}/i,
+      /size\s+up[^\n.]{0,60}/i,
+      /bir\s+beden\s+büyük\s+almanızı\s+öneririz/i
+    ];
+    for (const pattern of patterns) {
+      const match = pattern.exec(text);
+      if (match) return clean(match[0]).slice(0, 240);
+    }
+    return "";
   };
   const fitDetails = () => {
+
     const text = clean([
       ...all(
         "[class*='fit' i], [data-testid*='fit' i], " +
@@ -1309,6 +1354,7 @@ const scannerBootstrap = String.raw`
       location.hostname.replace(/^www\./, "").split(".")[0]
     ).slice(0, 120);
     let imageUrl = chooseProductImage(structured, title);
+    const advice = merchantFitAdvice();
     const openMeasurementSurface = () =>
       metricLabelsVisible() && findSizeButtons(document).length >= 2;
     if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
@@ -1367,8 +1413,8 @@ const scannerBootstrap = String.raw`
           url: location.href.slice(0, 1000), brand, name: title,
           category: inferCategory(structured?.category, title, structured?.description, fit.label),
           price: clean([offers?.price || meta("product:price:amount"), offers?.priceCurrency || meta("product:price:currency")].filter(Boolean).join(" ")).slice(0, 80),
-          imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
-          productReference: reference, fitLabel: fit.label, fitEvidence: fit.evidence,
+          imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 2000),
+          productReference: reference, fitLabel: fit.label, fitEvidence: clean((advice ? advice + ' ' : '') + fit.evidence).slice(0, 300), merchantFitAdvice: advice,
           description: clean(structured?.description || "").slice(0, 1200),
           materialSummary: material.summary, materialEvidence: material.evidence,
           modelHeightCm: model.heightCm, modelWornSize: model.size, modelEvidence: model.evidence
@@ -1394,10 +1440,11 @@ const scannerBootstrap = String.raw`
           offers?.price || meta("product:price:amount"),
           offers?.priceCurrency || meta("product:price:currency")
         ].filter(Boolean).join(" ")).slice(0, 80),
-        imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 1000),
+        imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 2000),
         productReference: reference,
         fitLabel: fit.label,
-        fitEvidence: fit.evidence,
+        fitEvidence: clean((advice ? advice + " " : "") + fit.evidence).slice(0, 300),
+        merchantFitAdvice: advice,
         description: clean(
           structured?.description ||
           all("[class*='description' i], main details")

@@ -30,7 +30,7 @@ Pull&Bear / Bershka / Zara içinde **Siparişlerim**, **sipariş detayı** veya 
 
 ```bash
 npx eas-cli@latest login
-npx eas-cli@latest update --channel production --message "1.25.15"
+npx eas-cli@latest update --channel production --message "1.25.16"
 ```
 
 Proje: https://expo.dev/accounts/fstudio/projects/fitmemory-go  

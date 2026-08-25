@@ -58,7 +58,7 @@ export function analyzeRecommendation(profile, orders, request) {
     const best = scored[0];
     const comparisons = buildComparisons(best.candidate, targets, profile);
     return result(
-      best.candidate.label,
+      applyMerchantSizeShift(best.candidate.label, request.product, availableSizes),
       calculateConfidence(best, orders, targets),
       `${best.candidate.label}, ölçülerinize en güçlü eşleşme.`,
       buildExplanation(best.candidate, comparisons, profile, request.product),
@@ -71,7 +71,7 @@ export function analyzeRecommendation(profile, orders, request) {
   const bottom = estimateBottomLabelSize(profile, request.product, availableSizes);
   if (bottom) {
     return result(
-      bottom.selectedSize,
+      applyMerchantSizeShift(bottom.selectedSize, request.product, availableSizes),
       bottom.confidence,
       `${bottom.selectedSize}, bel ölçüne göre en tutarlı beden.`,
       `${bottom.selectedSize} beden ${bottom.waistCm} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.`,
@@ -84,26 +84,10 @@ export function analyzeRecommendation(profile, orders, request) {
     );
   }
 
-  const body = estimateUpperBodyLabelSize(profile, request.product, availableSizes);
-  if (body) {
-    return result(
-      body.selectedSize,
-      body.confidence,
-      `${body.selectedSize}, vücut ölçüne göre başlangıç tahmini.`,
-      `${body.chestCm} cm göğüs çevren ${body.bodySize} üst giyim aralığına denk geliyor; sayfadaki seçeneklerden ${body.selectedSize} seçildi.`,
-      ["Ürün ölçülerini açıp yeniden taramak göğüs eni karşılaştırmasını güçlendirir."],
-      [{
-        label: "Göğüs çevresi",
-        detail: `Profil ${body.chestCm} cm · ${body.bodySize} referans aralığı ${body.rangeLow}-${body.rangeHigh} cm`
-      }],
-      "local-body-label-estimate"
-    );
-  }
-
-  return result("Bilinmiyor", 22,
-    "Bu tabloyla güvenilir beden çıkarılamadı.",
-    "Ürün tablosundaki ölçüler profilindeki ölçülerle aynı türde değil veya fiziksel uygunluk sınırının dışındalar.",
-    ["Göğüs eni ile omuz genişliği birbirinin yerine kullanılmadı."],
+  return result("Bilinmiyor", 0,
+    "Ürün ölçüleri okunmadan beden önerilmedi.",
+    "Sayfadaki ölçü tablosu henüz sayısal giysi milimine dönüşmedi. FitMemory bu yüzden göğüs çevrenden beden uydurmadı. Ölçüler sekmesini açık bırakıp yeniden dene.",
+    ["Beden önerisi yalnız okunan ürün ölçülerinden üretilir."],
     [], "local-insufficient");
 }
 
@@ -548,6 +532,23 @@ function buildFitNotes() {
     "Öneri yerel ölçü motoruyla üretildi.",
     "Göğüs eni ile omuz genişliği birbirinin yerine kullanılmadı."
   ];
+}
+
+
+function applyMerchantSizeShift(size, product, availableSizes) {
+  const text = fold(`${product?.fitEvidence || ""} ${product?.description || ""} ${product?.name || ""} ${product?.merchantFitAdvice || ""}`);
+  let delta = 0;
+  if (/bir beden kucuk|runs large|size down|size smaller/.test(text)) delta = -1;
+  else if (/bir beden buyuk|runs small|size up|size bigger/.test(text)) delta = 1;
+  if (!delta) return size;
+  const ordered = (availableSizes || []).map((item) => String(item).toUpperCase());
+  const index = ordered.findIndex((item) => item === String(size).toUpperCase());
+  if (index >= 0 && ordered[index + delta]) return ordered[index + delta];
+  const letters = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+  const letterIndex = letters.indexOf(String(size).toUpperCase());
+  if (letterIndex < 0) return size;
+  const neighbor = letters[letterIndex + delta];
+  return ordered.find((item) => item === neighbor) || size;
 }
 
 function estimateUpperBodyLabelSize(profile, product, availableSizes) {

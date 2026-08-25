@@ -248,6 +248,7 @@ public sealed class OpenAiRecommendationClient(
                 productName = request.Product.Name,
                 productFitLabel = request.Product.FitLabel,
                 productFitEvidence = request.Product.FitEvidence,
+                merchantFitAdvice = request.Product.MerchantFitAdvice,
                 titleCutHints = request.Product.Name,
                 howItSitsOnAPerson = request.Product.FitEvidence,
                 fabricStretch = request.Product.MaterialSummary,
@@ -280,6 +281,11 @@ public sealed class OpenAiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.07 Sayfadaki mağaza uyarılarını oku (merchantFitAdvice, FitEvidence): "büyük beden / bir beden küçük al",
+                  "runs large", "runs small". Ürün ölçüleri varsa bunu komşu beden kaydırması olarak uygula.
+                  Ölçü yoksa beden uydurma.
+            -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden veya göğüs çevresinden
+                  beden uydurma. recommendedSize "Bilinmiyor" kalsın; kullanıcıya ölçü tablosunu açmasını söyle.
             -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Baggy, Super Baggy,
                   Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
                   pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,

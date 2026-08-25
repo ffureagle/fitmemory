@@ -44,6 +44,7 @@ export type Product = {
   productReference: string;
   fitLabel: string;
   fitEvidence: string;
+  merchantFitAdvice: string;
   description: string;
   materialSummary: string;
   materialEvidence: string;
