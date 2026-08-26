@@ -42,6 +42,50 @@ public sealed class ProductScanEvidenceValidatorTests
     }
 
     [Fact]
+    public void ExtractsSizeKeyedMapJson()
+    {
+        using var json = JsonDocument.Parse("""
+            {"sizeGuide":{
+              "XS":{"chest":57.0,"waist":44.0},
+              "S":{"chest":59.0,"waist":46.0},
+              "M":{"chest":61.0,"waist":48.0}
+            }}
+            """);
+        var rows = ProductJsonSizeEvidenceExtractor.ExtractRows(json.RootElement);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("XS", rows[0].Size);
+        Assert.Equal("57", rows[0].Measurements["chest"]);
+        Assert.Equal("M", rows[2].Size);
+        Assert.Equal("61", rows[2].Measurements["chest"]);
+    }
+
+    [Fact]
+    public void ExtractsInditexSkuDimensions()
+    {
+        using var json = JsonDocument.Parse("""
+            {"detail":{"colors":[{"sizes":[
+              {"name":"XS","skuDimensions":[
+                {"dimensionName":"1/2 Chest","value":49.0},
+                {"dimensionName":"Front Length","value":62.0}
+              ]},
+              {"name":"S","skuDimensions":[
+                {"dimensionName":"1/2 Chest","value":51.0},
+                {"dimensionName":"Front Length","value":64.0}
+              ]},
+              {"name":"M","price":1590,"sku":6224308}
+            ]}]}}
+            """);
+        var rows = ProductJsonSizeEvidenceExtractor.ExtractRows(json.RootElement);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("XS", rows[0].Size);
+        Assert.Contains(rows[0].Measurements, pair =>
+            pair.Key.Contains("Chest", StringComparison.OrdinalIgnoreCase) && pair.Value == "49");
+        Assert.Equal("S", rows[1].Size);
+        Assert.Contains(rows[1].Measurements, pair =>
+            pair.Key.Contains("Length", StringComparison.OrdinalIgnoreCase) && pair.Value == "64");
+    }
+
+    [Fact]
     public void RecommendationRequiresNameBrandSizeAndNumericProductMeasurement()
     {
         var product = new ProductDto

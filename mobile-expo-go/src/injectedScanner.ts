@@ -4,6 +4,61 @@ const scannerBootstrap = String.raw`
     const message = error instanceof Error ? error.message : String(error || "unknown error");
     window.__fitmemoryScannerDiagnostics = [...(window.__fitmemoryScannerDiagnostics || []), stage + ": " + message].slice(-20);
   };
+  window.__fitmemoryJsonBags = window.__fitmemoryJsonBags || [];
+  window.__fitmemoryStashJsonText = (text, source) => {
+    const raw = String(text || "");
+    if (raw.length < 40 || raw.length > 1500000) return;
+    const trimmed = raw.trim();
+    if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return;
+    if (!/skuDimensions|dimensionName|1\/2 Chest|"chest"|measurements|"waist"|sizeChart|size_guide|"hip"|beden/i.test(trimmed)) return;
+    const bags = window.__fitmemoryJsonBags;
+    if (bags.some((bag) => bag.text === trimmed)) return;
+    bags.push({ text: trimmed.slice(0, 1500000), source: source || "xhr" });
+    if (bags.length > 10) bags.shift();
+  };
+  if (!window.__fitmemoryNetworkHooked) {
+    window.__fitmemoryNetworkHooked = true;
+    try {
+      const origFetch = window.fetch;
+      if (typeof origFetch === "function") {
+        window.fetch = function () {
+          const pending = origFetch.apply(this, arguments);
+          try {
+            pending.then(function (res) {
+              try {
+                const clone = res.clone();
+                const ct = String((clone.headers && clone.headers.get("content-type")) || "");
+                if (ct && ct.indexOf("json") === -1 && ct.indexOf("javascript") === -1 && ct.indexOf("text") === -1) return;
+                clone.text().then(function (t) {
+                  try { window.__fitmemoryStashJsonText(t, "fetch"); } catch (error) { recordDiagnostic("json-fetch", error); }
+                }).catch(function () {});
+              } catch (error) { recordDiagnostic("json-fetch", error); }
+            }).catch(function () {});
+          } catch (error) { recordDiagnostic("json-fetch", error); }
+          return pending;
+        };
+      }
+    } catch (error) { recordDiagnostic("json-fetch", error); }
+    try {
+      const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        try { this.__fmUrl = url; } catch (error) { recordDiagnostic("json-xhr", error); }
+        return origOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function () {
+        try {
+          this.addEventListener("load", function () {
+            try {
+              const t = this.responseText;
+              if (t) window.__fitmemoryStashJsonText(t, "xhr");
+            } catch (error) { recordDiagnostic("json-xhr", error); }
+          });
+        } catch (error) { recordDiagnostic("json-xhr", error); }
+        return origSend.apply(this, arguments);
+      };
+    } catch (error) { recordDiagnostic("json-xhr", error); }
+  }
   const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
   const fold = (value) => clean(value)
     .toLocaleLowerCase("tr-TR")
@@ -1060,6 +1115,220 @@ const scannerBootstrap = String.raw`
         Number(clean(cell).replace(",", ".")) >= 10
       )));
   const firstVerifiedChart = (...charts) => charts.find(verifiedMeasurementChart) || null;
+  const skuDimsToMeasurements = (arr) => {
+    if (!Array.isArray(arr)) return {};
+    const measurements = {};
+    for (let i = 0; i < arr.length; i += 1) {
+      const item = arr[i];
+      if (!item || typeof item !== "object") continue;
+      const name = String(item.dimensionName || item.name || item.label || item.key || "").trim();
+      let value = typeof item.value === "number" ? item.value : Number(String(item.value || "").replace(",", "."));
+      if (!name || !Number.isFinite(value) || value < 10 || value > 250) continue;
+      if (!measurementNamePattern.test(fold(name))) continue;
+      measurements[normalizeMeasurementLabel(name)] = String(value);
+    }
+    return measurements;
+  };
+  const collectFlatMeasurements = (obj) => {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
+    const measurements = {};
+    const keys = Object.keys(obj);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (!measurementNamePattern.test(fold(key))) continue;
+      const raw = obj[key];
+      let value = typeof raw === "number" ? raw : Number(String(raw == null ? "" : raw).replace(",", "."));
+      if (raw && typeof raw === "object" && !Array.isArray(raw) && raw.value != null) {
+        value = typeof raw.value === "number" ? raw.value : Number(String(raw.value).replace(",", "."));
+      }
+      if (!Number.isFinite(value) || value < 10 || value > 250) continue;
+      measurements[normalizeMeasurementLabel(key)] = String(value);
+    }
+    return measurements;
+  };
+  const collectSizeKeyedMap = (obj, into) => {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
+    const keys = Object.keys(obj);
+    if (keys.length < 2 || keys.length > 24) return;
+    const sizeKeys = keys.filter((key) => sizeLabelFromText(key));
+    if (sizeKeys.length < 2) return;
+    for (let i = 0; i < sizeKeys.length; i += 1) {
+      const key = sizeKeys[i];
+      const value = obj[key];
+      if (!value || typeof value !== "object") continue;
+      let measurements = Array.isArray(value.skuDimensions)
+        ? skuDimsToMeasurements(value.skuDimensions)
+        : {};
+      if (!Object.keys(measurements).length) measurements = collectFlatMeasurements(value);
+      if (Object.keys(measurements).length) {
+        into.push({ size: sizeLabelFromText(key), measurements });
+      }
+    }
+  };
+  const walkForSizes = (node, into, depth, seen, budget) => {
+    if (!budget) budget = { left: 5000 };
+    if (!node || depth > 14 || typeof node !== "object" || into.length > 80 || budget.left <= 0) return;
+    budget.left -= 1;
+    if (typeof Node !== "undefined" && node instanceof Node) return;
+    try {
+      if (seen.has(node)) return;
+      seen.add(node);
+    } catch (error) {
+      recordDiagnostic("json-walk", error);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length && i < 200; i += 1) walkForSizes(node[i], into, depth + 1, seen, budget);
+      return;
+    }
+    if (Array.isArray(node.skuDimensions) && node.skuDimensions.length) {
+      const size = sizeLabelFromText(node.name || node.size || node.sizeName || node.displaySize || node.label || node.skuSize || "");
+      const measurements = skuDimsToMeasurements(node.skuDimensions);
+      if (size && Object.keys(measurements).length) into.push({ size, measurements });
+    }
+    const size = sizeLabelFromText(node.size || node.sizeName || node.displaySize || node.name || node.label || "");
+    if (size) {
+      let measurements = {};
+      if (node.measurements && typeof node.measurements === "object" && !Array.isArray(node.measurements)) {
+        measurements = collectFlatMeasurements(node.measurements);
+      }
+      if (!Object.keys(measurements).length) measurements = collectFlatMeasurements(node);
+      if (Object.keys(measurements).length) into.push({ size, measurements });
+    }
+    collectSizeKeyedMap(node, into);
+    const keys = Object.keys(node);
+    for (let i = 0; i < keys.length && i < 80; i += 1) {
+      const value = node[keys[i]];
+      if (!value || typeof value !== "object") continue;
+      walkForSizes(value, into, depth + 1, seen, budget);
+    }
+  };
+  const mergeSizeRecords = (records) => {
+    const bySize = {};
+    const order = [];
+    for (let i = 0; i < records.length; i += 1) {
+      const record = records[i];
+      const size = record.size;
+      if (!bySize[size]) {
+        bySize[size] = Object.assign({}, record.measurements);
+        order.push(size);
+      } else {
+        Object.assign(bySize[size], record.measurements);
+      }
+    }
+    return order.map((size) => ({ size, measurements: bySize[size] }));
+  };
+  const chartFromSizeRecords = (records) => {
+    const merged = mergeSizeRecords(records).filter((record) => sizePattern.test(record.size));
+    if (merged.length < 2) return null;
+    const headersExtra = [];
+    for (let i = 0; i < merged.length; i += 1) {
+      const keys = Object.keys(merged[i].measurements);
+      for (let j = 0; j < keys.length; j += 1) {
+        if (headersExtra.indexOf(keys[j]) === -1) headersExtra.push(keys[j]);
+      }
+    }
+    if (!headersExtra.length) return null;
+    const headers = ["Beden"].concat(headersExtra);
+    const rows = merged.map((record) => ({
+      cells: [record.size].concat(headersExtra.map((header) => record.measurements[header] || ""))
+    }));
+    const chart = {
+      found: true,
+      title: "Ürün ölçüleri",
+      unit: "Centimeters",
+      headers,
+      rows,
+      rawText: [headers.join(" | ")].concat(rows.map((row) => row.cells.join(" | "))).join("\n").slice(0, 8000),
+      source: "embedded-json"
+    };
+    return verifiedMeasurementChart(chart) ? chart : null;
+  };
+  const parseJsonQuiet = (text) => {
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return null;
+    }
+  };
+  const harvestWindowState = (into) => {
+    const names = [
+      "__PRELOADED_STATE__", "__INITIAL_STATE__", "__NEXT_DATA__", "__NUXT__",
+      "__APOLLO_STATE__", "inditex", "zara", "ITX", "__ITX__"
+    ];
+    for (let i = 0; i < names.length; i += 1) {
+      try { walkForSizes(window[names[i]], into, 0, new WeakSet()); } catch (error) { recordDiagnostic("json-state", error); }
+    }
+    try {
+      const keys = Object.keys(window);
+      for (let i = 0; i < keys.length; i += 1) {
+        const key = keys[i];
+        if (!/inditex|zara|itx|bershka|pullandbear|stradivarius|massimodutti|oysho|preloaded|initial.?state/i.test(key)) continue;
+        walkForSizes(window[key], into, 0, new WeakSet());
+      }
+    } catch (error) { recordDiagnostic("json-state", error); }
+  };
+  const harvestScripts = (into) => {
+    const scripts = document.querySelectorAll("script");
+    for (let i = 0; i < scripts.length && i < 80; i += 1) {
+      const text = scripts[i].textContent || "";
+      if (text.length < 80 || text.length > 1500000) continue;
+      if (!/skuDimensions|dimensionName|"chest"|measurements|"waist"|__PRELOADED_STATE__|__INITIAL_STATE__/i.test(text)) continue;
+      const parsed = parseJsonQuiet(text.trim());
+      if (parsed) {
+        walkForSizes(parsed, into, 0, new WeakSet());
+        continue;
+      }
+      const assigned = text.match(/(?:window\.)?(?:__PRELOADED_STATE__|__INITIAL_STATE__|__NEXT_DATA__)\s*=\s*(\{[\s\S]+)/);
+      if (assigned) {
+        const body = assigned[1].replace(/;?\s*$/, "");
+        const fromAssign = parseJsonQuiet(body);
+        if (fromAssign) walkForSizes(fromAssign, into, 0, new WeakSet());
+      }
+    }
+  };
+  const refetchProductJson = async () => {
+    if ((window.__fitmemoryJsonBags || []).length) return;
+    try {
+      const entries = performance.getEntriesByType("resource") || [];
+      const seen = {};
+      let count = 0;
+      for (let i = 0; i < entries.length && count < 4; i += 1) {
+        const name = String(entries[i].name || "");
+        if (seen[name]) continue;
+        if (!/itxrest|\/product\/|size-guide|skuDimension|measurements|catalog/i.test(name)) continue;
+        seen[name] = true;
+        count += 1;
+        try {
+          const response = await fetch(name, { credentials: "include" });
+          window.__fitmemoryStashJsonText(await response.text(), "refetch");
+        } catch (error) { recordDiagnostic("json-refetch", error); }
+      }
+    } catch (error) { recordDiagnostic("json-refetch", error); }
+  };
+  let jsonChartCache = null;
+  let jsonChartCacheUrl = "";
+  const harvestJsonChart = async () => {
+    if (jsonChartCacheUrl !== location.href) {
+      jsonChartCache = null;
+      jsonChartCacheUrl = location.href;
+    }
+    if (jsonChartCache && verifiedMeasurementChart(jsonChartCache) && (jsonChartCache.rows?.length || 0) >= 2) {
+      return jsonChartCache;
+    }
+    await refetchProductJson();
+    const records = [];
+    const bags = window.__fitmemoryJsonBags || [];
+    for (let i = 0; i < bags.length; i += 1) {
+      const parsed = parseJsonQuiet(bags[i].text);
+      if (parsed) walkForSizes(parsed, records, 0, new WeakSet());
+    }
+    harvestWindowState(records);
+    harvestScripts(records);
+    const chart = chartFromSizeRecords(records);
+    if (chart) jsonChartCache = chart;
+    return chart;
+  };
   const visibleLayoutChart = () => {
     const nodes = all("th, td, dt, dd, [role='cell'], [role='columnheader'], [role='rowheader'], button, label, li, span, p, div")
       .filter(visible).map((element) => {
@@ -1505,9 +1774,14 @@ const scannerBootstrap = String.raw`
     ).slice(0, 120);
     let imageUrl = chooseProductImage(structured, title);
     const advice = merchantFitAdvice();
+    const jsonChart = await harvestJsonChart();
+    const jsonComplete = verifiedMeasurementChart(jsonChart) && (jsonChart.rows?.length || 0) >= 2;
     const openMeasurementSurface = () =>
       metricLabelsVisible() && findSizeButtons(document).length >= 2;
-    if (openMeasurementSurface()) {
+    if (jsonComplete) {
+      guideStage = "Ölçüler sayfa verisinden okundu";
+      progress(guideStage);
+    } else if (openMeasurementSurface()) {
       guideStage = "Ölçü paneli zaten açık";
     } else {
       await openSizeGuide();
@@ -1551,6 +1825,15 @@ const scannerBootstrap = String.raw`
       }
     };
     const collectChart = async () => {
+      if (jsonComplete) {
+        postChartProgress(jsonChart);
+        return jsonChart;
+      }
+      const fromJson = await harvestJsonChart();
+      if (verifiedMeasurementChart(fromJson) && (fromJson.rows?.length || 0) >= 2) {
+        postChartProgress(fromJson);
+        return fromJson;
+      }
       await revealWideTables();
       const table = await safeChart(() => tableChart());
       if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) {
@@ -1917,7 +2200,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.31";
+  window.__fitmemoryScannerVersion = "1.25.32";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -1954,7 +2237,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.31" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.32" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }
