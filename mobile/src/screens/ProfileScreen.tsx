@@ -65,6 +65,12 @@ function number(value: string, name: string) {
   return parsed;
 }
 
+function optionalNumber(value: string, name: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return number(value, name);
+}
+
 export function ProfileScreen() {
   const session = useSession();
   const feedback = useFeedback();
@@ -92,7 +98,7 @@ export function ProfileScreen() {
       if (cancelled || savingRef.current) return;
       if (draft) {
         dirtyRef.current = true;
-        setForm(draft.form);
+        setForm({ ...initialProfileForm(session.profile), ...draft.form });
         setEditingMeasurements(true);
         return;
       }
@@ -138,6 +144,10 @@ export function ProfileScreen() {
         shoulderWidthCm: number(form.shoulder, "Omuz çevresi"),
         chestCircumferenceCm: number(form.chest, "Göğüs"),
         waistCircumferenceCm: number(form.waist, "Bel"),
+        hipCircumferenceCm: optionalNumber(form.hip, "Basen"),
+        frontWaistCm: optionalNumber(form.frontWaist, "Ön bel"),
+        inseamCm: optionalNumber(form.inseam, "İç bacak"),
+        backWaistCm: optionalNumber(form.backWaist, "Arka bel"),
         footLengthCm: number(form.foot, "Ayak uzunluğu"),
         usualShoeSizeEu: number(form.shoe, "Ayakkabı numarası"),
         fitPreference: form.preference,
@@ -400,6 +410,49 @@ export function ProfileScreen() {
         <View style={styles.row}>
           <View style={styles.half}>
             <Field
+              hint="Çevre ölçüsü"
+              keyboardType="decimal-pad"
+              label="Basen · cm"
+              onChangeText={(value) => set("hip", value)}
+              placeholder=""
+              value={form.hip}
+            />
+          </View>
+          <View style={styles.half}>
+            <Field
+              hint="Ön bel yüksekliği"
+              keyboardType="decimal-pad"
+              label="Ön bel · cm"
+              onChangeText={(value) => set("frontWaist", value)}
+              placeholder=""
+              value={form.frontWaist}
+            />
+          </View>
+        </View>
+        <View style={styles.row}>
+          <View style={styles.half}>
+            <Field
+              keyboardType="decimal-pad"
+              label="İç bacak · cm"
+              onChangeText={(value) => set("inseam", value)}
+              placeholder=""
+              value={form.inseam}
+            />
+          </View>
+          <View style={styles.half}>
+            <Field
+              hint="Arka bel yüksekliği"
+              keyboardType="decimal-pad"
+              label="Arka bel · cm"
+              onChangeText={(value) => set("backWaist", value)}
+              placeholder=""
+              value={form.backWaist}
+            />
+          </View>
+        </View>
+        <View style={styles.row}>
+          <View style={styles.half}>
+            <Field
               keyboardType="decimal-pad"
               label="Ayak · cm"
               onChangeText={(value) => set("foot", value)}
@@ -542,7 +595,7 @@ export function ProfileScreen() {
       </Card>
       <View style={styles.footerBrand}>
         <Brand compact />
-        <Text style={styles.version}>Mobil · 1.25.29</Text>
+        <Text style={styles.version}>Mobil · 1.25.30</Text>
       </View>
     </ScrollView>
   );

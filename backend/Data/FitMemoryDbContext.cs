@@ -60,6 +60,10 @@ public sealed class FitMemoryDbContext(DbContextOptions<FitMemoryDbContext> opti
             entity.Property(profile => profile.WeightKg).HasPrecision(6, 2);
             entity.Property(profile => profile.ShoulderWidthCm).HasPrecision(6, 2);
             entity.Property(profile => profile.WaistCircumferenceCm).HasPrecision(6, 2);
+            entity.Property(profile => profile.HipCircumferenceCm).HasPrecision(6, 2);
+            entity.Property(profile => profile.FrontWaistCm).HasPrecision(5, 2);
+            entity.Property(profile => profile.InseamCm).HasPrecision(6, 2);
+            entity.Property(profile => profile.BackWaistCm).HasPrecision(5, 2);
             entity.Property(profile => profile.FootLengthCm).HasPrecision(5, 2);
             entity.Property(profile => profile.UsualShoeSizeEu).HasPrecision(4, 1);
             entity.Property(profile => profile.CreatedAt).HasConversion(

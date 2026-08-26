@@ -48,6 +48,10 @@ public static class DatabaseInitializer
             ALTER TABLE "StyleBoardItems" ADD COLUMN IF NOT EXISTS "MaterialEvidence" text NOT NULL DEFAULT '';
             ALTER TABLE "StyleBoardItems" ADD COLUMN IF NOT EXISTS "IsInStudio" boolean NOT NULL DEFAULT true;
             ALTER TABLE "StyleBoardItems" ADD COLUMN IF NOT EXISTS "IsSaved" boolean NOT NULL DEFAULT false;
+            ALTER TABLE "UserProfiles" ADD COLUMN IF NOT EXISTS "HipCircumferenceCm" numeric(6,2) NULL;
+            ALTER TABLE "UserProfiles" ADD COLUMN IF NOT EXISTS "FrontWaistCm" numeric(5,2) NULL;
+            ALTER TABLE "UserProfiles" ADD COLUMN IF NOT EXISTS "InseamCm" numeric(6,2) NULL;
+            ALTER TABLE "UserProfiles" ADD COLUMN IF NOT EXISTS "BackWaistCm" numeric(5,2) NULL;
             ALTER TABLE "OrderHistoryItems" ADD COLUMN IF NOT EXISTS "MaterialSummary" text NULL;
             ALTER TABLE "OrderHistoryItems" ADD COLUMN IF NOT EXISTS "MaterialEvidence" text NULL;
             ALTER TABLE "OrderHistoryItems" ADD COLUMN IF NOT EXISTS "ImportFingerprint" character varying(64) NULL;

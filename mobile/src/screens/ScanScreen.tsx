@@ -192,6 +192,13 @@ export function ScanScreen({
   };
 
   const goBackInBrowser = () => {
+    if (recommendation || snapshot) {
+      stopScan();
+      setSnapshot(null);
+      setRecommendation(null);
+      setNote("");
+      return;
+    }
     stopScan();
     setSnapshot(null);
     setRecommendation(null);
@@ -478,6 +485,9 @@ export function ScanScreen({
     }
     if (message.type === "fitmemory-progress") {
       setStatus(message.message);
+      return;
+    }
+    if (message.type === "fitmemory-chart-progress") {
       return;
     }
     if (scanTimeoutRef.current) {
@@ -1004,7 +1014,7 @@ export function ScanScreen({
           ) : null}
           <View style={styles.browserBottom}>
             <Pressable
-              disabled={!canGoBack}
+              disabled={!canGoBack && !recommendation && !snapshot}
               onPress={goBackInBrowser}
               style={styles.browserTool}
             >

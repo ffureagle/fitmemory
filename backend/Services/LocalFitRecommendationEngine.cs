@@ -26,6 +26,8 @@ public sealed partial class LocalFitRecommendationEngine(
             ["Sleeve"] = 3.0,
             ["Inseam"] = 3.0,
             ["Hip"] = 4.0,
+            ["FrontRise"] = 2.0,
+            ["BackRise"] = 2.0,
             ["FootLength"] = 0.45,
             ["Height"] = 8.0,
             ["Weight"] = 8.0
@@ -313,6 +315,19 @@ public sealed partial class LocalFitRecommendationEngine(
         {
             return "Chest";
         }
+        if (normalized.Contains("ön bel", StringComparison.Ordinal) ||
+            normalized.Contains("on bel", StringComparison.Ordinal) ||
+            normalized.Contains("front rise", StringComparison.Ordinal) ||
+            normalized.Contains("front waist", StringComparison.Ordinal))
+        {
+            return "FrontRise";
+        }
+        if (normalized.Contains("arka bel", StringComparison.Ordinal) ||
+            normalized.Contains("back rise", StringComparison.Ordinal) ||
+            normalized.Contains("back waist", StringComparison.Ordinal))
+        {
+            return "BackRise";
+        }
         if (normalized.Contains("waist", StringComparison.Ordinal) ||
             normalized.Contains("bel", StringComparison.Ordinal))
         {
@@ -338,6 +353,7 @@ public sealed partial class LocalFitRecommendationEngine(
         }
         if (normalized.Contains("hip", StringComparison.Ordinal) ||
             normalized.Contains("seat", StringComparison.Ordinal) ||
+            normalized.Contains("basen", StringComparison.Ordinal) ||
             normalized.Contains("kalça", StringComparison.Ordinal) ||
             normalized.Contains("kalca", StringComparison.Ordinal))
         {
@@ -503,6 +519,38 @@ public sealed partial class LocalFitRecommendationEngine(
             Circumference,
             "Vücut profili",
             0.55));
+        if (profile.HipCircumferenceCm.HasValue)
+        {
+            targets.TryAdd("Hip", new TargetMetric(
+                (double)profile.HipCircumferenceCm.Value,
+                Circumference,
+                "Basen çevresi",
+                0.80));
+        }
+        if (profile.InseamCm.HasValue)
+        {
+            targets.TryAdd("Inseam", new TargetMetric(
+                (double)profile.InseamCm.Value,
+                Linear,
+                "İç bacak",
+                0.70));
+        }
+        if (profile.FrontWaistCm.HasValue)
+        {
+            targets.TryAdd("FrontRise", new TargetMetric(
+                (double)profile.FrontWaistCm.Value,
+                Linear,
+                "Ön bel",
+                0.55));
+        }
+        if (profile.BackWaistCm.HasValue)
+        {
+            targets.TryAdd("BackRise", new TargetMetric(
+                (double)profile.BackWaistCm.Value,
+                Linear,
+                "Arka bel",
+                0.55));
+        }
         targets.TryAdd("Height", new TargetMetric(
             (double)profile.HeightCm,
             Linear,
@@ -661,7 +709,7 @@ public sealed partial class LocalFitRecommendationEngine(
             {
                 ProductFitKind.Slim => (-1.5, 3.5),
                 ProductFitKind.Regular => (-1.5, 7.0),
-                ProductFitKind.Relaxed => (-1.0, 9.0),
+                ProductFitKind.Relaxed or ProductFitKind.Loose => (-1.0, 9.0),
                 ProductFitKind.Boxy => (-1.0, 12.0),
                 ProductFitKind.Oversized => (-1.0, 16.0),
                 _ => (-1.5, 7.0)
@@ -709,6 +757,17 @@ public sealed partial class LocalFitRecommendationEngine(
             var ease = garment - body;
             var waistBounds = PreferredWaistEaseBounds(profile.FitPreference, fit);
             if (ease < waistBounds.Item1 || ease > waistBounds.Item2)
+            {
+                return new StructuralFitResult(false, 100);
+            }
+        }
+        else if (profile.HipCircumferenceCm.HasValue &&
+                 candidate.Measurements.TryGetValue("Hip", out var hipFromBody))
+        {
+            var body = (double)profile.HipCircumferenceCm.Value;
+            var garment = ConvertKind(hipFromBody.Value, hipFromBody.Kind, Circumference);
+            var ease = garment - body;
+            if (ease < -4 || ease > 22)
             {
                 return new StructuralFitResult(false, 100);
             }
@@ -964,7 +1023,7 @@ public sealed partial class LocalFitRecommendationEngine(
         var fitAdjustment = ProductFit(product) switch
         {
             ProductFitKind.Slim => -0.5,
-            ProductFitKind.Relaxed => 0.35,
+            ProductFitKind.Relaxed or ProductFitKind.Loose => 0.35,
             ProductFitKind.Boxy => 0.5,
             ProductFitKind.Oversized => 0.75,
             _ => 0.0
@@ -997,7 +1056,7 @@ public sealed partial class LocalFitRecommendationEngine(
         };
         var fitAllowance = fit switch
         {
-            ProductFitKind.Relaxed or ProductFitKind.Boxy => 0.75,
+            ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy => 0.75,
             ProductFitKind.Oversized => 1.5,
             _ => 0.0
         };
@@ -1008,7 +1067,7 @@ public sealed partial class LocalFitRecommendationEngine(
         FitPreference preference,
         ProductFitKind fit)
     {
-        if (fit is ProductFitKind.Oversized or ProductFitKind.Relaxed or ProductFitKind.Boxy)
+        if (fit is ProductFitKind.Oversized or ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy)
         {
             return (-2, 16);
         }
@@ -1156,11 +1215,15 @@ public sealed partial class LocalFitRecommendationEngine(
         {
             return ProductFitKind.Boxy;
         }
-        if (value.Contains("oversize", StringComparison.Ordinal) ||
-            value.Contains("loose", StringComparison.Ordinal) ||
-            value.Contains("baggy", StringComparison.Ordinal) ||
+        if (value.Contains("loose", StringComparison.Ordinal) ||
             value.Contains("bol kalıp", StringComparison.Ordinal) ||
             value.Contains("bol kalip", StringComparison.Ordinal))
+        {
+            return ProductFitKind.Loose;
+        }
+        if (value.Contains("oversize", StringComparison.Ordinal) ||
+            value.Contains("super baggy", StringComparison.Ordinal) ||
+            value.Contains("baggy", StringComparison.Ordinal))
         {
             return ProductFitKind.Oversized;
         }
@@ -1193,6 +1256,7 @@ public sealed partial class LocalFitRecommendationEngine(
             ProductFitKind.Slim => "Slim fit",
             ProductFitKind.Regular => "Regular fit",
             ProductFitKind.Relaxed => "Relaxed fit",
+            ProductFitKind.Loose => "Loose fit",
             ProductFitKind.Boxy => "Boxy fit",
             ProductFitKind.Oversized => "Oversize fit",
             _ => "Bilinmeyen"
@@ -1411,6 +1475,8 @@ public sealed partial class LocalFitRecommendationEngine(
             "Waist" => 1,
             "Shoulder" => 2,
             "Hip" => 3,
+            "FrontRise" => 3,
+            "BackRise" => 3,
             "Length" => 4,
             "Sleeve" => 5,
             "Inseam" => 6,
@@ -1533,7 +1599,9 @@ public sealed partial class LocalFitRecommendationEngine(
             "Chest" => "Göğüs",
             "Waist" => "Bel",
             "Shoulder" => "Omuz",
-            "Hip" => "Kalça",
+            "Hip" => "Basen",
+            "FrontRise" => "Ön bel",
+            "BackRise" => "Arka bel",
             "Length" => "Uzunluk",
             "Sleeve" => "Kol",
             "Inseam" => "İç bacak",
@@ -1732,6 +1800,7 @@ public sealed partial class LocalFitRecommendationEngine(
         Slim,
         Regular,
         Relaxed,
+        Loose,
         Boxy,
         Oversized
     }

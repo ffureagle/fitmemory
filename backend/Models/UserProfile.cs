@@ -25,6 +25,14 @@ public sealed class UserProfile
 
     public decimal WaistCircumferenceCm { get; set; }
 
+    public decimal? HipCircumferenceCm { get; set; }
+
+    public decimal? FrontWaistCm { get; set; }
+
+    public decimal? InseamCm { get; set; }
+
+    public decimal? BackWaistCm { get; set; }
+
     public decimal? FootLengthCm { get; set; }
 
     public decimal? UsualShoeSizeEu { get; set; }

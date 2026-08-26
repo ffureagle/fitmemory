@@ -124,6 +124,10 @@ public sealed class OpenAiRecommendationClient(
                 profile.ShoulderWidthCm,
                 profile.ChestCircumferenceCm,
                 profile.WaistCircumferenceCm,
+                profile.HipCircumferenceCm,
+                profile.FrontWaistCm,
+                profile.InseamCm,
+                profile.BackWaistCm,
                 profile.FootLengthCm,
                 profile.UsualShoeSizeEu,
                 fitPreference = profile.FitPreference.ToString()
@@ -246,6 +250,9 @@ public sealed class OpenAiRecommendationClient(
                 localEngineIsDraftOnly = true,
                 mustReDecideUsingFitLabelCutConstructionAndChart = true,
                 productName = request.Product.Name,
+                productNameIsPrimaryCutEvidence = true,
+                readProductNameWordByWord = true,
+                doNotRelabelLooseFitAsBaggyOrSuperBaggy = true,
                 productFitLabel = request.Product.FitLabel,
                 productFitEvidence = request.Product.FitEvidence,
                 merchantFitAdvice = request.Product.MerchantFitAdvice,
@@ -256,9 +263,11 @@ public sealed class OpenAiRecommendationClient(
                 materialEvidence = request.Product.MaterialEvidence,
                 description = request.Product.Description,
                 promptJob =
-                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: dolap geçmişi, " +
-                    "kullanıcı geri bildirimi, ürün başlığındaki kalıp (baggy/slim/boxy), " +
-                    "insan üzerindeki duruş, kumaş esnekliği ve beden tablosunu birlikte tart."
+                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: önce ürün adını " +
+                    "kelime kelime anla (Loose Fit, Slim, Baggy, Super Baggy ayrı kalıplardır), " +
+                    "sonra dolap geçmişi, kullanıcı geri bildirimi, kumaş esnekliği ve beden " +
+                    "tablosunu birlikte tart. Loose Fit'i Super Baggy yapıştırma. Hızlı düşün, " +
+                    "somut beden kararına git."
             },
             deterministicBaseline = new
             {
@@ -281,13 +290,23 @@ public sealed class OpenAiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.09 Product.Name'i kelime kelime oku. Kalıbın birincil kanıtı ürünün resmi adıdır.
+                  Başlık Loose Fit / Loose / bol kalıp diyorsa kalıp Loose Fit'tir; Super Baggy
+                  veya Baggy etiketi yapıştırma. Super Baggy yalnız başlık veya resmi FitLabel
+                  açıkça Super Baggy diyorsa. Sayfa açıklamasındaki genel "baggy" sözcüğü ürün
+                  adını ezemez. activeFitSemantics başlıkla çelişirse başlığı esas al.
+            -1.10 Düşünmeyi kısa tut (fast). Uzun iç muhakeme yazma; availableSizes içinden somut
+                  bedeni seç ve gerekçeyi kısa tut.
+            -1.11 Profil HipCircumferenceCm (basen), FrontWaistCm (ön bel), InseamCm (iç bacak),
+                  BackWaistCm (arka bel) doluysa pantolon/jean/şort kararında bel ile birlikte kullan.
+                  Boşsa uydurma.
             -1.07 Sayfadaki mağaza uyarılarını oku (merchantFitAdvice, FitEvidence): "büyük beden / bir beden küçük al",
                   "runs large", "runs small". Ürün ölçüleri varsa bunu komşu beden kaydırması olarak uygula.
                   Ölçü yoksa beden uydurma.
             -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden veya göğüs çevresinden
                   beden uydurma. recommendedSize "Bilinmiyor" kalsın; kullanıcıya ölçü tablosunu açmasını söyle.
-            -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Baggy, Super Baggy,
-                  Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
+            -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Loose Fit,
+                  Baggy, Super Baggy, Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
                   pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,
                   modelWornSize, howItFit) ve dolaptaki aynı kesim geri bildirimini birlikte tartarak
                   nihai bedeni seç. Esnemeyen dokuma + slim/straight ise taslağı küçültmeye daha yatkın ol;
@@ -307,7 +326,7 @@ public sealed class OpenAiRecommendationClient(
                 kombininde kullan; beden kararına kesinlikle taşıma.
             -0.99 Aynı "40" beden etiketi farklı kalıp ailelerinde aynı bitmiş giysi hacmi demek değildir.
                   activeFitSemantics ürünün kesim sözlüğüdür. Straight, Skinny, Slim, Regular, Relaxed,
-                  Wide Leg, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
+                  Loose Fit, Wide Leg, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
             -0.98 sizeHistory içindeki usableAsSizingBoundary=false kayıtları beden büyütme/küçültme sınırı
                   olarak kullanma. Özellikle Straight 40'ın bacak, kalça veya uylukta dar gelmesi,
                   Super Baggy 40'ın dar geleceği anlamına gelmez. Super Baggy; ağ, kalça, uyluk ve paçada
@@ -397,10 +416,11 @@ public sealed class OpenAiRecommendationClient(
                 Yerel ölçü motoru yalnızca bir taslak üretir. Nihai bedeni sen seçersin.
                 Perakendecinin aktif beden tablosunu kullanıcının açık vücut ölçüleri, doğrulanmış giysi
                 ölçüleri, iade nedenleri, kalıp tercihi ve ürünün FitLabel / kesim / dikiş / kumaş
-                etiketleriyle karşılaştır. Yalnız sağlanan kanıta dayalı, kısa ve kararlı bir beden
+                etiketleriyle karşılaştır. Ürün adını kelime kelime oku; Loose Fit'i Super Baggy
+                veya Baggy olarak yeniden etiketleme. Yalnız sağlanan kanıta dayalı, kısa ve kararlı bir beden
                 kararı üret. Asla ölçü uydurma. Kombin yorumu ikincildir; asıl işin doğru bedeni seçmektir.
                 Aynı beden etiketini farklı kalıplarda eşit sayma: Straight ile Super Baggy, Slim ile
-                Wide Leg, Boxy ile Oversized ayrı kanıt aileleridir. Boxy'yi Oversized sayma; ürün
+                Wide Leg, Loose Fit ile Super Baggy, Boxy ile Oversized ayrı kanıt aileleridir. Boxy'yi Oversized sayma; ürün
                 kalıbının kendi bolluğunu kullanıcı tercihine ekleyerek iki kez büyütme.
                 Beden analizinde kategorileri kesin biçimde izole et. Stil analizinde ise yalnız wardrobe
                 listesindeki gerçek, iade edilmemiş parçalarla yaş bağlamını nazikçe dikkate alan

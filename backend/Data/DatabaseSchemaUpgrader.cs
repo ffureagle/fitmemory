@@ -30,6 +30,10 @@ public static class DatabaseSchemaUpgrader
         {
             ["Age"] = "INTEGER NULL",
             ["ChestCircumferenceCm"] = "TEXT NULL",
+            ["HipCircumferenceCm"] = "TEXT NULL",
+            ["FrontWaistCm"] = "TEXT NULL",
+            ["InseamCm"] = "TEXT NULL",
+            ["BackWaistCm"] = "TEXT NULL",
             ["FootLengthCm"] = "TEXT NULL",
             ["UsualShoeSizeEu"] = "TEXT NULL",
             ["UserAccountId"] = "INTEGER NULL"

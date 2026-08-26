@@ -130,6 +130,10 @@ public sealed class ProfilesController(FitMemoryDbContext db) : ControllerBase
                 ShoulderWidthCm = request.ShoulderWidthCm,
                 ChestCircumferenceCm = request.ChestCircumferenceCm,
                 WaistCircumferenceCm = request.WaistCircumferenceCm,
+                HipCircumferenceCm = request.HipCircumferenceCm,
+                FrontWaistCm = request.FrontWaistCm,
+                InseamCm = request.InseamCm,
+                BackWaistCm = request.BackWaistCm,
                 FootLengthCm = request.FootLengthCm,
                 UsualShoeSizeEu = request.UsualShoeSizeEu,
                 FitPreference = request.FitPreference,
@@ -146,6 +150,10 @@ public sealed class ProfilesController(FitMemoryDbContext db) : ControllerBase
             profile.ShoulderWidthCm = request.ShoulderWidthCm;
             profile.ChestCircumferenceCm = request.ChestCircumferenceCm;
             profile.WaistCircumferenceCm = request.WaistCircumferenceCm;
+            profile.HipCircumferenceCm = request.HipCircumferenceCm;
+            profile.FrontWaistCm = request.FrontWaistCm;
+            profile.InseamCm = request.InseamCm;
+            profile.BackWaistCm = request.BackWaistCm;
             profile.FootLengthCm = request.FootLengthCm;
             profile.UsualShoeSizeEu = request.UsualShoeSizeEu;
             profile.FitPreference = request.FitPreference;

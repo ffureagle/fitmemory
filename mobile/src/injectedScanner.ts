@@ -241,9 +241,8 @@ const scannerBootstrap = String.raw`
     }
     return "";
   };
-  const fitDetails = () => {
-
-    const text = clean([
+  const fitDetails = (productName = "") => {
+    const pageText = clean([
       ...all(
         "[class*='fit' i], [data-testid*='fit' i], " +
         "[class*='description' i], [class*='product-detail' i], main"
@@ -252,6 +251,7 @@ const scannerBootstrap = String.raw`
     ].join(" ")).slice(0, 100000);
     const patterns = [
       ["Super Baggy Fit", /\bsuper\s+baggy\s*(?:fit)?\b/i],
+      ["Loose Fit", /\b(?:loose(?:\s+|-)?fit|bol\s+(?:fit|kalıp|kesim))\b/i],
       ["Baggy Fit", /\bbaggy\s*(?:fit|kalıp)?\b/i],
       ["Boxy Fit", /\bboxy\s*(?:fit|kalıp)?\b/i],
       ["Oversize Fit", /\b(?:oversized?|over size)\s*(?:fit|kalıp)?\b/i],
@@ -259,20 +259,23 @@ const scannerBootstrap = String.raw`
       ["Straight Fit", /\bstraight\s*(?:fit|kalıp)?\b/i],
       ["Regular Fit", /\b(?:regular|standard|standart)\s*(?:fit|kalıp)\b/i],
       ["Slim Fit", /\b(?:slim|skinny|muscle|fitted)\s*(?:fit|kalıp)?\b/i],
-      ["Wide Leg", /\bwide\s*(?:leg|fit)?\b/i],
-      ["Loose Fit", /\b(?:loose|bol)\s*(?:fit|kalıp)?\b/i]
+      ["Wide Leg", /\bwide\s*(?:leg|fit)?\b/i]
     ];
-    for (const [label, pattern] of patterns) {
-      const match = pattern.exec(text);
-      if (match) {
-        const start = Math.max(0, match.index - 70);
-        return {
-          label,
-          evidence: clean(text.slice(start, match.index + 180)).slice(0, 300)
-        };
+    const matchIn = (text) => {
+      if (!text) return null;
+      for (const [label, pattern] of patterns) {
+        const match = pattern.exec(text);
+        if (match) {
+          const start = Math.max(0, match.index - 70);
+          return {
+            label,
+            evidence: clean(text.slice(start, match.index + 180)).slice(0, 300)
+          };
+        }
       }
-    }
-    return { label: "", evidence: "" };
+      return null;
+    };
+    return matchIn(clean(productName)) || matchIn(pageText) || { label: "", evidence: "" };
   };
   const modelDetails = () => {
     const text = clean(document.body?.innerText || "").slice(0, 120000);
@@ -344,6 +347,20 @@ const scannerBootstrap = String.raw`
       }));
     } catch (error) { recordDiagnostic("scanner-operation", error); }
   };
+  let progressProduct = null;
+  const postChartProgress = (chart) => {
+    if (!progressProduct || !chart?.rows || chart.rows.length < 2) return;
+    try {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: "fitmemory-chart-progress",
+        snapshot: {
+          product: progressProduct,
+          sizeChart: chart,
+          capturedAt: new Date().toISOString()
+        }
+      }));
+    } catch (error) { recordDiagnostic("chart-progress", error); }
+  };
   let guideStage = "Beden paneli aranıyor";
   const waitFor = async (predicate, timeout = 4000, interval = 80) => {
     const startedAt = Date.now();
@@ -356,7 +373,7 @@ const scannerBootstrap = String.raw`
     }
     return null;
   };
-  const waitForStable = async (predicate, timeout = 10000, stableFor = 450) => {
+  const waitForStable = async (predicate, timeout = 10000, stableFor = 450, interval = 50) => {
     const startedAt = Date.now();
     let lastSignature = "";
     let stableSince = 0;
@@ -376,7 +393,7 @@ const scannerBootstrap = String.raw`
           }
         }
     } catch (error) { recordDiagnostic("scanner-operation", error); }
-      await sleep(120);
+      await sleep(interval);
     }
     return null;
   };
@@ -442,7 +459,7 @@ const scannerBootstrap = String.raw`
         input.dispatchEvent(new Event("change", { bubbles: true }));
       } catch (error) { recordDiagnostic("input-check", error); }
     }
-    await sleep(90);
+    await sleep(40);
     roots(true);
     return true;
   };
@@ -1391,11 +1408,11 @@ const scannerBootstrap = String.raw`
           await waitFor(() => {
             const afterValues = valuesNow();
             return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
-          }, 4200, 70);
+          }, 4200, 40);
         }
         await waitForStable(() => {
           return valuesNow() || measureSignature();
-        }, 1800, 200);
+        }, 1800, 150, 40);
       }
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const measurements = extractMeasurements(overlay);
@@ -1406,6 +1423,16 @@ const scannerBootstrap = String.raw`
       const existing = records.find((row) => row.cells[0] === size);
       if (existing) existing.cells = cells;
       else records.push({ cells: cells });
+      if (records.length >= 2 && headers) {
+        postChartProgress({
+          found: true,
+          title: "Ürün ölçüleri",
+          unit: chartUnitFromText(panelText(overlay)),
+          headers,
+          rows: records.slice(0, 30),
+          rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
+        });
+      }
     }
     const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
     if (!records.length || !headers) return null;
@@ -1443,7 +1470,7 @@ const scannerBootstrap = String.raw`
     } else {
       await openSizeGuide();
     }
-    const fit = fitDetails();
+    const fit = fitDetails(title);
     const model = modelDetails();
     const offers = Array.isArray(structured?.offers)
       ? structured.offers[0]
@@ -1454,6 +1481,24 @@ const scannerBootstrap = String.raw`
       structured?.productID ||
       pageText.match(/(?:ref(?:erans)?|ürün kodu|product code)\s*[:.]?\s*([A-Z0-9./-]{5,})/i)?.[1]
     ).slice(0, 120);
+    progressProduct = {
+      url: location.href.slice(0, 1000),
+      brand,
+      name: title,
+      category: inferCategory(structured?.category, title, structured?.description, fit.label),
+      price: clean([offers?.price || meta("product:price:amount"), offers?.priceCurrency || meta("product:price:currency")].filter(Boolean).join(" ")).slice(0, 80),
+      imageUrl: (imageUrl || chooseProductImage(structured, title)).slice(0, 2000),
+      productReference: reference,
+      fitLabel: fit.label,
+      fitEvidence: clean((advice ? advice + " " : "") + fit.evidence).slice(0, 300),
+      merchantFitAdvice: advice,
+      description: clean(structured?.description || "").slice(0, 1200),
+      materialSummary: "",
+      materialEvidence: "",
+      modelHeightCm: model.heightCm,
+      modelWornSize: model.size,
+      modelEvidence: model.evidence
+    };
     let chart = null;
     const safeChart = async (loader) => {
       try {
@@ -1466,7 +1511,10 @@ const scannerBootstrap = String.raw`
     const collectChart = async () => {
       await revealWideTables();
       const table = await safeChart(() => tableChart());
-      if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
+      if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) {
+        postChartProgress(table);
+        return table;
+      }
       const overlay = measurementOverlay();
       const overlayButtons = overlay ? containedSizeButtons(overlay) : [];
       const shouldWalk = metricLabelsVisible() &&
@@ -1827,7 +1875,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.29";
+  window.__fitmemoryScannerVersion = "1.25.30";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -1864,7 +1912,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.29" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.30" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

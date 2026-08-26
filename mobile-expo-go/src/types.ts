@@ -21,6 +21,10 @@ export type Profile = {
   shoulderWidthCm: number;
   chestCircumferenceCm: number | null;
   waistCircumferenceCm: number;
+  hipCircumferenceCm: number | null;
+  frontWaistCm: number | null;
+  inseamCm: number | null;
+  backWaistCm: number | null;
   footLengthCm: number | null;
   usualShoeSizeEu: number | null;
   fitPreference: FitPreference;
@@ -312,4 +316,5 @@ export type ScannerMessage =
     }
   | { type: "fitmemory-orders"; snapshot: OrderSnapshot }
   | { type: "fitmemory-progress"; message: string }
+  | { type: "fitmemory-chart-progress"; snapshot: ProductSnapshot }
   | { type: "fitmemory-error"; message: string };

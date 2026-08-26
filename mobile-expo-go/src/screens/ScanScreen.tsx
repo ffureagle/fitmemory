@@ -51,6 +51,13 @@ const shops = [
   { name: "Zara", logo: "ZARA", url: "https://www.zara.com/tr/" },
 ];
 
+function snapshotFingerprint(snapshot: ProductSnapshot) {
+  return JSON.stringify({
+    url: snapshot.product.url,
+    rows: snapshot.sizeChart.rows,
+  });
+}
+
 function visibleTextChart(pageText: string): ProductSnapshot["sizeChart"] | null {
   const selected = pageText.match(/\[selected\]\s*(XXXL|XXL|XL|L|M|S|XS|XXS|\d{2,3})\b/i)?.[1]?.toUpperCase();
   if (!selected) return null;
@@ -143,7 +150,16 @@ export function ScanScreen({
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanOriginRef = useRef<string | null>(null);
   const activeScanRef = useRef<{ scanId: string; url: string; controller: AbortController } | null>(null);
-  const aiReviewRef = useRef<{ id: string; controller: AbortController } | null>(null);
+  const aiReviewRef = useRef<{
+    id: string;
+    controller: AbortController;
+    fingerprint: string;
+    promise: Promise<Recommendation>;
+  } | null>(null);
+  const recommendationRef = useRef<Recommendation | null>(null);
+  const snapshotRef = useRef<ProductSnapshot | null>(null);
+  const aiReviewingRef = useRef(false);
+  const canGoBackRef = useRef(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [browserUrl, setBrowserUrl] = useState(shops[0]?.url ?? "");
@@ -174,6 +190,10 @@ export function ScanScreen({
   const [orderImportBusy, setOrderImportBusy] = useState(false);
   const [aiReviewing, setAiReviewing] = useState(false);
   const [authWindowUrl, setAuthWindowUrl] = useState<string | null>(null);
+  recommendationRef.current = recommendation;
+  snapshotRef.current = snapshot;
+  aiReviewingRef.current = aiReviewing;
+  canGoBackRef.current = canGoBack;
 
   useEffect(() => {
     const show = Keyboard.addListener(
@@ -289,11 +309,24 @@ export function ScanScreen({
   };
 
   const goBackInBrowser = () => {
+    if (
+      recommendationRef.current ||
+      snapshotRef.current ||
+      aiReviewingRef.current
+    ) {
+      abortAiReview();
+      setSnapshot(null);
+      setRecommendation(null);
+      setNote("");
+      setScanStage("idle");
+      setStatus("");
+      return;
+    }
     stopScan();
     setSnapshot(null);
     setRecommendation(null);
     setNote("");
-    if (canGoBack) {
+    if (canGoBackRef.current) {
       webViewRef.current?.goBack();
     }
   };
@@ -308,7 +341,7 @@ export function ScanScreen({
       },
     );
     return () => subscription.remove();
-  }, [browserOpen, canGoBack]);
+  }, [browserOpen]);
 
   const navigate = () => {
     Keyboard.dismiss();
@@ -365,42 +398,88 @@ export function ScanScreen({
     webViewRef.current?.injectJavaScript(createScanScript(mode, mode === "product"));
   };
 
-  const analyzeSnapshot = async (nextSnapshot: ProductSnapshot) => {
+  const analyzeSnapshot = async (
+    nextSnapshot: ProductSnapshot,
+    options?: { silent?: boolean },
+  ) => {
     if (!session.token || !session.account) return;
     if (!hasVerifiedSnapshot(nextSnapshot)) {
+      if (options?.silent) return;
       throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
     }
     if (!session.profile) {
+      if (options?.silent) return;
       throw new Error("Beden önerisi için önce profilini kaydet.");
     }
-    abortAiReview();
-    const reviewId = `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const controller = new AbortController();
-    aiReviewRef.current = { id: reviewId, controller };
-    const userId = session.account.userId;
-    const token = session.token;
-    setRecommendation(null);
-    setSnapshot(null);
-    setScanMode(null);
-    setScanStage("recommending");
-    setAiReviewing(true);
-    setStatus("AI ölçüleri inceliyor");
+    const fingerprint = snapshotFingerprint(nextSnapshot);
+    if (options?.silent) {
+      if (aiReviewRef.current) return;
+      abortAiReview();
+      const reviewId = `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const controller = new AbortController();
+      const userId = session.account.userId;
+      const token = session.token;
+      const promise = (async () => {
+        try {
+          await session.syncPendingProfile();
+        } catch {
+          // Profil henüz sunucuda değilse analiz 404 verebilir.
+        }
+        return session.api.analyzeProduct(
+          userId,
+          token,
+          nextSnapshot,
+          "",
+          false,
+          controller.signal,
+        );
+      })();
+      aiReviewRef.current = { id: reviewId, controller, fingerprint, promise };
+      void promise.catch(() => undefined);
+      return;
+    }
+    const existing = aiReviewRef.current;
+    const reuse =
+      existing &&
+      existing.fingerprint === fingerprint
+        ? existing
+        : null;
+    if (!reuse) {
+      abortAiReview();
+      const reviewId = `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const controller = new AbortController();
+      const userId = session.account.userId;
+      const token = session.token;
+      const promise = (async () => {
+        try {
+          await session.syncPendingProfile();
+        } catch {
+          // Profil henüz sunucuda değilse analiz 404 verebilir.
+        }
+        return session.api.analyzeProduct(
+          userId,
+          token,
+          nextSnapshot,
+          "",
+          false,
+          controller.signal,
+        );
+      })();
+      aiReviewRef.current = { id: reviewId, controller, fingerprint, promise };
+    }
+    const job = aiReviewRef.current;
+    if (!job) return;
+    if (!options?.silent) {
+      setRecommendation(null);
+      setSnapshot(null);
+      setScanMode(null);
+      setScanStage("recommending");
+      setAiReviewing(true);
+      setStatus("AI ölçüleri inceliyor");
+    }
     try {
-      try {
-        await session.syncPendingProfile();
-      } catch {
-        // Profil henüz sunucuda değilse analiz 404 verebilir.
-      }
-      if (aiReviewRef.current?.id !== reviewId) return;
-      const result = await session.api.analyzeProduct(
-        userId,
-        token,
-        nextSnapshot,
-        "",
-        false,
-        controller.signal,
-      );
-      if (aiReviewRef.current?.id !== reviewId) return;
+      const result = await job.promise;
+      if (aiReviewRef.current?.id !== job.id) return;
       if (
         !result.recommendedSize ||
         result.recommendedSize === "Bilinmiyor" ||
@@ -413,6 +492,7 @@ export function ScanScreen({
             : "Ürün ölçüleri okundu ama bu kalıpta ölçülerinle güvenle örtüşen bir beden bulunamadı. Tablodaki komşu bedenleri kontrol edip tekrar dene.",
         );
       }
+      if (options?.silent) return;
       setSnapshot(nextSnapshot);
       setRecommendation(result);
       setScanStage("completed");
@@ -421,9 +501,10 @@ export function ScanScreen({
       feedback.success();
       aiReviewRef.current = null;
     } catch (reason) {
-      if (aiReviewRef.current?.id !== reviewId || controller.signal.aborted) {
+      if (aiReviewRef.current?.id !== job.id || job.controller.signal.aborted) {
         return;
       }
+      if (options?.silent) return;
       setAiReviewing(false);
       setRecommendation(null);
       setSnapshot(null);
@@ -534,6 +615,10 @@ export function ScanScreen({
     }
     if (message.type === "fitmemory-progress") {
       setStatus(message.message);
+      return;
+    }
+    if (message.type === "fitmemory-chart-progress") {
+      void analyzeSnapshot(message.snapshot, { silent: true });
       return;
     }
     if (scanTimeoutRef.current) {
@@ -1093,7 +1178,7 @@ export function ScanScreen({
           ) : null}
           <View style={styles.browserBottom}>
             <Pressable
-              disabled={!canGoBack}
+              disabled={!canGoBack && !recommendation && !snapshot && !aiReviewing}
               onPress={goBackInBrowser}
               style={styles.browserTool}
             >

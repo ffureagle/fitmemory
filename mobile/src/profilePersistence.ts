@@ -18,6 +18,10 @@ export type ProfileFormState = {
   shoulder: string;
   chest: string;
   waist: string;
+  hip: string;
+  frontWaist: string;
+  inseam: string;
+  backWaist: string;
   foot: string;
   shoe: string;
   preference: FitPreference;
@@ -50,6 +54,10 @@ export function initialProfileForm(profile: Profile | null): ProfileFormState {
     shoulder: formatShoulderCircumference(profile?.shoulderWidthCm),
     chest: profile?.chestCircumferenceCm?.toString() ?? "",
     waist: profile?.waistCircumferenceCm?.toString() ?? "",
+    hip: profile?.hipCircumferenceCm?.toString() ?? "",
+    frontWaist: profile?.frontWaistCm?.toString() ?? "",
+    inseam: profile?.inseamCm?.toString() ?? "",
+    backWaist: profile?.backWaistCm?.toString() ?? "",
     foot: profile?.footLengthCm?.toString() ?? "",
     shoe: profile?.usualShoeSizeEu?.toString() ?? "",
     preference: profile?.fitPreference ?? "TrueToSize",
@@ -125,6 +133,10 @@ export function profileForServerSync(
   return {
     ...profile,
     chestCircumferenceCm: inRange(profile.chestCircumferenceCm, 60, 180),
+    hipCircumferenceCm: inRange(profile.hipCircumferenceCm, 60, 180),
+    frontWaistCm: inRange(profile.frontWaistCm, 15, 50),
+    inseamCm: inRange(profile.inseamCm, 50, 110),
+    backWaistCm: inRange(profile.backWaistCm, 18, 55),
     footLengthCm: inRange(profile.footLengthCm, 15, 40),
     usualShoeSizeEu: inRange(profile.usualShoeSizeEu, 20, 55),
   };

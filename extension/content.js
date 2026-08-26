@@ -316,12 +316,15 @@
       ...roots.map((root) => cleanText(deepElementText(root)))
     ].join(" ").slice(0, 100_000);
     const patterns = [
+      { label: "Super Baggy Fit", pattern: /\bsuper\s+baggy\s*(?:fit)?\b/i },
+      { label: "Loose Fit", pattern: /\b(?:loose(?:\s+|-)?fit|bol\s+(?:fit|kalıp|kesim))\b/i },
+      { label: "Baggy Fit", pattern: /\bbaggy\s*(?:fit|kalıp)?\b/i },
       { label: "Boxy Fit", pattern: /\bboxy\s*(?:fit|cut|kalıp)?\b/i },
       { label: "Oversize Fit", pattern: /\b(?:oversized?|over size)\s*(?:fit|kalıp)?\b/i },
       { label: "Relaxed Fit", pattern: /\b(?:relaxed|comfort)\s*(?:fit|kalıp)?\b/i },
       { label: "Regular Fit", pattern: /\b(?:regular|standard|standart)\s+(?:fit|cut|kalıp)\b/i },
       { label: "Slim Fit", pattern: /\b(?:slim|skinny|fitted)\s+(?:fit|cut|kalıp)\b/i },
-      { label: "Loose Fit", pattern: /\b(?:loose|wide)\s*(?:fit|kalıp)?\b/i },
+      { label: "Wide Leg", pattern: /\bwide\s*(?:leg|fit)?\b/i },
       { label: "Rahat Kalıp", pattern: /\brahat\s+kalıp\b/i },
       { label: "Dar Kalıp", pattern: /\bdar\s+kalıp\b/i },
       { label: "Bol Kalıp", pattern: /\bbol\s+kalıp\b/i }

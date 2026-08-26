@@ -11,12 +11,30 @@ public sealed class ProductFitTaxonomyService
 
     public ProductFitSemantics Describe(ProductDto product)
     {
+        var fromName = Describe(product.Name ?? "");
+        if (fromName.Family != ProductFitFamily.Unknown)
+        {
+            return fromName;
+        }
+
+        var fromLabel = Describe(product.FitLabel ?? "");
+        if (fromLabel.Family != ProductFitFamily.Unknown)
+        {
+            return fromLabel;
+        }
+
         return Describe(
             $"{product.FitLabel} {product.FitEvidence} {product.Name} {product.Description}");
     }
 
     public ProductFitSemantics Describe(OrderHistoryItem order)
     {
+        var fromName = Describe(order.ProductName ?? "");
+        if (fromName.Family != ProductFitFamily.Unknown)
+        {
+            return fromName;
+        }
+
         return Describe(
             $"{order.FitLabel} {order.ProductName} {order.FitNotes} {order.SizeEvidence}");
     }
@@ -106,12 +124,18 @@ public sealed class ProductFitTaxonomyService
                 "Vücuda yakın ve daraltılmış siluet verir; Skinny kadar sıkı olmak zorunda değildir.",
                 "Slim geri bildirimi Slim/Skinny ailesinde kullanılır; geniş kalıplara doğrudan taşınmaz.",
                 "Fit etiketi ayrıca beden büyütme talimatı değildir."),
+            ProductFitFamily.Loose => new(
+                family,
+                "Loose Fit",
+                "Rahat, düşen bir siluet verir; bel otururken bacak ve gövdede kontrollü bolluk bırakır. Super Baggy veya Baggy değildir.",
+                "Loose Fit kanıtı kendi ailesinde ve yakın Relaxed kesimde kullanılır. Super Baggy veya Baggy sonuçlarıyla aynı hacim sayılmaz.",
+                "Ürün adı Loose Fit ise kalıbı Super Baggy veya Baggy olarak yükseltme."),
             ProductFitFamily.Relaxed => new(
                 family,
                 "Relaxed",
                 "Normal bedende hareket payı artırılmış, daha gevşek ama kontrollü bir siluet verir.",
                 "Regular kanıtı yalnız düşük ağırlıklı komşu kanıttır; Baggy veya Super Baggy ile eşitlenmez.",
-                "Relaxed etiketi tek başına bir beden büyütme gerekçesi değildir."),
+                "Relaxed etiketi tek başına bir beden büyütme talimatı değildir."),
             ProductFitFamily.Boxy => new(
                 family,
                 "Boxy",
@@ -161,6 +185,14 @@ public sealed class ProductFitTaxonomyService
             (ProductFitFamily.Regular, ProductFitFamily.Straight) => 0.70,
             (ProductFitFamily.Regular, ProductFitFamily.Relaxed) or
             (ProductFitFamily.Relaxed, ProductFitFamily.Regular) => 0.62,
+            (ProductFitFamily.Loose, ProductFitFamily.Relaxed) or
+            (ProductFitFamily.Relaxed, ProductFitFamily.Loose) => 0.80,
+            (ProductFitFamily.Loose, ProductFitFamily.Regular) or
+            (ProductFitFamily.Regular, ProductFitFamily.Loose) => 0.55,
+            (ProductFitFamily.Loose, ProductFitFamily.Baggy) or
+            (ProductFitFamily.Baggy, ProductFitFamily.Loose) => 0.38,
+            (ProductFitFamily.Loose, ProductFitFamily.SuperBaggy) or
+            (ProductFitFamily.SuperBaggy, ProductFitFamily.Loose) => 0.12,
             (ProductFitFamily.WideLeg, ProductFitFamily.Baggy) or
             (ProductFitFamily.Baggy, ProductFitFamily.WideLeg) => 0.69,
             (ProductFitFamily.Baggy, ProductFitFamily.SuperBaggy) or
@@ -190,6 +222,10 @@ public sealed class ProductFitTaxonomyService
         if (ContainsAny(value, "wide leg", "wide-leg", "genis paca", "genis bacak"))
         {
             return ProductFitFamily.WideLeg;
+        }
+        if (ContainsAny(value, "loose fit", "loose-fit", "loose kalip", "bol kalip", "bol kesim"))
+        {
+            return ProductFitFamily.Loose;
         }
         if (ContainsAny(value, "baggy", "balon kalip", "balloon fit"))
         {
@@ -257,6 +293,7 @@ public enum ProductFitFamily
     Straight,
     Regular,
     Relaxed,
+    Loose,
     WideLeg,
     Baggy,
     SuperBaggy,

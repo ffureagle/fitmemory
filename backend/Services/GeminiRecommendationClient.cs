@@ -39,6 +39,7 @@ public sealed class GeminiRecommendationClient(
         var useUrlContext =
             settings.UseUrlContext &&
             HasPublicStyleUrls(wardrobe, request.Product);
+        var includeThinkingConfig = true;
         var payload = CreatePayload(
             profile,
             orders,
@@ -46,7 +47,8 @@ public sealed class GeminiRecommendationClient(
             request,
             localBaseline,
             availableSizes,
-            useUrlContext);
+            useUrlContext,
+            includeThinkingConfig);
         string responseBody;
         try
         {
@@ -54,6 +56,47 @@ public sealed class GeminiRecommendationClient(
                 settings,
                 payload,
                 cancellationToken);
+        }
+        catch (GeminiApiException exception)
+            when (exception.StatusCode == System.Net.HttpStatusCode.BadRequest &&
+                  includeThinkingConfig)
+        {
+            includeThinkingConfig = false;
+            payload = CreatePayload(
+                profile,
+                orders,
+                wardrobe,
+                request,
+                localBaseline,
+                availableSizes,
+                useUrlContext,
+                includeThinkingConfig);
+            try
+            {
+                responseBody = await SendAsync(
+                    settings,
+                    payload,
+                    cancellationToken);
+            }
+            catch (GeminiApiException inner)
+                when (useUrlContext &&
+                      settings.FallbackWithoutWebTools &&
+                      inner.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                payload = CreatePayload(
+                    profile,
+                    orders,
+                    wardrobe,
+                    request,
+                    localBaseline,
+                    availableSizes,
+                    useUrlContext: false,
+                    includeThinkingConfig: false);
+                responseBody = await SendAsync(
+                    settings,
+                    payload,
+                    cancellationToken);
+            }
         }
         catch (GeminiApiException exception)
             when (useUrlContext &&
@@ -67,7 +110,8 @@ public sealed class GeminiRecommendationClient(
                 request,
                 localBaseline,
                 availableSizes,
-                useUrlContext: false);
+                useUrlContext: false,
+                includeThinkingConfig);
             responseBody = await SendAsync(
                 settings,
                 payload,
@@ -134,7 +178,8 @@ public sealed class GeminiRecommendationClient(
         AnalyzeRecommendationRequest request,
         RecommendationResult localBaseline,
         IReadOnlyList<string> availableSizes,
-        bool useUrlContext)
+        bool useUrlContext,
+        bool includeThinkingConfig)
     {
         var styleNow = DateTimeOffset.UtcNow.ToOffset(
             TimeSpan.FromHours(3));
@@ -148,6 +193,10 @@ public sealed class GeminiRecommendationClient(
                 profile.ShoulderWidthCm,
                 profile.ChestCircumferenceCm,
                 profile.WaistCircumferenceCm,
+                profile.HipCircumferenceCm,
+                profile.FrontWaistCm,
+                profile.InseamCm,
+                profile.BackWaistCm,
                 profile.FootLengthCm,
                 profile.UsualShoeSizeEu,
                 fitPreference = profile.FitPreference.ToString()
@@ -274,6 +323,9 @@ public sealed class GeminiRecommendationClient(
                 localEngineIsDraftOnly = true,
                 mustReDecideUsingFitLabelCutConstructionAndChart = true,
                 productName = request.Product.Name,
+                productNameIsPrimaryCutEvidence = true,
+                readProductNameWordByWord = true,
+                doNotRelabelLooseFitAsBaggyOrSuperBaggy = true,
                 productFitLabel = request.Product.FitLabel,
                 productFitEvidence = request.Product.FitEvidence,
                 titleCutHints = request.Product.Name,
@@ -284,9 +336,11 @@ public sealed class GeminiRecommendationClient(
                 materialEvidence = request.Product.MaterialEvidence,
                 description = request.Product.Description,
                 promptJob =
-                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: dolap geçmişi, " +
-                    "kullanıcı geri bildirimi, ürün başlığındaki kalıp (baggy/slim/boxy), " +
-                    "insan üzerindeki duruş, kumaş esnekliği ve beden tablosunu birlikte tart."
+                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: önce ürün adını " +
+                    "kelime kelime anla (Loose Fit, Slim, Baggy, Super Baggy ayrı kalıplardır), " +
+                    "sonra dolap geçmişi, kullanıcı geri bildirimi, kumaş esnekliği ve beden " +
+                    "tablosunu birlikte tart. Loose Fit'i Super Baggy yapıştırma. Hızlı düşün, " +
+                    "somut beden kararına git."
             },
             deterministicBaseline = new
             {
@@ -309,13 +363,23 @@ public sealed class GeminiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.09 Product.Name'i kelime kelime oku. Kalıbın birincil kanıtı ürünün resmi adıdır.
+                  Başlık Loose Fit / Loose / bol kalıp diyorsa kalıp Loose Fit'tir; Super Baggy
+                  veya Baggy etiketi yapıştırma. Super Baggy yalnız başlık veya resmi FitLabel
+                  açıkça Super Baggy diyorsa. Sayfa açıklamasındaki genel "baggy" sözcüğü ürün
+                  adını ezemez. activeFitSemantics başlıkla çelişirse başlığı esas al.
+            -1.10 Düşünmeyi kısa tut (fast). Uzun iç muhakeme yazma; availableSizes içinden somut
+                  bedeni seç ve gerekçeyi kısa tut.
+            -1.11 Profil HipCircumferenceCm (basen), FrontWaistCm (ön bel), InseamCm (iç bacak),
+                  BackWaistCm (arka bel) doluysa pantolon/jean/şort kararında bel ile birlikte kullan.
+                  Boşsa uydurma.
             -1.07 Sayfadaki mağaza uyarılarını oku (merchantFitAdvice, FitEvidence): "büyük beden / bir beden küçük al",
                   "runs large", "runs small". Ürün ölçüleri varsa bunu komşu beden kaydırması olarak uygula.
                   Ölçü yoksa beden uydurma.
             -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden veya göğüs çevresinden
                   beden uydurma. recommendedSize "Bilinmiyor" kalsın; kullanıcıya ölçü tablosunu açmasını söyle.
-            -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Baggy, Super Baggy,
-                  Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
+            -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Loose Fit,
+                  Baggy, Super Baggy, Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
                   pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,
                   modelWornSize, howItFit) ve dolaptaki aynı kesim geri bildirimini birlikte tartarak
                   nihai bedeni seç. Esnemeyen dokuma + slim/straight ise taslağı küçültmeye daha yatkın ol;
@@ -336,7 +400,7 @@ public sealed class GeminiRecommendationClient(
                 kombininde kullan; beden kararına kesinlikle taşıma.
             -0.99 Aynı "40" beden etiketi farklı kalıp ailelerinde aynı bitmiş giysi hacmi demek değildir.
                   activeFitSemantics ürünün kesim sözlüğüdür. Straight, Skinny, Slim, Regular, Relaxed,
-                  Wide Leg, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
+                  Loose Fit, Wide Leg, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
             -0.98 sizeHistory içindeki usableAsSizingBoundary=false kayıtları beden büyütme/küçültme sınırı
                   olarak kullanma. Özellikle Straight 40'ın bacak, kalça veya uylukta dar gelmesi,
                   Super Baggy 40'ın dar geleceği anlamına gelmez. Super Baggy; ağ, kalça, uyluk ve paçada
@@ -445,11 +509,11 @@ public sealed class GeminiRecommendationClient(
                             doğrulanmış giysi ölçüleri, iade nedenleri, bölgesel kullanıcı notları,
                             kalıp tercihi ve ürünün FitLabel / kesim / dikiş / kumaş etiketleriyle
                             karşılaştır. Resmi ürün sayfasındaki FitLabel/FitEvidence alanlarını
-                            tahminden üstün tut. Aynı beden etiketini farklı kalıplarda eşit sayma:
-                            Straight ile Super Baggy, Slim ile Wide Leg, Boxy ile Oversized ayrı kanıt
+                            tahminden üstün tut. Ürün adını kelime kelime oku; Loose Fit'i Super Baggy
+                            veya Baggy olarak yeniden etiketleme. Aynı beden etiketini farklı kalıplarda eşit sayma:
+                            Straight ile Super Baggy, Slim ile Wide Leg, Loose Fit ile Super Baggy, Boxy ile Oversized ayrı kanıt
                             aileleridir. Boxy'yi Oversized sayma; ürün kalıbının kendi bolluğunu
-                            kullanıcı tercihine ekleyerek iki kez büyütme. Yalnız sağlanan kanıta dayalı,
-                            kararlı bir beden kararı üret. Asla ölçü uydurma.
+                            kullanıcı tercihine ekleyerek iki kez büyütme. Hızlı ve kararlı bir beden kararı üret. Asla ölçü uydurma.
                             Kullanıcıya bu bedenin doğru olduğunu sakin ve yeterli uzunlukta anlat;
                             tek cümlelik “en güçlü eşleşme” ile bırakma.
                             Kombin yorumu ikincildir; asıl işin doğru bedeni seçmektir.
@@ -478,13 +542,25 @@ public sealed class GeminiRecommendationClient(
                     }
                 }
                 : [],
-            generationConfig = new
-            {
-                temperature = 0.15,
-                maxOutputTokens = 3_000,
-                responseMimeType = "application/json",
-                responseJsonSchema = RecommendationSchema()
-            }
+            generationConfig = includeThinkingConfig
+                ? new Dictionary<string, object?>
+                {
+                    ["temperature"] = 0.1,
+                    ["maxOutputTokens"] = 3_000,
+                    ["responseMimeType"] = "application/json",
+                    ["responseJsonSchema"] = RecommendationSchema(),
+                    ["thinkingConfig"] = new Dictionary<string, object>
+                    {
+                        ["thinkingBudget"] = 0
+                    }
+                }
+                : new Dictionary<string, object?>
+                {
+                    ["temperature"] = 0.1,
+                    ["maxOutputTokens"] = 3_000,
+                    ["responseMimeType"] = "application/json",
+                    ["responseJsonSchema"] = RecommendationSchema()
+                }
         };
     }
 

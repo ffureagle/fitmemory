@@ -23,6 +23,18 @@ public sealed class UpsertProfileRequest
     [Range(45, 220)]
     public decimal WaistCircumferenceCm { get; init; }
 
+    [Range(60, 180)]
+    public decimal? HipCircumferenceCm { get; init; }
+
+    [Range(15, 50)]
+    public decimal? FrontWaistCm { get; init; }
+
+    [Range(50, 110)]
+    public decimal? InseamCm { get; init; }
+
+    [Range(18, 55)]
+    public decimal? BackWaistCm { get; init; }
+
     [Range(15, 40)]
     public decimal? FootLengthCm { get; init; }
 
@@ -41,6 +53,10 @@ public sealed record ProfileResponse(
     decimal ShoulderWidthCm,
     decimal? ChestCircumferenceCm,
     decimal WaistCircumferenceCm,
+    decimal? HipCircumferenceCm,
+    decimal? FrontWaistCm,
+    decimal? InseamCm,
+    decimal? BackWaistCm,
     decimal? FootLengthCm,
     decimal? UsualShoeSizeEu,
     FitPreference FitPreference,
