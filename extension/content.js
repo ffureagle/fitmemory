@@ -317,6 +317,7 @@
     ].join(" ").slice(0, 100_000);
     const patterns = [
       { label: "Super Baggy Fit", pattern: /\bsuper\s+baggy\s*(?:fit)?\b/i },
+      { label: "Barrel Fit", pattern: /\bbarrel\s*(?:fit|kalıp)?\b/i },
       { label: "Loose Fit", pattern: /\b(?:loose(?:\s+|-)?fit|bol\s+(?:fit|kalıp|kesim))\b/i },
       { label: "Baggy Fit", pattern: /\bbaggy\s*(?:fit|kalıp)?\b/i },
       { label: "Boxy Fit", pattern: /\bboxy\s*(?:fit|cut|kalıp)?\b/i },

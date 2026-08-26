@@ -38,6 +38,38 @@ public sealed class ProductFitTaxonomyTests
     }
 
     [Fact]
+    public void BarrelFitNameIsItsOwnCut()
+    {
+        var semantics = taxonomy.Describe(new ProductDto
+        {
+            Url = "https://www.pullandbear.com/tr/barrel",
+            Name = "Barrel Fit Jeans",
+            FitLabel = "Relaxed Fit",
+            Description = "Relaxed denim with extra room"
+        });
+
+        Assert.Equal(ProductFitFamily.Barrel, semantics.Family);
+        Assert.Equal("Barrel Fit", semantics.Label);
+    }
+
+    [Fact]
+    public void BalancedPreferenceDoesNotStackEaseOnRelaxed()
+    {
+        var playbook = taxonomy.Playbook(
+            new ProductDto
+            {
+                Url = "https://www.pullandbear.com/tr/relaxed-tee",
+                Name = "Relaxed Fit T-shirt",
+                FitLabel = "Relaxed Fit"
+            },
+            FitMemory.Api.Models.FitPreference.TrueToSize);
+
+        Assert.True(playbook.VolumeAlreadyInPattern);
+        Assert.True(playbook.DoNotAddExtraEaseOnTop);
+        Assert.Contains("5-6 cm", playbook.PreferenceNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FitLabelLooseBeatsPageBaggyWhenNameIsGeneric()
     {
         var semantics = taxonomy.Describe(new ProductDto

@@ -709,7 +709,7 @@ public sealed partial class LocalFitRecommendationEngine(
             {
                 ProductFitKind.Slim => (-1.5, 3.5),
                 ProductFitKind.Regular => (-1.5, 7.0),
-                ProductFitKind.Relaxed or ProductFitKind.Loose => (-1.0, 9.0),
+                ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Barrel => (-1.0, 9.0),
                 ProductFitKind.Boxy => (-1.0, 12.0),
                 ProductFitKind.Oversized => (-1.0, 16.0),
                 _ => (-1.5, 7.0)
@@ -1020,16 +1020,9 @@ public sealed partial class LocalFitRecommendationEngine(
             FitPreference.Oversized => 6.0,
             _ => 2.5
         };
-        var fitAdjustment = ProductFit(product) switch
-        {
-            ProductFitKind.Slim => -0.5,
-            ProductFitKind.Relaxed or ProductFitKind.Loose => 0.35,
-            ProductFitKind.Boxy => 0.5,
-            ProductFitKind.Oversized => 0.75,
-            _ => 0.0
-        };
+        // Kalıbın bolluğu giysi ölçüsündedir; hedefe ikinci kez eklenmez.
         var outerwearAllowance = IsOuterwear(product) ? 1.25 : 0.0;
-        return Math.Max(0.75, preferredEase + fitAdjustment + outerwearAllowance);
+        return Math.Max(0.75, preferredEase + outerwearAllowance);
     }
 
     private static double ChestTargetValue(
@@ -1054,12 +1047,22 @@ public sealed partial class LocalFitRecommendationEngine(
             FitPreference.Oversized => (3.5, 8.0),
             _ => (1.0, 4.0)
         };
-        var fitAllowance = fit switch
-        {
-            ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy => 0.75,
-            ProductFitKind.Oversized => 1.5,
-            _ => 0.0
-        };
+        // Dengeli hedefe kalıp payı eklenmez. Relaxed giysi doğru bedende zaten daha bol
+        // olduğu için tavan biraz açılır; hedef kaydırılmaz.
+        var fitAllowance = preference == FitPreference.TrueToSize
+            ? fit switch
+            {
+                ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Barrel => 2.0,
+                ProductFitKind.Boxy => 2.0,
+                ProductFitKind.Oversized => 3.0,
+                _ => 0.0
+            }
+            : fit switch
+            {
+                ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy or ProductFitKind.Barrel => 0.75,
+                ProductFitKind.Oversized => 1.5,
+                _ => 0.0
+            };
         return (bounds.Item1, bounds.Item2 + fitAllowance);
     }
 
@@ -1067,7 +1070,17 @@ public sealed partial class LocalFitRecommendationEngine(
         FitPreference preference,
         ProductFitKind fit)
     {
-        if (fit is ProductFitKind.Oversized or ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy)
+        if (preference == FitPreference.TrueToSize)
+        {
+            return fit switch
+            {
+                ProductFitKind.Oversized => (-2, 12),
+                ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Barrel or ProductFitKind.Boxy => (-3, 10),
+                _ => (-3, 8)
+            };
+        }
+
+        if (fit is ProductFitKind.Oversized or ProductFitKind.Relaxed or ProductFitKind.Loose or ProductFitKind.Boxy or ProductFitKind.Barrel)
         {
             return (-2, 16);
         }
@@ -1215,6 +1228,11 @@ public sealed partial class LocalFitRecommendationEngine(
         {
             return ProductFitKind.Boxy;
         }
+        if (value.Contains("barrel", StringComparison.Ordinal) ||
+            value.Contains("varil", StringComparison.Ordinal))
+        {
+            return ProductFitKind.Barrel;
+        }
         if (value.Contains("loose", StringComparison.Ordinal) ||
             value.Contains("bol kalıp", StringComparison.Ordinal) ||
             value.Contains("bol kalip", StringComparison.Ordinal))
@@ -1257,6 +1275,7 @@ public sealed partial class LocalFitRecommendationEngine(
             ProductFitKind.Regular => "Regular fit",
             ProductFitKind.Relaxed => "Relaxed fit",
             ProductFitKind.Loose => "Loose fit",
+            ProductFitKind.Barrel => "Barrel fit",
             ProductFitKind.Boxy => "Boxy fit",
             ProductFitKind.Oversized => "Oversize fit",
             _ => "Bilinmeyen"
@@ -1801,6 +1820,7 @@ public sealed partial class LocalFitRecommendationEngine(
         Regular,
         Relaxed,
         Loose,
+        Barrel,
         Boxy,
         Oversized
     }

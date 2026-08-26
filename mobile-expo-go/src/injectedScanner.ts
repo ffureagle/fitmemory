@@ -251,6 +251,7 @@ const scannerBootstrap = String.raw`
     ].join(" ")).slice(0, 100000);
     const patterns = [
       ["Super Baggy Fit", /\bsuper\s+baggy\s*(?:fit)?\b/i],
+      ["Barrel Fit", /\bbarrel\s*(?:fit|kalıp)?\b/i],
       ["Loose Fit", /\b(?:loose(?:\s+|-)?fit|bol\s+(?:fit|kalıp|kesim))\b/i],
       ["Baggy Fit", /\bbaggy\s*(?:fit|kalıp)?\b/i],
       ["Boxy Fit", /\bboxy\s*(?:fit|kalıp)?\b/i],
@@ -416,7 +417,7 @@ const scannerBootstrap = String.raw`
       "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
       "[class*='size-selector' i], [class*='sizeSelector' i], [data-qa-anchor*='size' i]"
     ) || element;
-  const clickElement = async (element) => {
+  const clickElement = async (element, afterMs = 40) => {
     const target = clickable(element);
     if (!target) return false;
     if (target.tagName === "A") {
@@ -459,7 +460,7 @@ const scannerBootstrap = String.raw`
         input.dispatchEvent(new Event("change", { bubbles: true }));
       } catch (error) { recordDiagnostic("input-check", error); }
     }
-    await sleep(40);
+    if (afterMs > 0) await sleep(afterMs);
     roots(true);
     return true;
   };
@@ -1386,6 +1387,44 @@ const scannerBootstrap = String.raw`
       const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
       return extractMeasurements(nextOverlay).map((item) => item.value).join("|");
     };
+    const settleRead = () => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+    const waitUntilValuesChange = (beforeValues, beforeSig, timeout) =>
+      new Promise((resolve) => {
+        let settled = false;
+        let observer = null;
+        let poll = null;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          try { observer && observer.disconnect(); } catch (error) { recordDiagnostic("observer", error); }
+          if (poll) clearInterval(poll);
+          resolve(ok);
+        };
+        const check = () => {
+          const afterValues = valuesNow();
+          if ((afterValues && afterValues !== beforeValues) ||
+              measureSignature() !== beforeSig) {
+            finish(true);
+            return true;
+          }
+          return false;
+        };
+        if (check()) return;
+        observer = new MutationObserver(() => { check(); });
+        try {
+          observer.observe(
+            measurementOverlay() || findMeasurePanel() || overlay || document.body,
+            { childList: true, subtree: true, characterData: true, attributes: true }
+          );
+        } catch (error) { recordDiagnostic("observer", error); }
+        const startedAt = Date.now();
+        poll = setInterval(() => {
+          if (check()) return;
+          if (Date.now() - startedAt >= timeout) finish(false);
+        }, 40);
+      });
     for (const size of labels.slice(0, 10)) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
@@ -1395,24 +1434,27 @@ const scannerBootstrap = String.raw`
       if (button) {
         const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
-        if (!selectedSizeButton(button)) {
-          await clickElement(button);
-          const afterClick = valuesNow();
-          const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
-            sizeLabelFromText(ownText(node) || controlText(node)) === size);
-          if (inner && inner !== button &&
-              afterClick === beforeValues && measureSignature() === before &&
-              !selectedSizeButton(button)) {
-            await clickElement(inner);
+        const alreadyOn = selectedSizeButton(button);
+        if (!alreadyOn) {
+          await clickElement(button, 0);
+          let changed = valuesNow() !== beforeValues || measureSignature() !== before;
+          if (!changed) {
+            const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
+              sizeLabelFromText(ownText(node) || controlText(node)) === size);
+            if (inner && inner !== button && !selectedSizeButton(button)) {
+              await clickElement(inner, 0);
+              changed = valuesNow() !== beforeValues || measureSignature() !== before;
+            }
           }
-          await waitFor(() => {
-            const afterValues = valuesNow();
-            return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
-          }, 4200, 40);
+          if (!changed) {
+            await waitUntilValuesChange(beforeValues, before, 4200);
+          }
+          await settleRead();
+        } else if (!valuesNow()) {
+          await waitForStable(() => {
+            return valuesNow() || measureSignature();
+          }, 1800, 80, 40);
         }
-        await waitForStable(() => {
-          return valuesNow() || measureSignature();
-        }, 1800, 150, 40);
       }
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const measurements = extractMeasurements(overlay);
@@ -1875,7 +1917,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.30";
+  window.__fitmemoryScannerVersion = "1.25.31";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -1912,7 +1954,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.30" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.31" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

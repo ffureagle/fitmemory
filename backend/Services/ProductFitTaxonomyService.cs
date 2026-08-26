@@ -44,6 +44,42 @@ public sealed class ProductFitTaxonomyService
         return Compatibility(Describe(order).Family, Describe(product).Family);
     }
 
+    public CutPlaybook Playbook(ProductDto product, FitPreference preference)
+    {
+        var semantics = Describe(product);
+        var volumeInPattern = semantics.Family is
+            ProductFitFamily.Relaxed or
+            ProductFitFamily.Loose or
+            ProductFitFamily.Boxy or
+            ProductFitFamily.Barrel or
+            ProductFitFamily.Baggy or
+            ProductFitFamily.SuperBaggy or
+            ProductFitFamily.Oversized or
+            ProductFitFamily.WideLeg;
+        var balanced = preference == FitPreference.TrueToSize;
+        var preferenceNote = preference switch
+        {
+            FitPreference.TrueToSize =>
+                "Dengeli: vücut ile tabloyu eşleştir. Kalıbın kendi hacmini ikinci kez ekleme; 5-6 cm ekstra bolluk için beden büyütme.",
+            FitPreference.Relaxed =>
+                "Rahat tercih: Regular/Slim üründe bir beden büyütmeyi düşün. Ürün zaten Relaxed/Loose/Barrel/Boxy ise bir kez daha büyütme.",
+            FitPreference.Oversized =>
+                "Bol tercih: Regular üründe büyütmeyi düşün. Oversized/Baggy üründe etiket nedeniyle bir beden daha ekleme.",
+            FitPreference.Slim =>
+                "Dar tercih: kalıp izin veriyorsa bir beden küçült. Barrel/Relaxed hacmini belden sıkarak yok etme.",
+            _ => "Kalıp hacmi giysi ölçüsündedir; tercih yalnızca komşu beden kaydırması olabilir."
+        };
+        return new CutPlaybook(
+            product.Name ?? "",
+            semantics.Family,
+            semantics.Label,
+            semantics.Silhouette,
+            semantics.SizingRule,
+            volumeInPattern,
+            balanced && volumeInPattern,
+            preferenceNote);
+    }
+
     public bool IsSizingEvidenceEligible(
         OrderHistoryItem order,
         ProductDto product,
@@ -128,25 +164,31 @@ public sealed class ProductFitTaxonomyService
                 family,
                 "Loose Fit",
                 "Rahat, düşen bir siluet verir; bel otururken bacak ve gövdede kontrollü bolluk bırakır. Super Baggy veya Baggy değildir.",
-                "Loose Fit kanıtı kendi ailesinde ve yakın Relaxed kesimde kullanılır. Super Baggy veya Baggy sonuçlarıyla aynı hacim sayılmaz.",
+                "Profil Dengeli ise Loose Fit diye beden büyütme. Hacim kalıptadır.",
                 "Ürün adı Loose Fit ise kalıbı Super Baggy veya Baggy olarak yükseltme."),
+            ProductFitFamily.Barrel => new(
+                family,
+                "Barrel Fit",
+                "Uylukta dolgun, diz ve paçada daralan fıçı siluetidir. Hacim kalıp çizgisindedir; bel ve basen oturumu ayrı ölçülür.",
+                "Bel ve basen tablosundan normal bedeni seç. Uyluk hacmi için beden büyütme. Straight, Relaxed veya Baggy kanıtı Barrel’a taşınmaz.",
+                "Barrel Fit özel bir kesimdir; Loose, Relaxed veya Baggy diye yeniden etiketleme."),
             ProductFitFamily.Relaxed => new(
                 family,
                 "Relaxed",
-                "Normal bedende hareket payı artırılmış, daha gevşek ama kontrollü bir siluet verir.",
-                "Regular kanıtı yalnız düşük ağırlıklı komşu kanıttır; Baggy veya Super Baggy ile eşitlenmez.",
+                "Normal bedende hareket payı artırılmış, daha gevşek ama kontrollü bir siluet verir. Bolluk kalıptadır.",
+                "Profil Dengeli ise Relaxed diye beden büyütme; 5-6 cm ekstra pay ekleme. Rahat/Bol tercihinde bir beden büyütmeyi o zaman düşün.",
                 "Relaxed etiketi tek başına bir beden büyütme talimatı değildir."),
             ProductFitFamily.Boxy => new(
                 family,
                 "Boxy",
                 "Kısa veya dengeli boyla birlikte daha düz, geniş gövde ve düşük omuz etkisi verebilir.",
-                "Boxy kanıtı kendi ailesinde değerlendirilir; Oversized ile aynı beden kuralı değildir.",
+                "Boxy kanıtı kendi ailesinde değerlendirilir. Profil Dengeli ise Boxy diye beden büyütme; hacim kalıptadır.",
                 "Geniş siluet ürünün kesimindedir, otomatik beden büyütülmez."),
             ProductFitFamily.Oversized => new(
                 family,
                 "Oversized",
                 "Omuz, gövde ve/veya boyda tasarlanmış ekstra hacim oluşturur.",
-                "Normal bedende zaten bol siluet üretir; yalnız etiket nedeniyle beden büyütülmez.",
+                "Normal bedende zaten bol siluet üretir; yalnız etiket nedeniyle beden büyütülmez. Dengeli profilde bir beden daha büyütme.",
                 "Boxy, Relaxed ve Baggy ayrı kalıp aileleridir."),
             ProductFitFamily.Regular => new(
                 family,
@@ -197,8 +239,12 @@ public sealed class ProductFitTaxonomyService
             (ProductFitFamily.Baggy, ProductFitFamily.WideLeg) => 0.69,
             (ProductFitFamily.Baggy, ProductFitFamily.SuperBaggy) or
             (ProductFitFamily.SuperBaggy, ProductFitFamily.Baggy) => 0.58,
-            (ProductFitFamily.Boxy, ProductFitFamily.Oversized) or
-            (ProductFitFamily.Oversized, ProductFitFamily.Boxy) => 0.48,
+            (ProductFitFamily.Barrel, ProductFitFamily.Relaxed) or
+            (ProductFitFamily.Relaxed, ProductFitFamily.Barrel) => 0.42,
+            (ProductFitFamily.Barrel, ProductFitFamily.Straight) or
+            (ProductFitFamily.Straight, ProductFitFamily.Barrel) => 0.40,
+            (ProductFitFamily.Barrel, ProductFitFamily.Baggy) or
+            (ProductFitFamily.Baggy, ProductFitFamily.Barrel) => 0.34,
             (ProductFitFamily.Straight, ProductFitFamily.Baggy) or
             (ProductFitFamily.Baggy, ProductFitFamily.Straight) => 0.18,
             (ProductFitFamily.Straight, ProductFitFamily.SuperBaggy) or
@@ -218,6 +264,10 @@ public sealed class ProductFitTaxonomyService
         if (ContainsAny(value, "skinny", "super skinny"))
         {
             return ProductFitFamily.Skinny;
+        }
+        if (ContainsAny(value, "barrel", "varil kalip", "fici kalip"))
+        {
+            return ProductFitFamily.Barrel;
         }
         if (ContainsAny(value, "wide leg", "wide-leg", "genis paca", "genis bacak"))
         {
@@ -294,6 +344,7 @@ public enum ProductFitFamily
     Regular,
     Relaxed,
     Loose,
+    Barrel,
     WideLeg,
     Baggy,
     SuperBaggy,
@@ -307,3 +358,13 @@ public sealed record ProductFitSemantics(
     string Silhouette,
     string SizingRule,
     string CrossFitRule);
+
+public sealed record CutPlaybook(
+    string ProductName,
+    ProductFitFamily Family,
+    string Label,
+    string HowItSits,
+    string SizingRule,
+    bool VolumeAlreadyInPattern,
+    bool DoNotAddExtraEaseOnTop,
+    string PreferenceNote);

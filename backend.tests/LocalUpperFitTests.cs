@@ -59,9 +59,35 @@ public sealed class LocalUpperFitTests
         Assert.Contains("rahat", result.Explanation, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void BalancedRelaxedTeeDoesNotSizeUpForCutEase()
+    {
+        var result = AnalyzeTee(
+            new SizeChartDto
+            {
+                Found = true,
+                Title = "Ürün ölçüleri",
+                Unit = "Centimeters",
+                Headers = ["Beden", "Göğüs"],
+                Rows =
+                [
+                    new SizeChartRowDto { Cells = ["S", "55"] },
+                    new SizeChartRowDto { Cells = ["M", "58"] },
+                    new SizeChartRowDto { Cells = ["L", "61"] }
+                ],
+                RawText = ""
+            },
+            fitLabel: "Relaxed Fit",
+            productName: "Relaxed Fit T-shirt");
+
+        Assert.Equal("S", result.RecommendedSize);
+    }
+
     private static RecommendationResult AnalyzeTee(
         SizeChartDto chart,
-        string merchantAdvice = "")
+        string merchantAdvice = "",
+        string fitLabel = "Slim Fit",
+        string productName = "Basic slim fit tişört")
     {
         var engine = new LocalFitRecommendationEngine(
             new RegionalFitFeedbackService(),
@@ -88,9 +114,9 @@ public sealed class LocalUpperFitTests
                 {
                     Url = "https://www.pullandbear.com/tr/basic-slim-fit-tshirt-l01234",
                     Brand = "Pull&Bear",
-                    Name = "Basic slim fit tişört",
+                    Name = productName,
                     Category = "Tişört",
-                    FitLabel = "Slim Fit",
+                    FitLabel = fitLabel,
                     MerchantFitAdvice = merchantAdvice,
                     FitEvidence = merchantAdvice
                 },

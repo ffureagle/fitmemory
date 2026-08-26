@@ -202,6 +202,7 @@ public sealed class GeminiRecommendationClient(
                 fitPreference = profile.FitPreference.ToString()
             },
             activeFitSemantics = fitTaxonomy.Describe(request.Product),
+            cutPlaybook = fitTaxonomy.Playbook(request.Product, profile.FitPreference),
             currentProductUserNote = request.UserAdjustmentNote,
             styleCalendar = new
             {
@@ -323,9 +324,11 @@ public sealed class GeminiRecommendationClient(
                 localEngineIsDraftOnly = true,
                 mustReDecideUsingFitLabelCutConstructionAndChart = true,
                 productName = request.Product.Name,
+                productNameMustBeReadFirst = true,
                 productNameIsPrimaryCutEvidence = true,
                 readProductNameWordByWord = true,
                 doNotRelabelLooseFitAsBaggyOrSuperBaggy = true,
+                doNotAddExtraEaseOnRelaxedOrBarrelWhenPreferenceIsTrueToSize = true,
                 productFitLabel = request.Product.FitLabel,
                 productFitEvidence = request.Product.FitEvidence,
                 titleCutHints = request.Product.Name,
@@ -336,11 +339,9 @@ public sealed class GeminiRecommendationClient(
                 materialEvidence = request.Product.MaterialEvidence,
                 description = request.Product.Description,
                 promptJob =
-                    "Bu isteği kapsamlı bir beden karar prompt'u olarak oku: önce ürün adını " +
-                    "kelime kelime anla (Loose Fit, Slim, Baggy, Super Baggy ayrı kalıplardır), " +
-                    "sonra dolap geçmişi, kullanıcı geri bildirimi, kumaş esnekliği ve beden " +
-                    "tablosunu birlikte tart. Loose Fit'i Super Baggy yapıştırma. Hızlı düşün, " +
-                    "somut beden kararına git."
+                    "Önce Product.Name'i oku (Relaxed, Barrel, Loose, Slim, Baggy ayrı kalıplardır). " +
+                    "cutPlaybook kalıbın nasıl durduğunu ve bolluğun kalıpta olup olmadığını söyler. " +
+                    "Dengeli profilde Relaxed/Barrel/Loose/Boxy için 5-6 cm ekstra ekleme. Hızlı düşün."
             },
             deterministicBaseline = new
             {
@@ -363,6 +364,14 @@ public sealed class GeminiRecommendationClient(
             {JsonSerializer.Serialize(evidence, JsonOptions)}
 
             Karar kuralları:
+            -1.12 cutPlaybook zorunlu kalıp sözlüğüdür. Product.Name her istekte gider; önce onu oku.
+                  Relaxed, Loose, Boxy, Barrel, Baggy, Oversized hacmi kalıp çizgisindedir.
+                  Profil TrueToSize/Dengeli ise bu kalıplara 5-6 cm ekstra bolluk veya bir beden
+                  büyütme uygulama. Bolluk giysinin kendi milimindedir, beden etiketinde değil.
+                  Barrel Fit uylukta dolgun, dizde daralan özel kesimdir; bel/basenden oturt, uyluk
+                  hacmi için büyütme; Relaxed veya Baggy diye yeniden adlandırma.
+                  Kullanıcı Relaxed/Oversized tercih ettiyse ve ürün Regular/Slim ise o zaman
+                  komşu bedeni düşün. Ürün zaten Relaxed/Barrel ise tercih diye bir kez daha büyütme.
             -1.09 Product.Name'i kelime kelime oku. Kalıbın birincil kanıtı ürünün resmi adıdır.
                   Başlık Loose Fit / Loose / bol kalıp diyorsa kalıp Loose Fit'tir; Super Baggy
                   veya Baggy etiketi yapıştırma. Super Baggy yalnız başlık veya resmi FitLabel
@@ -400,7 +409,7 @@ public sealed class GeminiRecommendationClient(
                 kombininde kullan; beden kararına kesinlikle taşıma.
             -0.99 Aynı "40" beden etiketi farklı kalıp ailelerinde aynı bitmiş giysi hacmi demek değildir.
                   activeFitSemantics ürünün kesim sözlüğüdür. Straight, Skinny, Slim, Regular, Relaxed,
-                  Loose Fit, Wide Leg, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
+                  Loose Fit, Wide Leg, Barrel Fit, Baggy ve Super Baggy ayrı siluetlerdir; bunları tek beden hafızasında birleştirme.
             -0.98 sizeHistory içindeki usableAsSizingBoundary=false kayıtları beden büyütme/küçültme sınırı
                   olarak kullanma. Özellikle Straight 40'ın bacak, kalça veya uylukta dar gelmesi,
                   Super Baggy 40'ın dar geleceği anlamına gelmez. Super Baggy; ağ, kalça, uyluk ve paçada
@@ -418,15 +427,15 @@ public sealed class GeminiRecommendationClient(
                  ChestCircumferenceCm/2 ve gerekli hareket payıyla ya da doğrulanmış giysi göğüs
                  eniyle karşılaştırılabilir. ChestCircumferenceCm null ise boy ve kilodan göğüs ölçüsü uydurma.
             -0.85 FitLabel ürünün bitmiş siluetini zaten anlatır; bu etikete ek olarak ikinci kez bolluk veya
-                  beden artışı uygulama. Boxy, düz ve geniş gövdeli bir siluettir fakat Oversized ile aynı
-                  sınıf değildir ve tek başına beden büyütme talimatı sayılmaz. Relaxed da normal bedende
-                  daha gevşek kesimdir. Düz göğüs eni varsa toplam bolluğu
+                  beden artışı uygulama. Boxy, Relaxed, Loose ve Barrel hacmi kalıptadır. Oversized ile
+                  aynı sınıf değildirler ve Dengeli profilde tek başına beden büyütme talimatı sayılmaz.
+                  Düz göğüs eni varsa toplam bolluğu
                   (2 × giysi göğüs eni) - ChestCircumferenceCm formülüyle hesapla.
-            -0.84 Aynı modelde doğrulanmış iyi uyum yoksa tişört/üst/gömlekte toplam göğüs bolluğu Boxy için
-                  17 cm'yi, Relaxed için 19 cm'yi, Regular için 14 cm'yi gerekçesiz aşma.
-                  Bu tavan fiziksel kılavuzdur. Taslak tavanı aşıyorsa küçült. Taslak tavanın altındaysa
-                  ve FitLabel, kumaş esnemesi veya dikiş/kesim kanıtı başka bir komşu bedeni işaret ediyorsa
-                  o bedeni seç; tavanı gerekçesiz aşma.
+            -0.84 Aynı modelde doğrulanmış iyi uyum yoksa tişört/üst/gömlekte toplam göğüs bolluğu
+                  Regular için 14 cm'yi gerekçesiz aşma. Relaxed/Loose/Boxy/Barrel için bu 14 cm hedef
+                  değil tavandır; kalıp zaten bol olduğu için tavanı 16 cm'ye kadar izin ver ama
+                  tavanı hedefleyerek beden büyütme. 19 cm'ye çıkarma. Taslak tavanı aşıyorsa küçült.
+                  FitLabel Relaxed diye komşu büyük bedeni seçme.
             -0.8 deterministicBaseline kaynak kodu (local-category-history, local-model-reference,
                  local-body-label-estimate, local-insufficient) taslağın zayıf olduğunu gösterir, seni
                  o bedene kilitlemez. Sırf kullanıcı Relaxed/Oversized tercih ediyor diye gerekçesiz
@@ -446,7 +455,8 @@ public sealed class GeminiRecommendationClient(
             2. KeptTooBaggy/KeptTooTight parçaları dolaptadır fakat bol/dar uyum sınırı oluşturur.
                ReturnedTooBaggy/ReturnedTooTight yalnız kullanıcının açıkça doğruladığı iadelerdir.
             3. PurchasedUnknownFit kayıtlarını yalnızca zayıf kanıt olarak kullan; iyi uyduğunu varsayma.
-            4. İki beden yakınsa kullanıcının siluet tercihini uygula.
+            4. İki beden yakınsa kullanıcının siluet tercihini uygula. Tercih Dengeli/TrueToSize ise
+               küçük olanı değil, vücut-tablo eşleşmesini seç; Relaxed kalıp diye büyütme.
             5. Giysi enini vücut çevresinden ayır. Düz göğüs veya bel eni genellikle çevrenin yarısıdır.
             6. availableSizes doluysa önerilen etiketi listedeki yazımıyla aynen döndür.
             7. Yalnız sağlanan verinin desteklediği sayısal karşılaştırmaları yaz.

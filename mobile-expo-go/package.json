@@ -1,7 +1,7 @@
 {
   "name": "fitmemory-expo-go",
   "private": true,
-  "version": "1.25.30",
+  "version": "1.25.31",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
