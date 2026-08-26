@@ -407,8 +407,14 @@ const scannerBootstrap = String.raw`
       if (href && !href.startsWith("#") &&
           !href.toLowerCase().startsWith("javascript:")) return false;
     }
-    target.scrollIntoView?.({ block: "center", inline: "center" });
-    await sleep(35);
+    const rect = target.getBoundingClientRect?.();
+    const inView = rect &&
+      rect.top >= 0 && rect.bottom <= (innerHeight || 0) &&
+      rect.left >= 0 && rect.right <= (innerWidth || 0);
+    if (!inView) {
+      target.scrollIntoView?.({ block: "center", inline: "center" });
+      await sleep(35);
+    }
     try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
     for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
       try {
@@ -897,6 +903,7 @@ const scannerBootstrap = String.raw`
     return null;
   };
   const revealWideTables = async () => {
+    if (metricLabelsVisible() && findMeasurePanel()) return;
     const tables = all("table, [role='table']");
     for (const table of tables.slice(0, 12)) {
       const scroller = findScrollableX(table) || findScrollableX(table.parentElement);
@@ -1351,8 +1358,6 @@ const scannerBootstrap = String.raw`
       const nearby = findSizeButtons(overlay);
       return nearby.length ? nearby : findSizeButtons(document);
     };
-    const initial = sizeControls().find(selectedSizeButton);
-    const initialLabel = sizeLabelFromText(controlText(initial));
     const labels = sizeControls()
       .map((button) => sizeLabelFromText(controlText(button)))
       .filter(Boolean)
@@ -1360,6 +1365,10 @@ const scannerBootstrap = String.raw`
     const records = [];
     let headers = null;
     if (!labels.length) return null;
+    const valuesNow = () => {
+      const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+      return extractMeasurements(nextOverlay).map((item) => item.value).join("|");
+    };
     for (const size of labels.slice(0, 10)) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
@@ -1369,19 +1378,24 @@ const scannerBootstrap = String.raw`
       if (button) {
         const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
-        await clickElement(button);
-        const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
-          sizeLabelFromText(ownText(node) || controlText(node)) === size);
-        if (inner && inner !== button) await clickElement(inner);
-        await waitFor(() => {
-          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
-          const afterValues = extractMeasurements(nextOverlay).map((item) => item.value).join("|");
-          return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
-        }, 4200, 70);
+        if (!selectedSizeButton(button)) {
+          await clickElement(button);
+          const afterClick = valuesNow();
+          const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
+            sizeLabelFromText(ownText(node) || controlText(node)) === size);
+          if (inner && inner !== button &&
+              afterClick === beforeValues && measureSignature() === before &&
+              !selectedSizeButton(button)) {
+            await clickElement(inner);
+          }
+          await waitFor(() => {
+            const afterValues = valuesNow();
+            return selectedSizeButton(button) || (afterValues && afterValues !== beforeValues) || measureSignature() !== before;
+          }, 4200, 70);
+        }
         await waitForStable(() => {
-          const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
-          return extractMeasurements(nextOverlay).map((item) => item.value).join("|") || measureSignature();
-        }, 1800, 110);
+          return valuesNow() || measureSignature();
+        }, 1800, 200);
       }
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const measurements = extractMeasurements(overlay);
@@ -1392,11 +1406,6 @@ const scannerBootstrap = String.raw`
       const existing = records.find((row) => row.cells[0] === size);
       if (existing) existing.cells = cells;
       else records.push({ cells: cells });
-    }
-    if (initialLabel) {
-      overlay = measurementOverlay() || findMeasurePanel() || overlay;
-      const restore = overlaySizeControl(overlay, initialLabel);
-      if (restore && !selectedSizeButton(restore)) await clickElement(restore);
     }
     const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
     if (!records.length || !headers) return null;
@@ -1429,7 +1438,11 @@ const scannerBootstrap = String.raw`
     const advice = merchantFitAdvice();
     const openMeasurementSurface = () =>
       metricLabelsVisible() && findSizeButtons(document).length >= 2;
-    if (!visibleMeasurementsOnly || !openMeasurementSurface()) await openSizeGuide();
+    if (openMeasurementSurface()) {
+      guideStage = "Ölçü paneli zaten açık";
+    } else {
+      await openSizeGuide();
+    }
     const fit = fitDetails();
     const model = modelDetails();
     const offers = Array.isArray(structured?.offers)
@@ -1456,16 +1469,16 @@ const scannerBootstrap = String.raw`
       if (verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1) return table;
       const overlay = measurementOverlay();
       const overlayButtons = overlay ? containedSizeButtons(overlay) : [];
-      if (metricLabelsVisible() && (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2)) {
-        const walked = await safeChart(() => panelChart());
-        if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
-      }
+      const shouldWalk = metricLabelsVisible() &&
+        (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2);
+      const walked = shouldWalk ? await safeChart(() => panelChart()) : null;
+      if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
       return firstVerifiedChart(
         table,
         await safeChart(() => visibleLayoutChart()),
         await safeChart(() => visibleOpenChart()),
         await safeChart(() => geometryChart()),
-        await safeChart(() => panelChart()),
+        shouldWalk ? walked : await safeChart(() => panelChart()),
         await safeChart(() => visiblePanelChart())
       );
     };
@@ -1814,7 +1827,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.17";
+  window.__fitmemoryScannerVersion = "1.25.29";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -1851,7 +1864,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.17" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.29" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

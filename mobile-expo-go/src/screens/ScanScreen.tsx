@@ -360,6 +360,8 @@ export function ScanScreen({
         "Tarama zaman aşımına uğradı. Sayfanın yüklenmesi tamamlandıktan sonra yeniden deneyin.",
       );
     }, SCAN_TIMEOUT_MS);
+    void wakeApi();
+    void session.syncPendingProfile().catch(() => undefined);
     webViewRef.current?.injectJavaScript(createScanScript(mode, mode === "product"));
   };
 
