@@ -92,6 +92,9 @@ public sealed class SizeChartDto : IValidatableObject
     [StringLength(8000)]
     public string RawText { get; init; } = "";
 
+    [MaxLength(20)]
+    public IReadOnlyList<string> SellingSizes { get; init; } = [];
+
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         if (!Found)

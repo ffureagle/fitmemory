@@ -1165,6 +1165,28 @@ const scannerBootstrap = String.raw`
       }
     }
   };
+  const letterSizeOrder = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+  const isLetterSize = (value) => letterSizeOrder.indexOf(String(value || "").toUpperCase()) >= 0;
+  const isEvenEuSize = (value) => {
+    const n = Number(String(value || "").replace(",", "."));
+    return n >= 32 && n <= 52 && n % 2 === 0;
+  };
+  const sizeFromNode = (node) => {
+    if (!node || typeof node !== "object") return "";
+    const fields = [
+      node.displaySize, node.sizeName, node.name, node.size, node.label,
+      node.skuSize, node.equivalent, node.sizeEquivalent, node.description, node.displayName
+    ];
+    const labels = [];
+    for (let i = 0; i < fields.length; i += 1) {
+      const direct = sizeLabelFromText(fields[i]);
+      if (direct) labels.push(direct);
+      const nested = String(fields[i] || "").match(/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/i);
+      if (nested) labels.push(nested[1].toUpperCase());
+    }
+    const letter = labels.filter(isLetterSize)[0];
+    return letter || labels[0] || "";
+  };
   const walkForSizes = (node, into, depth, seen, budget) => {
     if (!budget) budget = { left: 5000 };
     if (!node || depth > 14 || typeof node !== "object" || into.length > 80 || budget.left <= 0) return;
@@ -1182,11 +1204,11 @@ const scannerBootstrap = String.raw`
       return;
     }
     if (Array.isArray(node.skuDimensions) && node.skuDimensions.length) {
-      const size = sizeLabelFromText(node.name || node.size || node.sizeName || node.displaySize || node.label || node.skuSize || "");
+      const size = sizeFromNode(node);
       const measurements = skuDimsToMeasurements(node.skuDimensions);
       if (size && Object.keys(measurements).length) into.push({ size, measurements });
     }
-    const size = sizeLabelFromText(node.size || node.sizeName || node.displaySize || node.name || node.label || "");
+    const size = sizeFromNode(node);
     if (size) {
       let measurements = {};
       if (node.measurements && typeof node.measurements === "object" && !Array.isArray(node.measurements)) {
@@ -1219,7 +1241,9 @@ const scannerBootstrap = String.raw`
     return order.map((size) => ({ size, measurements: bySize[size] }));
   };
   const chartFromSizeRecords = (records) => {
-    const merged = mergeSizeRecords(records).filter((record) => sizePattern.test(record.size));
+    let merged = mergeSizeRecords(records).filter((record) => sizePattern.test(record.size));
+    const letterRecords = merged.filter((record) => isLetterSize(record.size));
+    if (letterRecords.length >= 2) merged = letterRecords;
     if (merged.length < 2) return null;
     const headersExtra = [];
     for (let i = 0; i < merged.length; i += 1) {
@@ -1243,6 +1267,56 @@ const scannerBootstrap = String.raw`
       source: "embedded-json"
     };
     return verifiedMeasurementChart(chart) ? chart : null;
+  };
+  const collectSellingSizes = () => {
+    const fromButtons = findSizeButtons(document)
+      .map((button) => sizeLabelFromText(controlText(button)))
+      .filter(Boolean);
+    const unique = [];
+    for (let i = 0; i < fromButtons.length; i += 1) {
+      if (unique.indexOf(fromButtons[i]) === -1) unique.push(fromButtons[i]);
+    }
+    return unique;
+  };
+  const rebuildChartText = (chart) => {
+    const headers = chart.headers || [];
+    const rows = chart.rows || [];
+    return Object.assign({}, chart, {
+      rawText: [headers.join(" | ")].concat(rows.map((row) => (row.cells || []).join(" | "))).join("\n").slice(0, 8000)
+    });
+  };
+  const alignChartToSelling = (chart, selling) => {
+    if (!chart || !chart.rows) return chart;
+    const letters = [];
+    for (let i = 0; i < selling.length; i += 1) {
+      if (!isLetterSize(selling[i])) continue;
+      if (letters.indexOf(selling[i]) === -1) letters.push(selling[i]);
+    }
+    letters.sort((a, b) => letterSizeOrder.indexOf(a) - letterSizeOrder.indexOf(b));
+    if (letters.length < 2) {
+      return Object.assign({}, chart, { sellingSizes: selling.slice() });
+    }
+    const letterRows = chart.rows.filter((row) => isLetterSize(row.cells && row.cells[0]));
+    if (letterRows.length >= 2) {
+      return rebuildChartText(Object.assign({}, chart, { rows: letterRows, sellingSizes: letters }));
+    }
+    const numericRows = chart.rows.filter((row) => isEvenEuSize(row.cells && row.cells[0]))
+      .slice()
+      .sort((a, b) => Number(a.cells[0]) - Number(b.cells[0]));
+    if (numericRows.length === letters.length) {
+      const rows = numericRows.map((row, index) => ({
+        cells: [letters[index]].concat(row.cells.slice(1))
+      }));
+      return rebuildChartText(Object.assign({}, chart, { rows: rows, sellingSizes: letters }));
+    }
+    return Object.assign({}, chart, { sellingSizes: letters });
+  };
+  const finalizeChart = (chart) => {
+    if (!chart || !chart.found) return chart;
+    const aligned = alignChartToSelling(chart, collectSellingSizes());
+    return verifiedMeasurementChart(aligned) ? aligned : Object.assign({}, chart, {
+      sellingSizes: collectSellingSizes()
+    });
   };
   const parseJsonQuiet = (text) => {
     try {
@@ -1774,7 +1848,7 @@ const scannerBootstrap = String.raw`
     ).slice(0, 120);
     let imageUrl = chooseProductImage(structured, title);
     const advice = merchantFitAdvice();
-    const jsonChart = await harvestJsonChart();
+    const jsonChart = finalizeChart(await harvestJsonChart());
     const jsonComplete = verifiedMeasurementChart(jsonChart) && (jsonChart.rows?.length || 0) >= 2;
     const openMeasurementSurface = () =>
       metricLabelsVisible() && findSizeButtons(document).length >= 2;
@@ -1829,7 +1903,7 @@ const scannerBootstrap = String.raw`
         postChartProgress(jsonChart);
         return jsonChart;
       }
-      const fromJson = await harvestJsonChart();
+      const fromJson = finalizeChart(await harvestJsonChart());
       if (verifiedMeasurementChart(fromJson) && (fromJson.rows?.length || 0) >= 2) {
         postChartProgress(fromJson);
         return fromJson;
@@ -1861,6 +1935,7 @@ const scannerBootstrap = String.raw`
       if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
     }
+    if (chart?.found) chart = finalizeChart(chart);
     const material = await materialDetails();
     if (!chart?.found) {
       return {
@@ -2200,7 +2275,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.32";
+  window.__fitmemoryScannerVersion = "1.25.33";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2237,7 +2312,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.32" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.33" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

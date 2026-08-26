@@ -619,7 +619,7 @@ export function ProfileScreen() {
       </Card>
       <View style={styles.footerBrand}>
         <Brand compact />
-        <Text style={styles.version}>Mobil · 1.25.32</Text>
+        <Text style={styles.version}>Mobil · 1.25.33</Text>
       </View>
     </ScrollView>
   );

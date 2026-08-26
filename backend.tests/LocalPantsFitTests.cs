@@ -7,7 +7,7 @@ namespace FitMemory.Api.Tests;
 public sealed class LocalPantsFitTests
 {
     [Fact]
-    public void Waist85PicksEu42WhenOnlyNarrowRowIsMeasured()
+    public void IncompleteJeanChartDoesNotInventEu42FromWaist()
     {
         var result = Analyze(
             chart: new SizeChartDto
@@ -17,12 +17,13 @@ public sealed class LocalPantsFitTests
                 Unit = "Centimeters",
                 Headers = ["Beden", "Bel"],
                 Rows = [new SizeChartRowDto { Cells = ["34", "36"] }],
-                RawText = "Beden 34 36 38 40 42 44 46 Bel 36"
+                RawText = "Beden 34 36 38 40 42 44 46 Bel 36",
+                SellingSizes = ["XXS", "XS", "S", "M", "L", "XL"]
             });
 
-        Assert.Equal("42", result.RecommendedSize);
-        Assert.DoesNotContain("Hedef", result.Explanation, StringComparison.Ordinal);
-        Assert.Equal("local-waist-label-estimate", result.DataSource);
+        Assert.Equal("Bilinmiyor", result.RecommendedSize);
+        Assert.Equal("local-insufficient", result.DataSource);
+        Assert.DoesNotContain("42", result.Verdict, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -81,8 +82,38 @@ public sealed class LocalPantsFitTests
             orders: [previous],
             profile: profile);
 
-        Assert.Equal("42", result.RecommendedSize);
+        Assert.Equal("Bilinmiyor", result.RecommendedSize);
         Assert.NotEqual("local-category-history", result.DataSource);
+    }
+
+    [Fact]
+    public void LetterPickerMapsNumericJsonRowsToClickableSize()
+    {
+        var result = Analyze(
+            chart: new SizeChartDto
+            {
+                Found = true,
+                Title = "Ürün ölçüleri",
+                Unit = "Centimeters",
+                Headers = ["Beden", "Bel"],
+                Rows =
+                [
+                    new SizeChartRowDto { Cells = ["36", "38"] },
+                    new SizeChartRowDto { Cells = ["38", "40"] },
+                    new SizeChartRowDto { Cells = ["40", "42"] },
+                    new SizeChartRowDto { Cells = ["42", "43"] },
+                    new SizeChartRowDto { Cells = ["44", "45"] },
+                    new SizeChartRowDto { Cells = ["46", "47"] }
+                ],
+                RawText = "",
+                SellingSizes = ["XXS", "XS", "S", "M", "L", "XL"]
+            });
+
+        Assert.Contains(
+            result.RecommendedSize,
+            new[] { "XS", "S", "M", "L" },
+            StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("42", result.RecommendedSize, StringComparison.Ordinal);
     }
 
     private static RecommendationResult Analyze(

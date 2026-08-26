@@ -32,13 +32,14 @@ export function emptyStyle() {
 }
 
 export function analyzeRecommendation(profile, orders, request) {
-  const candidates = parseCandidates(request.sizeChart);
+  const sizeChart = alignChart(request.sizeChart);
+  const candidates = parseCandidates(sizeChart);
   const chartSizes = [...new Set(candidates.map((item) => item.label))];
-  const textSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
-  let availableSizes = [...new Set([...chartSizes, ...textSizes])];
-  if (availableSizes.length === 0) {
-    availableSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
-  }
+  const selling = distinctSizes(sizeChart?.sellingSizes).filter(isLetterSize);
+  const textSizes = extractTextSizes(sizeChart?.rawText, request.product);
+  let availableSizes = selling.length >= 2
+    ? selling
+    : [...new Set(chartSizes.length ? chartSizes : textSizes)];
   if (availableSizes.length === 0) {
     return result("Bilinmiyor", 20,
       "Tabloda okunabilir beden etiketleri bulunamadı.",
@@ -65,22 +66,6 @@ export function analyzeRecommendation(profile, orders, request) {
       buildFitNotes(profile),
       comparisons,
       "local"
-    );
-  }
-
-  const bottom = estimateBottomLabelSize(profile, request.product, availableSizes);
-  if (bottom) {
-    return result(
-      applyMerchantSizeShift(bottom.selectedSize, request.product, availableSizes),
-      bottom.confidence,
-      `${bottom.selectedSize}, bel ölçüne göre en tutarlı beden.`,
-      `${bottom.selectedSize} beden ${bottom.waistCm} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.`,
-      [
-        "Bel çevren ürün bel ölçüsüyle karşılaştırıldı.",
-        "Tüm bedenlerin milimini açmak sonucu güçlendirir."
-      ],
-      [{ label: "Bel", detail: `${bottom.waistCm} cm bel · ${bottom.targetEu} EU aralığı` }],
-      "local-waist-label-estimate"
     );
   }
 
@@ -138,7 +123,54 @@ function parseCandidates(chart) {
     }
     candidates.push({ label, measurements });
   }
+  const sellingLetters = distinctSizes(chart?.sellingSizes).filter(isLetterSize);
+  if (sellingLetters.length >= 2) {
+    const overlap = candidates.filter((item) => sellingLetters.includes(item.label));
+    if (overlap.length) return overlap;
+    if (candidates.length && candidates.every((item) => isEvenEuSize(item.label))) return [];
+  }
   return candidates;
+}
+
+function isLetterSize(value) {
+  return LETTER_ORDER.includes(String(value || "").toUpperCase());
+}
+
+function isEvenEuSize(value) {
+  const n = Number(String(value || "").replace(",", "."));
+  return n >= 32 && n <= 52 && n % 2 === 0;
+}
+
+function distinctSizes(values) {
+  return [...new Set((values || [])
+    .map((item) => String(item || "").trim().toUpperCase())
+    .filter(Boolean))];
+}
+
+function alignChart(chart) {
+  if (!chart) return chart;
+  const letters = distinctSizes(chart.sellingSizes).filter(isLetterSize)
+    .sort((a, b) => LETTER_ORDER.indexOf(a) - LETTER_ORDER.indexOf(b));
+  const rows = chart.rows || [];
+  if (letters.length < 2) {
+    return { ...chart, sellingSizes: distinctSizes(chart.sellingSizes) };
+  }
+  const letterRows = rows.filter((row) => isLetterSize(row.cells?.[0]));
+  if (letterRows.length >= 2) {
+    return { ...chart, rows: letterRows, sellingSizes: letters };
+  }
+  const numericRows = rows.filter((row) => isEvenEuSize(row.cells?.[0]))
+    .sort((a, b) => Number(a.cells[0]) - Number(b.cells[0]));
+  if (numericRows.length === letters.length) {
+    return {
+      ...chart,
+      sellingSizes: letters,
+      rows: numericRows.map((row, index) => ({
+        cells: [letters[index], ...(row.cells || []).slice(1)]
+      }))
+    };
+  }
+  return { ...chart, sellingSizes: letters };
 }
 
 function findSizeIndex(headers) {
@@ -233,54 +265,22 @@ function normalizeSizeLabel(value) {
 
 function extractTextSizes(rawText, product) {
   const text = String(rawText || "").toUpperCase();
+  const letters = [...new Set(text.match(/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/g) || [])];
+  if (letters.length >= 2) {
+    return letters;
+  }
   if (isBottomProduct(product)) {
     const jeans = [...new Set(text.match(/\b(?:3[02468]|4[02468]|5[02])\b/g) || [])];
     if (jeans.length >= 2) {
       return jeans;
     }
   }
-  return [...new Set(text.match(/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/g) || [])];
+  return letters;
 }
 
 function isBottomProduct(product) {
   const value = `${product?.category || ""} ${product?.name || ""} ${product?.fitLabel || ""}`.toLowerCase();
   return /pantolon|pantalon|jean|denim|\bşort\b|\bsort\b|shorts|etek|skirt|chino|cargo/.test(value);
-}
-
-function evenEuFromWaist(waistCm) {
-  const raw = Math.round(Number(waistCm) / 2);
-  if (!Number.isFinite(raw) || raw < 32 || raw > 52) {
-    return null;
-  }
-  return raw % 2 === 0 ? raw : raw - 1;
-}
-
-function estimateBottomLabelSize(profile, product, availableSizes) {
-  if (!isBottomProduct(product) || !profile?.waistCircumferenceCm) {
-    return null;
-  }
-  const target = evenEuFromWaist(profile.waistCircumferenceCm);
-  if (!target) {
-    return null;
-  }
-  const numeric = availableSizes
-    .map((label) => ({
-      label: String(label).toUpperCase(),
-      value: Number(String(label).replace(",", "."))
-    }))
-    .filter((item) => item.value >= 32 && item.value <= 52 && item.value % 2 === 0);
-  if (numeric.length === 0) {
-    return null;
-  }
-  numeric.sort((left, right) =>
-    Math.abs(left.value - target) - Math.abs(right.value - target) || left.value - right.value);
-  const selected = numeric[0];
-  return {
-    selectedSize: selected.label,
-    confidence: 64,
-    targetEu: target,
-    waistCm: Number(profile.waistCircumferenceCm)
-  };
 }
 
 function buildTargets(profile, orders, product) {

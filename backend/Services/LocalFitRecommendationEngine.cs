@@ -38,12 +38,9 @@ public sealed partial class LocalFitRecommendationEngine(
         IReadOnlyList<OrderHistoryItem> orders,
         AnalyzeRecommendationRequest request)
     {
-        var candidates = ParseCandidates(request.SizeChart);
-        var availableSizes = candidates
-            .Select(candidate => candidate.Label)
-            .Concat(ExtractTextSizes(request.SizeChart.RawText, request.Product))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var chart = SizeChartAligner.Align(request.SizeChart);
+        var candidates = ParseCandidates(chart);
+        var availableSizes = GetAvailableSizes(chart, request.Product).ToArray();
 
         if (availableSizes.Length == 0)
         {
@@ -122,34 +119,6 @@ public sealed partial class LocalFitRecommendationEngine(
                     "local-personal-boundary");
             }
 
-            var bottomEstimate = EstimateBottomLabelSize(
-                profile,
-                request.Product,
-                availableSizes);
-            if (bottomEstimate is not null)
-            {
-                return new RecommendationResult(
-                    ApplyMerchantSizeShift(
-                        bottomEstimate.SelectedSize,
-                        request.Product,
-                        availableSizes),
-                    bottomEstimate.Confidence,
-                    $"{bottomEstimate.SelectedSize}, bel ölçüne göre en tutarlı beden.",
-                    $"{bottomEstimate.SelectedSize} beden {bottomEstimate.WaistCm:0.#} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.",
-                    [
-                        "Bel çevren ürün bel ölçüsüyle karşılaştırıldı.",
-                        "Tüm bedenlerin milimini açmak sonucu güçlendirir."
-                    ],
-                    [
-                        new ComparisonDto(
-                            "Bel",
-                            $"{bottomEstimate.WaistCm:0.#} cm bel · {bottomEstimate.TargetEu} EU aralığı")
-                    ],
-                    BuildEvidenceSummary(relevantOrders),
-                    "local-waist-label-estimate");
-            }
-
-
             return new RecommendationResult(
                 "Bilinmiyor",
                 0,
@@ -201,6 +170,17 @@ public sealed partial class LocalFitRecommendationEngine(
         SizeChartDto chart,
         ProductDto? product = null)
     {
+        chart = SizeChartAligner.Align(chart);
+        if (chart.SellingSizes.Count >= 2)
+        {
+            var selling = chart.SellingSizes
+                .Select(NormalizeSizeLabel)
+                .Where(label => label.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (selling.Length >= 2) return selling;
+        }
+
         var structured = ParseCandidates(chart)
             .Select(candidate => candidate.Label)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -216,7 +196,7 @@ public sealed partial class LocalFitRecommendationEngine(
         ProductDto product,
         string size)
     {
-        var candidate = ParseCandidates(chart)
+        var candidate = ParseCandidates(SizeChartAligner.Align(chart))
             .FirstOrDefault(item => item.Label.Equals(
                 size,
                 StringComparison.OrdinalIgnoreCase));
@@ -229,6 +209,7 @@ public sealed partial class LocalFitRecommendationEngine(
 
     private static IReadOnlyList<ChartCandidate> ParseCandidates(SizeChartDto chart)
     {
+        chart = SizeChartAligner.Align(chart);
         if (chart.Headers.Count == 0 || chart.Rows.Count == 0)
         {
             return [];
@@ -276,6 +257,32 @@ public sealed partial class LocalFitRecommendationEngine(
             }
 
             candidates.Add(new ChartCandidate(label, measurements));
+        }
+
+        return FilterToSellingSizes(candidates, chart);
+    }
+
+    private static IReadOnlyList<ChartCandidate> FilterToSellingSizes(
+        List<ChartCandidate> candidates,
+        SizeChartDto chart)
+    {
+        var sellingLetters = chart.SellingSizes
+            .Select(NormalizeSizeLabel)
+            .Where(SizeChartAligner.IsLetter)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sellingLetters.Length < 2) return candidates;
+
+        var overlap = candidates
+            .Where(candidate => sellingLetters.Contains(
+                candidate.Label,
+                StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        if (overlap.Length > 0) return overlap;
+        if (candidates.Count > 0 &&
+            candidates.All(candidate => SizeChartAligner.IsEvenEu(candidate.Label)))
+        {
+            return [];
         }
 
         return candidates;
@@ -1113,47 +1120,6 @@ public sealed partial class LocalFitRecommendationEngine(
                value.Contains("cargo", StringComparison.Ordinal);
     }
 
-    private static BottomSizeEstimate? EstimateBottomLabelSize(
-        UserProfile profile,
-        ProductDto product,
-        IReadOnlyList<string> availableSizes)
-    {
-        if (!IsBottomProduct(product) || profile.WaistCircumferenceCm <= 0)
-        {
-            return null;
-        }
-
-        var raw = (int)Math.Round((double)profile.WaistCircumferenceCm / 2);
-        if (raw is < 32 or > 52)
-        {
-            return null;
-        }
-
-        var targetEu = raw % 2 == 0 ? raw : raw - 1;
-        var numeric = availableSizes
-            .Select(size => new
-            {
-                Label = size.Trim().ToUpperInvariant(),
-                Parsed = int.TryParse(size.Trim(), out var value) ? value : (int?)null
-            })
-            .Where(item => item.Parsed is >= 32 and <= 52 && item.Parsed % 2 == 0)
-            .ToArray();
-        if (numeric.Length == 0)
-        {
-            return null;
-        }
-
-        var selected = numeric
-            .OrderBy(item => Math.Abs(item.Parsed!.Value - targetEu))
-            .ThenBy(item => item.Parsed)
-            .First();
-        return new BottomSizeEstimate(
-            selected.Label,
-            targetEu,
-            (double)profile.WaistCircumferenceCm,
-            64);
-    }
-
     private bool HasConfirmedNegativeSizeBoundary(OrderHistoryItem order)
     {
         return order.Outcome.IsNegativeFitFeedback() ||
@@ -1716,6 +1682,17 @@ public sealed partial class LocalFitRecommendationEngine(
         string rawText,
         ProductDto? product = null)
     {
+        var letterSizes = TextSizeRegex()
+            .Matches(rawText)
+            .Select(match => match.Value.ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToArray();
+        if (letterSizes.Length >= 2)
+        {
+            return letterSizes;
+        }
+
         if (product is not null && IsBottomProduct(product))
         {
             var jeanSizes = JeanSizeRegex()
@@ -1730,12 +1707,6 @@ public sealed partial class LocalFitRecommendationEngine(
             }
         }
 
-        var letterSizes = TextSizeRegex()
-            .Matches(rawText)
-            .Select(match => match.Value.ToUpperInvariant())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(12)
-            .ToArray();
         if (letterSizes.Length > 0 ||
             product is null ||
             !IsFootwearProduct(product))
@@ -1791,12 +1762,6 @@ public sealed partial class LocalFitRecommendationEngine(
         double ChestCm,
         double RangeLow,
         double RangeHigh,
-        int Confidence);
-
-    private sealed record BottomSizeEstimate(
-        string SelectedSize,
-        int TargetEu,
-        double WaistCm,
         int Confidence);
 
     private sealed record ModelReferenceEstimate(

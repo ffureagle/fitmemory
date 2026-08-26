@@ -34,11 +34,10 @@ export function emptyStyle() {
 export function analyzeRecommendation(profile, orders, request) {
   const candidates = parseCandidates(request.sizeChart);
   const chartSizes = [...new Set(candidates.map((item) => item.label))];
+  const selling = [...new Set((request.sizeChart?.sellingSizes || []).map((item) => String(item || "").trim().toUpperCase()).filter(Boolean))];
+  const letterSelling = selling.filter((item) => ["XXXS","XXS","XS","S","M","L","XL","XXL","XXXL"].includes(item));
   const textSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
-  let availableSizes = [...new Set([...chartSizes, ...textSizes])];
-  if (availableSizes.length === 0) {
-    availableSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
-  }
+  let availableSizes = letterSelling.length >= 2 ? letterSelling : [...new Set(chartSizes.length ? chartSizes : textSizes)];
   if (availableSizes.length === 0) {
     return result("Bilinmiyor", 20,
       "Tabloda okunabilir beden etiketleri bulunamadı.",
@@ -65,22 +64,6 @@ export function analyzeRecommendation(profile, orders, request) {
       buildFitNotes(profile),
       comparisons,
       "local"
-    );
-  }
-
-  const bottom = estimateBottomLabelSize(profile, request.product, availableSizes);
-  if (bottom) {
-    return result(
-      applyMerchantSizeShift(bottom.selectedSize, request.product, availableSizes),
-      bottom.confidence,
-      `${bottom.selectedSize}, bel ölçüne göre en tutarlı beden.`,
-      `${bottom.selectedSize} beden ${bottom.waistCm} cm belinle bu kesimde örtüşür. Okunan daha dar beden bele oturmadığı için elendi.`,
-      [
-        "Bel çevren ürün bel ölçüsüyle karşılaştırıldı.",
-        "Tüm bedenlerin milimini açmak sonucu güçlendirir."
-      ],
-      [{ label: "Bel", detail: `${bottom.waistCm} cm bel · ${bottom.targetEu} EU aralığı` }],
-      "local-waist-label-estimate"
     );
   }
 
@@ -233,54 +216,22 @@ function normalizeSizeLabel(value) {
 
 function extractTextSizes(rawText, product) {
   const text = String(rawText || "").toUpperCase();
+  const letters = [...new Set(text.match(/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/g) || [])];
+  if (letters.length >= 2) {
+    return letters;
+  }
   if (isBottomProduct(product)) {
     const jeans = [...new Set(text.match(/\b(?:3[02468]|4[02468]|5[02])\b/g) || [])];
     if (jeans.length >= 2) {
       return jeans;
     }
   }
-  return [...new Set(text.match(/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b/g) || [])];
+  return letters;
 }
 
 function isBottomProduct(product) {
   const value = `${product?.category || ""} ${product?.name || ""} ${product?.fitLabel || ""}`.toLowerCase();
   return /pantolon|pantalon|jean|denim|\bşort\b|\bsort\b|shorts|etek|skirt|chino|cargo/.test(value);
-}
-
-function evenEuFromWaist(waistCm) {
-  const raw = Math.round(Number(waistCm) / 2);
-  if (!Number.isFinite(raw) || raw < 32 || raw > 52) {
-    return null;
-  }
-  return raw % 2 === 0 ? raw : raw - 1;
-}
-
-function estimateBottomLabelSize(profile, product, availableSizes) {
-  if (!isBottomProduct(product) || !profile?.waistCircumferenceCm) {
-    return null;
-  }
-  const target = evenEuFromWaist(profile.waistCircumferenceCm);
-  if (!target) {
-    return null;
-  }
-  const numeric = availableSizes
-    .map((label) => ({
-      label: String(label).toUpperCase(),
-      value: Number(String(label).replace(",", "."))
-    }))
-    .filter((item) => item.value >= 32 && item.value <= 52 && item.value % 2 === 0);
-  if (numeric.length === 0) {
-    return null;
-  }
-  numeric.sort((left, right) =>
-    Math.abs(left.value - target) - Math.abs(right.value - target) || left.value - right.value);
-  const selected = numeric[0];
-  return {
-    selectedSize: selected.label,
-    confidence: 64,
-    targetEu: target,
-    waistCm: Number(profile.waistCircumferenceCm)
-  };
 }
 
 function buildTargets(profile, orders, product) {

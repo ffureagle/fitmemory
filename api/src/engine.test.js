@@ -93,7 +93,7 @@ test("uses a shoulder circumference profile against garment shoulder width", () 
   assert.equal(result.recommendedSize, "L");
 });
 
-test("picks EU 42 for an 85 cm waist jean when only a narrow row is measured", () => {
+test("does not invent EU 42 from waist when the jean chart is incomplete", () => {
   const jean = {
     name: "Straight jean",
     brand: "Pull&Bear",
@@ -108,11 +108,11 @@ test("picks EU 42 for an 85 cm waist jean when only a narrow row is measured", (
       unit: "Centimeters",
       headers: ["Beden", "Bel"],
       rows: [{ cells: ["34", "36"] }],
-      rawText: "Beden 34 36 38 40 42 44 46 Bel 36"
+      rawText: "Beden 34 36 38 40 42 44 46 Bel 36",
+      sellingSizes: ["XXS", "XS", "S", "M", "L", "XL"]
     }
   });
-  assert.equal(result.recommendedSize, "42");
-  assert.equal(/Hedef\s+\d/.test(result.explanation), false);
+  assert.equal(result.recommendedSize, "Bilinmiyor");
 });
 
 test("reads an omuz çevresi column as circumference", () => {

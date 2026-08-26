@@ -312,8 +312,10 @@ public sealed class OpenAiRecommendationClient(
             -1.07 Sayfadaki mağaza uyarılarını oku (merchantFitAdvice, FitEvidence): "büyük beden / bir beden küçük al",
                   "runs large", "runs small". Ürün ölçüleri varsa bunu komşu beden kaydırması olarak uygula.
                   Ölçü yoksa beden uydurma.
-            -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden veya göğüs çevresinden
-                  beden uydurma. recommendedSize "Bilinmiyor" kalsın; kullanıcıya ölçü tablosunu açmasını söyle.
+            -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden, bel çevresinden veya EU 40/42 uydurmasından
+                  beden yazma. Sayfa XXS-XL satıyorsa recommendedSize 42 olamaz. Ölçü yoksa "Bilinmiyor" kalsın.
+            -1.12 availableSizes sayfadaki satış bedenleridir. Harf listesi (XXS, XS, S, M, L, XL) varken
+                  36/38/40/42 numarası uydurma; listedeki yazımı birebir döndür.
             -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Loose Fit,
                   Baggy, Super Baggy, Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
                   pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,

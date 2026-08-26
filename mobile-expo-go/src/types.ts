@@ -64,6 +64,7 @@ export type SizeChart = {
   headers: string[];
   rows: { cells: string[] }[];
   rawText: string;
+  sellingSizes?: string[];
 };
 
 export type ProductSnapshot = {
