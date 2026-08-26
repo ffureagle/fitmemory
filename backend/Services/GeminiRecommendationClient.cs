@@ -385,10 +385,9 @@ public sealed class GeminiRecommendationClient(
             -1.07 Sayfadaki mağaza uyarılarını oku (merchantFitAdvice, FitEvidence): "büyük beden / bir beden küçük al",
                   "runs large", "runs small". Ürün ölçüleri varsa bunu komşu beden kaydırması olarak uygula.
                   Ölçü yoksa beden uydurma.
-            -1.08 SizeChart satırlarında giysi milimi yoksa asla XS-XXL etiketinden, bel çevresinden veya EU 40/42 uydurmasından
-                  beden yazma. Sayfa XXS-XL satıyorsa recommendedSize 42 olamaz. Ölçü yoksa "Bilinmiyor" kalsın.
-            -1.12 availableSizes sayfadaki satış bedenleridir. Harf listesi (XXS, XS, S, M, L, XL) varken
-                  36/38/40/42 numarası uydurma; listedeki yazımı birebir döndür.
+            -1.08 SizeChart satırlarında giysi milimi yoksa beden uydurma. recommendedSize "Bilinmiyor" kalsın.
+            -1.12 availableSizes bu ürünün sayfada satılan bedenleridir (harf veya numara). recommendedSize
+                  yalnız bu listedeki yazımla döner. Liste XXS-XL ise 42 yazma; liste 38-46 ise M yazma.
             -1.06 Yerel motor yalnız sayısal taslak üretir. Sen ürün başlığındaki kalıbı (Loose Fit,
                   Baggy, Super Baggy, Slim, Boxy, Relaxed, Straight), kumaşın esnekliğini (elastan/elastane/spandex yüzdesi,
                   pamuk/polyester/keten rijitliği), modelin üzerindeki duruş kanıtını (FitEvidence,

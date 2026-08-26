@@ -1167,10 +1167,6 @@ const scannerBootstrap = String.raw`
   };
   const letterSizeOrder = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
   const isLetterSize = (value) => letterSizeOrder.indexOf(String(value || "").toUpperCase()) >= 0;
-  const isEvenEuSize = (value) => {
-    const n = Number(String(value || "").replace(",", "."));
-    return n >= 32 && n <= 52 && n % 2 === 0;
-  };
   const sizeFromNode = (node) => {
     if (!node || typeof node !== "object") return "";
     const fields = [
@@ -1278,6 +1274,13 @@ const scannerBootstrap = String.raw`
     }
     return unique;
   };
+  const sizeRank = (value) => {
+    const letter = letterSizeOrder.indexOf(String(value || "").toUpperCase());
+    if (letter >= 0) return letter;
+    const n = Number(String(value || "").replace(",", "."));
+    if (Number.isFinite(n)) return 100 + n;
+    return 1000;
+  };
   const rebuildChartText = (chart) => {
     const headers = chart.headers || [];
     const rows = chart.rows || [];
@@ -1287,29 +1290,26 @@ const scannerBootstrap = String.raw`
   };
   const alignChartToSelling = (chart, selling) => {
     if (!chart || !chart.rows) return chart;
-    const letters = [];
+    const unique = [];
     for (let i = 0; i < selling.length; i += 1) {
-      if (!isLetterSize(selling[i])) continue;
-      if (letters.indexOf(selling[i]) === -1) letters.push(selling[i]);
+      if (selling[i] && unique.indexOf(selling[i]) === -1) unique.push(selling[i]);
     }
-    letters.sort((a, b) => letterSizeOrder.indexOf(a) - letterSizeOrder.indexOf(b));
-    if (letters.length < 2) {
-      return Object.assign({}, chart, { sellingSizes: selling.slice() });
+    if (unique.length < 2) {
+      return Object.assign({}, chart, { sellingSizes: unique.slice() });
     }
-    const letterRows = chart.rows.filter((row) => isLetterSize(row.cells && row.cells[0]));
-    if (letterRows.length >= 2) {
-      return rebuildChartText(Object.assign({}, chart, { rows: letterRows, sellingSizes: letters }));
+    const overlap = chart.rows.filter((row) => unique.indexOf(row.cells && row.cells[0]) >= 0);
+    if (overlap.length >= 2) {
+      return rebuildChartText(Object.assign({}, chart, { rows: overlap, sellingSizes: unique }));
     }
-    const numericRows = chart.rows.filter((row) => isEvenEuSize(row.cells && row.cells[0]))
-      .slice()
-      .sort((a, b) => Number(a.cells[0]) - Number(b.cells[0]));
-    if (numericRows.length === letters.length) {
-      const rows = numericRows.map((row, index) => ({
-        cells: [letters[index]].concat(row.cells.slice(1))
+    if (chart.rows.length === unique.length) {
+      const orderedSelling = unique.slice().sort((a, b) => sizeRank(a) - sizeRank(b));
+      const orderedRows = chart.rows.slice().sort((a, b) => sizeRank(a.cells && a.cells[0]) - sizeRank(b.cells && b.cells[0]));
+      const rows = orderedRows.map((row, index) => ({
+        cells: [orderedSelling[index]].concat(row.cells.slice(1))
       }));
-      return rebuildChartText(Object.assign({}, chart, { rows: rows, sellingSizes: letters }));
+      return rebuildChartText(Object.assign({}, chart, { rows: rows, sellingSizes: orderedSelling }));
     }
-    return Object.assign({}, chart, { sellingSizes: letters });
+    return Object.assign({}, chart, { sellingSizes: unique });
   };
   const finalizeChart = (chart) => {
     if (!chart || !chart.found) return chart;
@@ -2275,7 +2275,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.33";
+  window.__fitmemoryScannerVersion = "1.25.34";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2312,7 +2312,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.33" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.34" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

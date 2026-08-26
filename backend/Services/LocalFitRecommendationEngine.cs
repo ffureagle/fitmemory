@@ -266,26 +266,19 @@ public sealed partial class LocalFitRecommendationEngine(
         List<ChartCandidate> candidates,
         SizeChartDto chart)
     {
-        var sellingLetters = chart.SellingSizes
+        var selling = chart.SellingSizes
             .Select(NormalizeSizeLabel)
-            .Where(SizeChartAligner.IsLetter)
+            .Where(label => label.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (sellingLetters.Length < 2) return candidates;
+        if (selling.Length < 2) return candidates;
 
         var overlap = candidates
-            .Where(candidate => sellingLetters.Contains(
+            .Where(candidate => selling.Contains(
                 candidate.Label,
                 StringComparer.OrdinalIgnoreCase))
             .ToArray();
-        if (overlap.Length > 0) return overlap;
-        if (candidates.Count > 0 &&
-            candidates.All(candidate => SizeChartAligner.IsEvenEu(candidate.Label)))
-        {
-            return [];
-        }
-
-        return candidates;
+        return overlap.Length > 0 ? overlap : [];
     }
 
     private static int FindSizeIndex(IReadOnlyList<string> headers)

@@ -35,7 +35,7 @@ export function analyzeRecommendation(profile, orders, request) {
   const sizeChart = alignChart(request.sizeChart);
   const candidates = parseCandidates(sizeChart);
   const chartSizes = [...new Set(candidates.map((item) => item.label))];
-  const selling = distinctSizes(sizeChart?.sellingSizes).filter(isLetterSize);
+  const selling = distinctSizes(sizeChart?.sellingSizes);
   const textSizes = extractTextSizes(sizeChart?.rawText, request.product);
   let availableSizes = selling.length >= 2
     ? selling
@@ -123,22 +123,12 @@ function parseCandidates(chart) {
     }
     candidates.push({ label, measurements });
   }
-  const sellingLetters = distinctSizes(chart?.sellingSizes).filter(isLetterSize);
+  const sellingLetters = distinctSizes(chart?.sellingSizes);
   if (sellingLetters.length >= 2) {
     const overlap = candidates.filter((item) => sellingLetters.includes(item.label));
-    if (overlap.length) return overlap;
-    if (candidates.length && candidates.every((item) => isEvenEuSize(item.label))) return [];
+    return overlap.length ? overlap : [];
   }
   return candidates;
-}
-
-function isLetterSize(value) {
-  return LETTER_ORDER.includes(String(value || "").toUpperCase());
-}
-
-function isEvenEuSize(value) {
-  const n = Number(String(value || "").replace(",", "."));
-  return n >= 32 && n <= 52 && n % 2 === 0;
 }
 
 function distinctSizes(values) {
@@ -149,28 +139,34 @@ function distinctSizes(values) {
 
 function alignChart(chart) {
   if (!chart) return chart;
-  const letters = distinctSizes(chart.sellingSizes).filter(isLetterSize)
-    .sort((a, b) => LETTER_ORDER.indexOf(a) - LETTER_ORDER.indexOf(b));
+  const selling = distinctSizes(chart.sellingSizes);
   const rows = chart.rows || [];
-  if (letters.length < 2) {
-    return { ...chart, sellingSizes: distinctSizes(chart.sellingSizes) };
+  if (selling.length < 2) {
+    return { ...chart, sellingSizes: selling };
   }
-  const letterRows = rows.filter((row) => isLetterSize(row.cells?.[0]));
-  if (letterRows.length >= 2) {
-    return { ...chart, rows: letterRows, sellingSizes: letters };
+  const overlap = rows.filter((row) => selling.includes(String(row.cells?.[0] || "").toUpperCase()));
+  if (overlap.length >= 2) {
+    return { ...chart, rows: overlap, sellingSizes: selling };
   }
-  const numericRows = rows.filter((row) => isEvenEuSize(row.cells?.[0]))
-    .sort((a, b) => Number(a.cells[0]) - Number(b.cells[0]));
-  if (numericRows.length === letters.length) {
+  if (rows.length === selling.length) {
+    const orderedSelling = selling.slice().sort((a, b) => sizeRank(a) - sizeRank(b));
+    const orderedRows = rows.slice().sort((a, b) => sizeRank(a.cells?.[0]) - sizeRank(b.cells?.[0]));
     return {
       ...chart,
-      sellingSizes: letters,
-      rows: numericRows.map((row, index) => ({
-        cells: [letters[index], ...(row.cells || []).slice(1)]
+      sellingSizes: orderedSelling,
+      rows: orderedRows.map((row, index) => ({
+        cells: [orderedSelling[index], ...(row.cells || []).slice(1)]
       }))
     };
   }
-  return { ...chart, sellingSizes: letters };
+  return { ...chart, sellingSizes: selling };
+}
+
+function sizeRank(value) {
+  const letter = LETTER_ORDER.indexOf(String(value || "").toUpperCase());
+  if (letter >= 0) return letter;
+  const n = Number(String(value || "").replace(",", "."));
+  return Number.isFinite(n) ? 100 + n : 1000;
 }
 
 function findSizeIndex(headers) {

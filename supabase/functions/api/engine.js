@@ -35,9 +35,8 @@ export function analyzeRecommendation(profile, orders, request) {
   const candidates = parseCandidates(request.sizeChart);
   const chartSizes = [...new Set(candidates.map((item) => item.label))];
   const selling = [...new Set((request.sizeChart?.sellingSizes || []).map((item) => String(item || "").trim().toUpperCase()).filter(Boolean))];
-  const letterSelling = selling.filter((item) => ["XXXS","XXS","XS","S","M","L","XL","XXL","XXXL"].includes(item));
   const textSizes = extractTextSizes(request.sizeChart?.rawText, request.product);
-  let availableSizes = letterSelling.length >= 2 ? letterSelling : [...new Set(chartSizes.length ? chartSizes : textSizes)];
+  let availableSizes = selling.length >= 2 ? selling : [...new Set(chartSizes.length ? chartSizes : textSizes)];
   if (availableSizes.length === 0) {
     return result("Bilinmiyor", 20,
       "Tabloda okunabilir beden etiketleri bulunamadı.",

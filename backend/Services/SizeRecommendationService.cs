@@ -185,11 +185,13 @@ public sealed class SizeRecommendationService(
                 : excludedFitCount > 0
                     ? $"Kalıp koruması aktif: {activeFit.Label}; {excludedFitCount} farklı fit kaydı beden sınırının dışında bırakıldı."
                     : $"Kalıp koruması aktif: beden kanıtı {activeFit.Label} ailesi içinde değerlendirildi.";
-        return familyResult with
-        {
-            EvidenceSummary =
-                $"{categoryLabel} · {activeFit.Label} · {fitScopeNote} · {familyResult.EvidenceSummary}"
-        };
+        return SoldSizePolicy.Apply(
+            familyResult with
+            {
+                EvidenceSummary =
+                    $"{categoryLabel} · {activeFit.Label} · {fitScopeNote} · {familyResult.EvidenceSummary}"
+            },
+            localEngine.GetAvailableSizes(request.SizeChart, request.Product));
     }
 
     private RecommendationResult AttachWardrobeSupportEvidence(
