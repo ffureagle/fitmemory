@@ -1,3 +1,11 @@
+databases:
+  - name: fitmemory-db
+    plan: free
+    region: frankfurt
+    databaseName: fitmemory
+    user: fitmemory
+    postgresMajorVersion: "17"
+
 services:
   - type: web
     name: fitmemory-api
@@ -14,16 +22,10 @@ services:
         value: http://0.0.0.0:10000
       - key: DB_PROVIDER
         value: postgres
-      - key: POSTGRES_HOST
-        value: aws-0-eu-central-1.pooler.supabase.com
-      - key: POSTGRES_PORT
-        value: "5432"
-      - key: POSTGRES_DATABASE
-        value: postgres
-      - key: POSTGRES_USERNAME
-        value: postgres.lwjynpkzpwzhofcgvzti
-      - key: POSTGRES_PASSWORD
-        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fitmemory-db
+          property: connectionString
       - key: APP_ORIGINS
         value: https://mfurkangokbag.com.tr,https://www.mfurkangokbag.com.tr
       - key: AI_PROVIDER

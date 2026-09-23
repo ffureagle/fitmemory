@@ -132,21 +132,23 @@ public static class DatabaseSchemaUpgrader
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
+            DROP INDEX IF EXISTS "IX_OrderHistoryItems_UserProfileId_ImportFingerprint";
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_OrderHistoryItems_UserProfileId_ImportFingerprint"
-            ON "OrderHistoryItems" ("UserProfileId", "ImportFingerprint");
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            ON "OrderHistoryItems" ("UserProfileId", "ImportFingerprint")
+            WHERE "ImportFingerprint" IS NOT NULL AND "ImportFingerprint" <> '';
+            """,
+            cancellationToken);
     }
 
     private static async Task CreateFavoriteOutfitsTableAsync(
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
             CREATE TABLE IF NOT EXISTS "FavoriteOutfits" (
                 "Id" INTEGER NOT NULL CONSTRAINT "PK_FavoriteOutfits" PRIMARY KEY AUTOINCREMENT,
@@ -160,8 +162,8 @@ public static class DatabaseSchemaUpgrader
             );
             CREATE INDEX IF NOT EXISTS "IX_FavoriteOutfits_UserProfileId_CreatedAt"
                 ON "FavoriteOutfits" ("UserProfileId", "CreatedAt");
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            """,
+            cancellationToken);
     }
 
     private static async Task CreateStyleBoardTableAsync(
@@ -206,23 +208,23 @@ public static class DatabaseSchemaUpgrader
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_StyleBoardItems_UserProfileId_ProductUrl"
                 ON "StyleBoardItems" ("UserProfileId", "ProductUrl");
             CREATE INDEX IF NOT EXISTS "IX_StyleBoardItems_UpdatedAt"
                 ON "StyleBoardItems" ("UpdatedAt");
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            """,
+            cancellationToken);
     }
 
     private static async Task CreateAccountTablesAsync(
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
             CREATE TABLE IF NOT EXISTS "UserAccounts" (
                 "Id" INTEGER NOT NULL CONSTRAINT "PK_UserAccounts" PRIMARY KEY AUTOINCREMENT,
@@ -249,16 +251,16 @@ public static class DatabaseSchemaUpgrader
                     REFERENCES "UserAccounts" ("Id")
                     ON DELETE CASCADE
             );
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            """,
+            cancellationToken);
     }
 
     private static async Task CreateAccountIndexesAsync(
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserAccounts_PublicId"
                 ON "UserAccounts" ("PublicId");
@@ -273,16 +275,16 @@ public static class DatabaseSchemaUpgrader
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserProfiles_UserAccountId"
                 ON "UserProfiles" ("UserAccountId")
                 WHERE "UserAccountId" IS NOT NULL;
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            """,
+            cancellationToken);
     }
 
     private static async Task MigrateLegacyReturnsAsync(
         System.Data.Common.DbConnection connection,
         CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.CommandText =
+        await ExecuteStatementsAsync(
+            connection,
             """
             UPDATE "OrderHistoryItems"
             SET "Outcome" = CASE
@@ -296,8 +298,8 @@ public static class DatabaseSchemaUpgrader
             UPDATE "OrderHistoryItems"
             SET "FitNotes" = NULL
             WHERE "FitNotes" LIKE 'Otomatik sipariş taraması%';
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            """,
+            cancellationToken);
     }
 
     private static async Task UpgradeTableAsync(
@@ -339,5 +341,25 @@ public static class DatabaseSchemaUpgrader
         }
 
         return columns;
+    }
+
+    /// <summary>
+    /// Microsoft.Data.Sqlite executes only the first statement in a command.
+    /// Schema batches must run one statement at a time.
+    /// </summary>
+    private static async Task ExecuteStatementsAsync(
+        System.Data.Common.DbConnection connection,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        foreach (var statement in sql.Split(
+                     ';',
+                     StringSplitOptions.RemoveEmptyEntries |
+                     StringSplitOptions.TrimEntries))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = statement;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 }

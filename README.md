@@ -132,11 +132,13 @@ geçmeyin.
 Ücretsiz Render örneği uykuya yatar; ilk istek 50 saniyeden uzun sürebilir.
 Kalıcı çözüm plan yükseltmektir. İstemciler önce `/health` ile uyandırır.
 
-`render.yaml` içindeki eski Supabase proje kimliği artık yok. Postgres
-yanıt vermezse API `/app/data/fitmemory.db` dosyasına yazar. Bu dosya
-ücretsiz örnek uyuyunca silinebilir; kalıcı dolap için canlı bir
-PostgreSQL adresi (`DATABASE_URL` veya `POSTGRES_HOST`) gerekir. Parolayı
-sohbete yapıştırmayın, Render Environment ekranına yazın.
+Üretim deposu Frankfurt’taki ücretsiz Render Postgres örneğidir
+(`fitmemory-db`). Blueprint senkronu bu örneği kurar ve özel ağ
+adresini `DATABASE_URL` olarak API’ye yazar. Parola dosyada durmaz.
+Ücretsiz veritabanı 30 gün sonra kapanır; plan yükseltilmezse Render
+14 günlük ek süreden sonra veriyi siler. Silinmiş Supabase projesi
+(`lwjynpkzpwzhofcgvzti`) açılışta denenmez. Telefon aynı e-posta ile
+girince yerel kasa profili ve dolabı geri yükler.
 
 Eski kırmızı **Exited with status 139** kartı 1 Ağustos sürümüdür.
 Onu yeniden başlatmayın ve Rollback yapmayın. Güncel imaj

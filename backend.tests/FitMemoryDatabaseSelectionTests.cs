@@ -51,6 +51,74 @@ public sealed class FitMemoryDatabaseSelectionTests
     }
 
     [Fact]
+    public void RetiredSupabaseProjectUsesSqliteWithoutProbe()
+    {
+        var probed = false;
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DB_PROVIDER"] = "postgres",
+                ["DATABASE_URL"] =
+                    "postgres://postgres.lwjynpkzpwzhofcgvzti:secret-value@aws-0-eu-central-1.pooler.supabase.com:5432/postgres",
+                ["SQLITE_PATH"] = "/tmp/fitmemory-retired.db"
+            })
+            .Build();
+
+        var options = FitMemoryDatabaseSelection.Resolve(
+            configuration,
+            _ =>
+            {
+                probed = true;
+                return "should not probe";
+            });
+
+        Assert.False(probed);
+        Assert.False(options.UsePostgreSql);
+        Assert.Null(options.FallbackReason);
+        Assert.Equal(
+            FitMemoryDatabaseSelection.RetiredSupabaseNotice,
+            options.Notice);
+        Assert.Equal("Data Source=/tmp/fitmemory-retired.db", options.ConnectionString);
+        Assert.DoesNotContain("secret-value", options.Notice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RenderPrivateNetworkUrlDoesNotRequireSsl()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DB_PROVIDER"] = "postgres",
+                ["DATABASE_URL"] =
+                    "postgresql://fitmemory:secret-value@dpg-fitmemory-a:5432/fitmemory"
+            })
+            .Build();
+
+        var options = FitMemoryDatabaseSelection.Resolve(configuration, _ => null);
+        var builder = new Npgsql.NpgsqlConnectionStringBuilder(options.ConnectionString);
+
+        Assert.True(options.UsePostgreSql);
+        Assert.Null(options.FallbackReason);
+        Assert.Equal("dpg-fitmemory-a", builder.Host);
+        Assert.Equal("fitmemory", builder.Database);
+        Assert.Equal("fitmemory", builder.Username);
+        Assert.Equal(Npgsql.SslMode.Disable, builder.SslMode);
+    }
+
+    [Fact]
+    public void PublicRenderUrlRequiresSsl()
+    {
+        var ok = FitMemoryDatabaseSelection.TryParseDatabaseUrl(
+            "postgresql://fitmemory:secret-value@dpg-fitmemory-a.frankfurt-postgres.render.com/fitmemory",
+            out var builder,
+            out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(Npgsql.SslMode.Require, builder.SslMode);
+    }
+
+    [Fact]
     public void KeepsPostgresWhenProbeSucceeds()
     {
         var configuration = new ConfigurationBuilder()

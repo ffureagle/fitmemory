@@ -115,7 +115,9 @@ public sealed class FitMemoryDbContext(DbContextOptions<FitMemoryDbContext> opti
         modelBuilder.Entity<OrderHistoryItem>(entity =>
         {
             entity.HasIndex(order => new { order.UserProfileId, order.ImportFingerprint })
-                .IsUnique();
+                .IsUnique()
+                .HasFilter(
+                    "\"ImportFingerprint\" IS NOT NULL AND \"ImportFingerprint\" <> ''");
             entity.HasIndex(order => order.ProductFamilyKey);
             entity.Property(order => order.Outcome).HasConversion<string>();
             entity.Property(order => order.ChestWidthCm).HasPrecision(6, 2);

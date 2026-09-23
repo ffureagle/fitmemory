@@ -6,10 +6,20 @@ namespace FitMemory.Api.Data;
 public sealed record FitMemoryDatabaseOptions(
     bool UsePostgreSql,
     string ConnectionString,
-    string? FallbackReason);
+    string? FallbackReason,
+    string? Notice = null);
 
 public static class FitMemoryDatabaseSelection
 {
+    /// <summary>
+    /// Supabase project deleted upstream. Every pooler answers
+    /// "tenant/user not found" before authentication, so probing it only
+    /// delays startup and marks the healthy SQLite store as a fallback.
+    /// </summary>
+    public const string RetiredSupabaseProjectRef = "lwjynpkzpwzhofcgvzti";
+
+    public const string RetiredSupabaseNotice =
+        "Configured Supabase project is retired; using the local SQLite store.";
     public static FitMemoryDatabaseOptions Resolve(
         IConfiguration configuration,
         Func<string, string?>? probePostgresError = null)
@@ -43,6 +53,15 @@ public static class FitMemoryDatabaseSelection
             return new FitMemoryDatabaseOptions(false, sqliteConnection, null);
         }
 
+        if (IsRetiredSupabaseConnection(postgresConnection))
+        {
+            return new FitMemoryDatabaseOptions(
+                false,
+                sqliteConnection,
+                null,
+                RetiredSupabaseNotice);
+        }
+
         var probe = probePostgresError ?? ProbePostgresError;
         var probeError = probe(postgresConnection);
         if (string.IsNullOrWhiteSpace(probeError))
@@ -54,6 +73,13 @@ public static class FitMemoryDatabaseSelection
             false,
             sqliteConnection,
             Sanitize(probeError));
+    }
+
+    public static bool IsRetiredSupabaseConnection(string connectionString)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        return ContainsRetiredRef(builder.Username) ||
+               ContainsRetiredRef(builder.Host);
     }
 
     public static string? ProbePostgresError(string connectionString)
@@ -184,13 +210,29 @@ public static class FitMemoryDatabaseSelection
 
     public static void ApplyPostgresHardening(NpgsqlConnectionStringBuilder builder)
     {
-        builder.SslMode = SslMode.Require;
+        // Render's private-network host has no dot (dpg-…). Requiring TLS
+        // there makes the probe fail and the API falls back to SQLite.
+        builder.SslMode = RequiresTls(builder.Host) ? SslMode.Require : SslMode.Disable;
         builder.Timeout = Math.Max(builder.Timeout, 30);
         builder.CommandTimeout = Math.Max(builder.CommandTimeout, 30);
         builder.MaxAutoPrepare = 0;
         builder["GSS Encryption Mode"] = "Disable";
         builder["Channel Binding"] = "Disable";
         builder["No Reset On Close"] = "true";
+    }
+
+    public static bool RequiresTls(string? host)
+    {
+        return !string.IsNullOrWhiteSpace(host) &&
+               host.Contains('.', StringComparison.Ordinal);
+    }
+
+    private static bool ContainsRetiredRef(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.Contains(
+                   RetiredSupabaseProjectRef,
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     public static string SqliteConnectionString(IConfiguration configuration)
