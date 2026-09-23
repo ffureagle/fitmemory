@@ -14,8 +14,6 @@ public sealed class StyleBoardAnalysisService(
     IOptions<OpenAiOptions> openAiOptions,
     ILogger<StyleBoardAnalysisService> logger)
 {
-    private const int MaxImages = 6;
-    private const int MaxImageBytes = 1_500_000;
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
 
@@ -175,178 +173,12 @@ public sealed class StyleBoardAnalysisService(
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = GeminiResponseReader.ExtractApiError(body);
-            throw new GeminiApiException(
-                response.StatusCode,
-                error.Code,
-                error.Message);
-        }
+        response.EnsureSuccessStatusCode();
         return JsonSerializer.Deserialize<AiStyleBoardResult>(
                    StripCodeFence(GeminiResponseReader.ExtractText(body)),
                    JsonOptions)
                ?? throw new InvalidOperationException(
                    "Gemini boş bir kombin değerlendirmesi döndürdü.");
-    }
-
-    private async Task<List<object>> BuildGeminiPartsAsync(
-        UserProfile profile,
-        IReadOnlyList<StyleBoardItem> items,
-        StyleBoardAnalysisResponse local,
-        string language,
-        string userRequest,
-        CancellationToken cancellationToken)
-    {
-        var parts = new List<object>();
-        var visualProductIds = new HashSet<int>();
-        foreach (var item in items)
-        {
-            parts.Add(new
-            {
-                text =
-                    $"SEÇİLİ PARÇA #{item.Id}: {item.Brand} | {item.ProductName} | " +
-                    $"kategori={item.Category} | kalıp={item.FitLabel} | " +
-                    $"materyal={item.MaterialSummary}"
-            });
-            if (visualProductIds.Count >= MaxImages)
-            {
-                continue;
-            }
-
-            var image = await TryReadImageAsync(
-                item.ImageUrl,
-                cancellationToken);
-            if (image is null)
-            {
-                continue;
-            }
-
-            visualProductIds.Add(item.Id);
-            parts.Add(new
-            {
-                inlineData = new
-                {
-                    mimeType = image.Value.MimeType,
-                    data = image.Value.Base64
-                }
-            });
-        }
-
-        parts.Add(new
-        {
-            text = BuildEvidence(
-                profile,
-                items,
-                local,
-                userRequest,
-                visualProductIds)
-        });
-        return parts;
-    }
-
-    private async Task<(string MimeType, string Base64)?> TryReadImageAsync(
-        string? value,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        try
-        {
-            if (value.StartsWith(
-                    "data:image/",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                var parsed = GeminiResponseReader.ParseImageDataUrl(value);
-                return (parsed.Data.Length * 3L) / 4L <= MaxImageBytes
-                    ? (parsed.MimeType, parsed.Data)
-                    : null;
-            }
-
-            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
-                uri.Scheme != Uri.UriSchemeHttps ||
-                !IsTrustedImageHost(uri.Host))
-            {
-                return null;
-            }
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            using var response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            var mimeType = response.Content.Headers.ContentType?.MediaType
-                ?.ToLowerInvariant();
-            if (mimeType is not (
-                    "image/jpeg" or
-                    "image/png" or
-                    "image/webp") ||
-                response.Content.Headers.ContentLength is > MaxImageBytes)
-            {
-                return null;
-            }
-
-            await using var input = await response.Content
-                .ReadAsStreamAsync(cancellationToken);
-            using var output = new MemoryStream();
-            var buffer = new byte[32_768];
-            while (true)
-            {
-                var read = await input.ReadAsync(buffer, cancellationToken);
-                if (read == 0)
-                {
-                    break;
-                }
-                if (output.Length + read > MaxImageBytes)
-                {
-                    return null;
-                }
-                output.Write(buffer, 0, read);
-            }
-
-            return output.Length == 0
-                ? null
-                : (mimeType, Convert.ToBase64String(output.ToArray()));
-        }
-        catch (Exception exception)
-            when (exception is not OperationCanceledException)
-        {
-            logger.LogDebug(
-                exception,
-                "Stüdyo ürün görseli AI isteğine eklenemedi.");
-            return null;
-        }
-    }
-
-    private static bool IsTrustedImageHost(string host)
-    {
-        var normalized = host.Trim('.').ToLowerInvariant();
-        string[] suffixes =
-        [
-            "zara.com",
-            "zara.net",
-            "pullandbear.com",
-            "pullandbear.net",
-            "bershka.com",
-            "bershka.net",
-            "inditex.com",
-            "cloudinary.com",
-            "googleusercontent.com",
-            "supabase.co"
-        ];
-        return suffixes.Any(suffix =>
-            normalized == suffix ||
-            normalized.EndsWith(
-                $".{suffix}",
-                StringComparison.Ordinal));
     }
 
     private async Task<AiStyleBoardResult> AnalyzeWithOpenAiAsync(
@@ -660,51 +492,6 @@ public sealed class StyleBoardAnalysisService(
             DateTimeOffset.UtcNow);
     }
 
-    private static StyleBoardAnalysisResponse BuildAiUnavailableFallback(
-        StyleBoardAnalysisResponse local,
-        IReadOnlyList<StyleBoardItem> items)
-    {
-        var pieceSummary = string.Join(
-            " · ",
-            items.Select(item =>
-                $"{item.ProductName} ({item.Category}, " +
-                $"{(string.IsNullOrWhiteSpace(item.FitLabel) ? "kalıp belirsiz" : item.FitLabel)})"));
-        var evidenceGaps = items
-            .Where(item =>
-                string.IsNullOrWhiteSpace(item.MaterialSummary) &&
-                string.IsNullOrWhiteSpace(item.MaterialEvidence))
-            .Select(item => item.ProductName)
-            .Take(2)
-            .ToArray();
-        var notes = local.Notes.ToList();
-        if (evidenceGaps.Length > 0)
-        {
-            notes.Add(
-                $"Kumaş kanıtı eksik: {string.Join(", ", evidenceGaps)}.");
-        }
-        notes.Add(
-            "Görsel AI yanıt vermediği için renk, desen ve parçaların gerçek oranı doğrulanamadı.");
-
-        var score = Math.Min(local.Score, 58);
-        return local with
-        {
-            Verdict = "Kanıt eksik",
-            Score = score,
-            Headline = "Kesim fikri okunuyor; görsel uyum henüz doğrulanmadı.",
-            Explanation =
-                $"Seçilen parçalar: {pieceSummary}. " +
-                "Kategori ve metin bilgisi temel bir katman sırası kuruyor; " +
-                "ancak renk, desen, kumaş ağırlığı ve üst-alt boy oranı " +
-                "görseller incelenmeden güçlü kabul edilemez.",
-            Notes = notes
-                .Where(note => !string.IsNullOrWhiteSpace(note))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(4)
-                .ToArray(),
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-    }
-
     private static StyleBoardAnalysisResponse Normalize(
         AiStyleBoardResult result,
         StyleBoardAnalysisResponse local)
@@ -774,8 +561,7 @@ public sealed class StyleBoardAnalysisService(
         UserProfile profile,
         IReadOnlyList<StyleBoardItem> items,
         StyleBoardAnalysisResponse local,
-        string userRequest,
-        IReadOnlySet<int>? visualProductIds = null)
+        string userRequest)
     {
         var evidence = new
         {
@@ -802,8 +588,7 @@ public sealed class StyleBoardAnalysisService(
                 item.MaterialSummary,
                 item.MaterialEvidence,
                 item.RecommendedSize,
-                item.RecommendationConfidence,
-                hasAttachedImage = visualProductIds?.Contains(item.Id) == true
+                item.RecommendationConfidence
             })
         };
         return JsonSerializer.Serialize(evidence, JsonOptions);
