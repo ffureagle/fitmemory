@@ -291,17 +291,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
             .saveProfile(
               currentAccount.userId,
               currentToken,
-              profileForServerSync({
-                age: pending.age,
-                heightCm: pending.heightCm,
-                weightKg: pending.weightKg,
-                shoulderWidthCm: pending.shoulderWidthCm,
-                chestCircumferenceCm: pending.chestCircumferenceCm,
-                waistCircumferenceCm: pending.waistCircumferenceCm,
-                footLengthCm: pending.footLengthCm,
-                usualShoeSizeEu: pending.usualShoeSizeEu,
-                fitPreference: pending.fitPreference,
-              }),
+              profileForServerSync(pending),
             )
             .then(async (saved) => {
               setProfile(saved);
@@ -609,17 +599,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     const saved = await api.saveProfile(
       account.userId,
       token,
-      profileForServerSync({
-        age: pending.age,
-        heightCm: pending.heightCm,
-        weightKg: pending.weightKg,
-        shoulderWidthCm: pending.shoulderWidthCm,
-        chestCircumferenceCm: pending.chestCircumferenceCm,
-        waistCircumferenceCm: pending.waistCircumferenceCm,
-        footLengthCm: pending.footLengthCm,
-        usualShoeSizeEu: pending.usualShoeSizeEu,
-        fitPreference: pending.fitPreference,
-      }),
+      profileForServerSync(pending),
     );
     setProfile(saved);
     await clearPendingProfile();

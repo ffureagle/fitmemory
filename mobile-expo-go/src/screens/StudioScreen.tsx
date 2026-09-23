@@ -63,6 +63,8 @@ export function StudioScreen() {
   const [error, setError] = useState("");
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const selectionVersions = useRef(new Map<number, number>());
+  const selectionGeneration = useRef(0);
+  const selectionQueue = useRef<Promise<void>>(Promise.resolve());
 
   const groups = useMemo(() => {
     const map = new Map<string, StyleBoardItem[]>();
@@ -88,6 +90,8 @@ export function StudioScreen() {
     const itemSlot = slot(item);
     const nextSelected = !item.isSelected;
     const version = (selectionVersions.current.get(item.id) ?? 0) + 1;
+    const generation = selectionGeneration.current + 1;
+    selectionGeneration.current = generation;
     selectionVersions.current.set(item.id, version);
     setAnalysis(null);
     session.updateStyleBoard(before.map((candidate) =>
@@ -97,22 +101,27 @@ export function StudioScreen() {
           ? { ...candidate, isSelected: false }
           : candidate,
     ));
-    try {
-      const updated = await session.api.selectStyleBoardItem(
+    const operation = selectionQueue.current.then(async () => {
+      await session.api.selectStyleBoardItem(
         item.id,
-        session.account.userId,
-        session.token,
+        session.account!.userId,
+        session.token!,
         nextSelected,
       );
-      if (selectionVersions.current.get(item.id) === version) {
-        session.updateStyleBoard(before.map((candidate) =>
-          candidate.id === item.id
-            ? { ...candidate, isSelected: updated.isSelected }
-            : nextSelected && updated.isSelected && slot(candidate) === itemSlot
-              ? { ...candidate, isSelected: false }
-              : candidate,
-        ));
+      const authoritative = await session.api.getStyleBoard(
+        session.account!.userId,
+        session.token!,
+      );
+      if (
+        selectionVersions.current.get(item.id) === version &&
+        selectionGeneration.current === generation
+      ) {
+        session.updateStyleBoard(authoritative);
       }
+    });
+    selectionQueue.current = operation.catch(() => undefined);
+    try {
+      await operation;
     } catch (reason) {
       if (selectionVersions.current.get(item.id) === version) session.updateStyleBoard(before);
       setError(
@@ -239,6 +248,12 @@ export function StudioScreen() {
     setBusy(true);
     setError("");
     try {
+      await selectionQueue.current;
+      const authoritative = await session.api.getStyleBoard(
+        session.account.userId,
+        session.token,
+      );
+      session.updateStyleBoard(authoritative);
       setAnalysis(
         await session.api.analyzeStyleBoard(
           session.account.userId,

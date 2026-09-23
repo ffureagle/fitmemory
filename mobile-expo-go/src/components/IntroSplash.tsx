@@ -155,14 +155,17 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
           />
         </View>
         <View style={styles.copy}>
-          {LINES.map((lineText, index) => (
+          {LINES.map((lineText, index) => {
+            const motion = words[index];
+            if (!motion) return null;
+            return (
             <Animated.View
               key={lineText}
               style={{
-                opacity: words[index],
+                opacity: motion,
                 transform: [
                   {
-                    translateY: words[index].interpolate({
+                    translateY: motion.interpolate({
                       inputRange: [0, 1],
                       outputRange: [8, 0],
                     }),
@@ -172,7 +175,8 @@ export function IntroSplash({ sessionReady, onFinished }: IntroSplashProps) {
             >
               <Text style={styles.word}>{lineText}</Text>
             </Animated.View>
-          ))}
+            );
+          })}
         </View>
         {!sessionReady ? (
           <View style={styles.loading}>

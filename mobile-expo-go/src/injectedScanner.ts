@@ -604,6 +604,38 @@ const scannerBootstrap = String.raw`
       text.match(/\((?:US\s*)?(XXXL|XXL|XL|L|M|S|XS|XXS|XXXS|[1-9]\d)\)/i)?.[1]?.toUpperCase() || "";
     return sizePattern.test(label) ? label : "";
   };
+  const disabledSizeControl = (element) => Boolean(
+    element?.disabled ||
+    element?.hasAttribute?.("disabled") ||
+    element?.getAttribute?.("aria-disabled") === "true" ||
+    /(?:^|[\s_-])(disabled|unavailable|soldout|sold-out)(?:$|[\s_-])/i.test(clean([
+      element?.getAttribute?.("data-state"),
+      element?.className
+    ].join(" ")))
+  );
+  const sizeClickTarget = (element, label) => {
+    let current = element;
+    let exactFallback = element;
+    for (let depth = 0; current && depth < 6; depth += 1) {
+      const currentLabel = sizeLabelFromText(ownText(current) || controlText(current));
+      if (currentLabel && currentLabel !== label) break;
+      if (currentLabel === label) {
+        exactFallback = current;
+        const role = clean(current.getAttribute?.("role")).toLowerCase();
+        if (
+          /^(BUTTON|INPUT|LABEL|LI)$/.test(current.tagName || "") ||
+          /^(button|radio|option|tab)$/.test(role) ||
+          current.hasAttribute?.("data-testid") ||
+          current.hasAttribute?.("data-qa") ||
+          current.hasAttribute?.("data-qa-anchor")
+        ) {
+          return current;
+        }
+      }
+      current = current.parentElement;
+    }
+    return clickable(exactFallback) || exactFallback;
+  };
   const selectedSizeEvidence = () => all(
     "[aria-selected='true'], [aria-checked='true'], [aria-pressed='true'], " +
     "input[type='radio']:checked, input[type='checkbox']:checked, " +
@@ -693,8 +725,8 @@ const scannerBootstrap = String.raw`
       if (!visible(element)) continue;
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
-      const target = clickable(element);
-      if (!target || seen.has(target)) continue;
+      const target = sizeClickTarget(element, label);
+      if (!target || disabledSizeControl(target) || seen.has(target)) continue;
       if (panel && panel !== document && panel !== document.body) {
         const panelRoot = panel.getRootNode?.();
         const targetRoot = target.getRootNode?.();
@@ -741,6 +773,13 @@ const scannerBootstrap = String.raw`
       button.getAttribute("data-selected"),
       button.className
     ].join(" ")));
+  };
+  const selectedSizeLabel = () => {
+    const selected = findSizeButtons(document).find(selectedSizeButton);
+    return sizeLabelFromText(controlText(selected)) ||
+      sizeLabelFromText(
+        selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || ""
+      );
   };
   const sizeDrawerVisible = () => {
     return findSizePanel();
@@ -992,6 +1031,54 @@ const scannerBootstrap = String.raw`
       await sleep(50);
       scroller.scrollLeft = start;
     }
+  };
+  const collectSizeLabelsAcrossStrip = async (scope, readControls) => {
+    const labels = [];
+    const collect = () => {
+      roots(true);
+      for (const control of readControls()) {
+        const label = sizeLabelFromText(controlText(control));
+        if (label && labels.indexOf(label) === -1) labels.push(label);
+      }
+    };
+    collect();
+    const controls = readControls();
+    const scroller = findScrollableX(controls[0]) || findScrollableX(scope);
+    if (!scroller) return labels;
+    const start = scroller.scrollLeft;
+    const step = Math.max(64, Math.floor(scroller.clientWidth * 0.55));
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    for (let x = 0; x <= max + 1; x += step) {
+      scroller.scrollLeft = Math.min(x, max);
+      await sleep(70);
+      collect();
+    }
+    scroller.scrollLeft = start;
+    await sleep(50);
+    return labels;
+  };
+  const findSizeControlAcrossStrip = async (scope, size, readControls) => {
+    const find = () => readControls().find((candidate) =>
+      sizeLabelFromText(controlText(candidate)) === size) || null;
+    let control = find();
+    if (control) return control;
+    const candidates = readControls();
+    const scroller = findScrollableX(candidates[0]) || findScrollableX(scope);
+    if (!scroller) return null;
+    const start = scroller.scrollLeft;
+    const step = Math.max(64, Math.floor(scroller.clientWidth * 0.55));
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    for (let x = 0; x <= max + 1 && !control; x += step) {
+      scroller.scrollLeft = Math.min(x, max);
+      await sleep(70);
+      roots(true);
+      control = find();
+    }
+    if (!control) {
+      scroller.scrollLeft = start;
+      await sleep(40);
+    }
+    return control;
   };
   const tableChart = () => {
     const candidates = all("table, [role='table']")
@@ -1317,6 +1404,18 @@ const scannerBootstrap = String.raw`
     return verifiedMeasurementChart(aligned) ? aligned : Object.assign({}, chart, {
       sellingSizes: collectSellingSizes()
     });
+  };
+  const coversEverySellingSize = (chart) => {
+    if (!chart?.found) return false;
+    const selling = (chart.sellingSizes?.length
+      ? chart.sellingSizes
+      : collectSellingSizes())
+      .filter((size, index, values) => size && values.indexOf(size) === index);
+    if (selling.length < 2) return verifiedMeasurementChart(chart);
+    const rows = new Set(
+      (chart.rows || []).map((row) => sizeLabelFromText(row.cells?.[0])).filter(Boolean)
+    );
+    return selling.every((size) => rows.has(size));
   };
   const parseJsonQuiet = (text) => {
     try {
@@ -1681,9 +1780,9 @@ const scannerBootstrap = String.raw`
       if (!visible(element) || !panel.contains(element)) continue;
       const label = sizeLabelFromText(controlText(element));
       if (!label || !sizePattern.test(label)) continue;
-      let target = clickable(element);
+      let target = sizeClickTarget(element, label);
       if (target && !panel.contains(target)) target = element;
-      if (!target || seen.has(target)) continue;
+      if (!target || disabledSizeControl(target) || seen.has(target)) continue;
       seen.add(target);
       result.push(target);
     }
@@ -1702,13 +1801,14 @@ const scannerBootstrap = String.raw`
   const overlaySizeControl = (overlay, size) => {
     const exact = containedSizeButtons(overlay).find((button) =>
       sizeLabelFromText(controlText(button)) === size);
-    if (exact) return exact;
-    return all("button, [role='radio'], [role='option'], [role='button'], [role='tab'], span, div, li, label")
+    if (exact) return sizeClickTarget(exact, size);
+    const textMatch = all("button, [role='radio'], [role='option'], [role='button'], [role='tab'], span, div, li, label")
       .filter(visible)
       .filter((element) => overlay.contains(element) &&
         sizeLabelFromText(ownText(element) || controlText(element)) === size &&
         clean(ownText(element) || controlText(element)).length <= 8)
       .sort((left, right) => left.childElementCount - right.childElementCount)[0] || null;
+    return textMatch ? sizeClickTarget(textMatch, size) : null;
   };
   const panelChart = async () => {
     let overlay = measurementOverlay() || findMeasurePanel() || findSizePanel() || document.body;
@@ -1719,13 +1819,11 @@ const scannerBootstrap = String.raw`
       const nearby = findSizeButtons(overlay);
       return nearby.length ? nearby : findSizeButtons(document);
     };
-    const labels = sizeControls()
-      .map((button) => sizeLabelFromText(controlText(button)))
-      .filter(Boolean)
-      .filter((size, index, values) => values.indexOf(size) === index);
+    const labels = await collectSizeLabelsAcrossStrip(overlay, sizeControls);
     const records = [];
     let headers = null;
     if (!labels.length) return null;
+    const initiallySelected = selectedSizeLabel();
     const valuesNow = () => {
       const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
       return extractMeasurements(nextOverlay).map((item) => item.value).join("|");
@@ -1733,7 +1831,7 @@ const scannerBootstrap = String.raw`
     const settleRead = () => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
-    const waitUntilValuesChange = (beforeValues, beforeSig, timeout) =>
+    const waitUntilSizeActivates = (size, beforeValues, beforeSig, timeout) =>
       new Promise((resolve) => {
         let settled = false;
         let observer = null;
@@ -1747,7 +1845,8 @@ const scannerBootstrap = String.raw`
         };
         const check = () => {
           const afterValues = valuesNow();
-          if ((afterValues && afterValues !== beforeValues) ||
+          if (selectedSizeLabel() === size ||
+              (afterValues && afterValues !== beforeValues) ||
               measureSignature() !== beforeSig) {
             finish(true);
             return true;
@@ -1773,25 +1872,34 @@ const scannerBootstrap = String.raw`
       progress(guideStage);
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const button = overlaySizeControl(overlay, size) ||
-        sizeControls().find((candidate) => sizeLabelFromText(controlText(candidate)) === size);
+        await findSizeControlAcrossStrip(overlay, size, sizeControls);
+      let activated = false;
       if (button) {
         const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
         const alreadyOn = selectedSizeButton(button);
+        activated = alreadyOn;
         if (!alreadyOn) {
           await clickElement(button, 0);
-          let changed = valuesNow() !== beforeValues || measureSignature() !== before;
+          await sleep(90);
+          let changed = selectedSizeLabel() === size ||
+            valuesNow() !== beforeValues || measureSignature() !== before;
           if (!changed) {
             const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
               sizeLabelFromText(ownText(node) || controlText(node)) === size);
             if (inner && inner !== button && !selectedSizeButton(button)) {
               await clickElement(inner, 0);
-              changed = valuesNow() !== beforeValues || measureSignature() !== before;
+              await sleep(90);
+              changed = selectedSizeLabel() === size ||
+                valuesNow() !== beforeValues || measureSignature() !== before;
             }
           }
           if (!changed) {
-            await waitUntilValuesChange(beforeValues, before, 4200);
+            changed = Boolean(
+              await waitUntilSizeActivates(size, beforeValues, before, 4200)
+            );
           }
+          activated = changed || selectedSizeLabel() === size;
           await settleRead();
         } else if (!valuesNow()) {
           await waitForStable(() => {
@@ -1799,6 +1907,7 @@ const scannerBootstrap = String.raw`
           }, 1800, 80, 40);
         }
       }
+      if (!activated) continue;
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const measurements = extractMeasurements(overlay);
       if (!measurements.length) continue;
@@ -1808,26 +1917,43 @@ const scannerBootstrap = String.raw`
       const existing = records.find((row) => row.cells[0] === size);
       if (existing) existing.cells = cells;
       else records.push({ cells: cells });
-      if (records.length >= 2 && headers) {
+      if (records.length === labels.length && headers) {
         postChartProgress({
           found: true,
           title: "Ürün ölçüleri",
           unit: chartUnitFromText(panelText(overlay)),
           headers,
           rows: records.slice(0, 30),
-          rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
+          rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000),
+          sellingSizes: labels.slice()
         });
       }
     }
+    if (initiallySelected && initiallySelected !== selectedSizeLabel()) {
+      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const original = overlaySizeControl(overlay, initiallySelected) ||
+        await findSizeControlAcrossStrip(
+          overlay,
+          initiallySelected,
+          sizeControls
+        );
+      if (original) {
+        guideStage = "Başlangıç bedeni " + initiallySelected + " geri yükleniyor";
+        progress(guideStage);
+        await clickElement(original, 120);
+        await waitUntilSizeActivates(initiallySelected, "", "", 1400);
+      }
+    }
     const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
-    if (!records.length || !headers) return null;
+    if (!records.length || !headers || records.length < labels.length) return null;
     return {
       found: true,
       title: "Ürün ölçüleri",
       unit: chartUnitFromText(finalText),
       headers,
       rows: records.slice(0, 30),
-      rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
+      rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000),
+      sellingSizes: labels.slice()
     };
   };
   const scrapeProduct = async (visibleMeasurementsOnly = false) => {
@@ -1935,7 +2061,13 @@ const scannerBootstrap = String.raw`
       if (!visibleMeasurementsOnly) await openSizeGuide();
       await sleep(250);
     }
-    if (chart?.found) chart = finalizeChart(chart);
+    if (chart?.found) {
+      chart = finalizeChart(chart);
+      if (!coversEverySellingSize(chart)) {
+        guideStage = "Görünen bedenlerin tamamı dolaşılamadı";
+        chart = null;
+      }
+    }
     const material = await materialDetails();
     if (!chart?.found) {
       return {
@@ -2275,7 +2407,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.34";
+  window.__fitmemoryScannerVersion = "1.25.37";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2312,7 +2444,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.34" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.37" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

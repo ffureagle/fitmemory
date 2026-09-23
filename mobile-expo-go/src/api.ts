@@ -534,6 +534,8 @@ export class FitMemoryApi {
       method: "POST",
       token,
       body: { userId, language: this.language },
+      timeoutMs: 100_000,
+      retries: 1,
     });
   }
 }

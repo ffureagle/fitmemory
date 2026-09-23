@@ -121,6 +121,26 @@ function hasVerifiedNumericChart(chart: ProductSnapshot["sizeChart"] | null | un
   });
 }
 
+function hasCompleteSizeCoverage(
+  chart: ProductSnapshot["sizeChart"] | null | undefined,
+) {
+  if (!hasVerifiedNumericChart(chart) || !chart || chart.rows.length < 2) {
+    return false;
+  }
+  const selling = [...new Set(
+    (chart.sellingSizes ?? [])
+      .map((size) => String(size).trim().toUpperCase())
+      .filter(Boolean),
+  )];
+  if (selling.length < 2) return true;
+  const measured = new Set(
+    chart.rows.map((row) =>
+      String(row.cells[0] ?? "").trim().toUpperCase(),
+    ),
+  );
+  return selling.every((size) => measured.has(size));
+}
+
 function userFacingExplanation(
   explanation: string,
   size: string,
@@ -395,7 +415,7 @@ export function ScanScreen({
     }, SCAN_TIMEOUT_MS);
     void wakeApi();
     void session.syncPendingProfile().catch(() => undefined);
-    webViewRef.current?.injectJavaScript(createScanScript(mode, mode === "product"));
+    webViewRef.current?.injectJavaScript(createScanScript(mode, false));
   };
 
   const analyzeSnapshot = async (
@@ -403,9 +423,16 @@ export function ScanScreen({
     options?: { silent?: boolean },
   ) => {
     if (!session.token || !session.account) return;
-    if (!hasVerifiedSnapshot(nextSnapshot)) {
+    if (
+      !hasVerifiedSnapshot(nextSnapshot) ||
+      !hasCompleteSizeCoverage(nextSnapshot.sizeChart)
+    ) {
       if (options?.silent) return;
-      throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
+      throw new Error(
+        "Açık paneldeki bütün satılabilir bedenlerin ölçüleri toplanamadı. " +
+        "FitMemory artık tek görünen bedene göre karar vermiyor; ölçü panelini " +
+        "açık bırakıp tekrar dene.",
+      );
     }
     if (!session.profile) {
       if (options?.silent) return;
@@ -561,7 +588,7 @@ export function ScanScreen({
     if (
       localSnapshot &&
       hasVerifiedSnapshot(localSnapshot) &&
-      localSnapshot.sizeChart.rows.length >= 1
+      hasCompleteSizeCoverage(localSnapshot.sizeChart)
     ) {
       await analyzeSnapshot(localSnapshot);
       return;
@@ -636,7 +663,10 @@ export function ScanScreen({
     }
     try {
       if (message.type === "fitmemory-product") {
-        if (hasVerifiedSnapshot(message.snapshot)) {
+        if (
+          hasVerifiedSnapshot(message.snapshot) &&
+          hasCompleteSizeCoverage(message.snapshot.sizeChart)
+        ) {
           await analyzeSnapshot(message.snapshot);
         } else {
           await analyzeVisualFallback({
@@ -1475,7 +1505,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   authWindow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: colors.paper,
     zIndex: 8,
   },

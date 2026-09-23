@@ -3,17 +3,11 @@
     "name": "FitMemory Go",
     "slug": "fitmemory-go",
     "owner": "fstudio",
-    "version": "1.25.34",
+    "version": "1.25.37",
     "scheme": "fitmemorygo",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "icon": "./assets/fitmemory-logo.png",
-    "splash": {
-      "image": "./assets/fitmemory-logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mfurkangokbag.fitmemory.go",
@@ -34,7 +28,17 @@
       "permissions": []
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/fitmemory-logo.png",
+          "resizeMode": "contain",
+          "imageWidth": 200
+        }
+      ]
     ],
     "extra": {
       "apiBaseUrl": "https://fitmemory-api.onrender.com",
@@ -42,7 +46,7 @@
         "projectId": "5a8a7507-726a-4c74-aab9-9482265fccb9"
       }
     },
-    "runtimeVersion": "exposdk:54.0.0",
+    "runtimeVersion": "exposdk:57.0.0",
     "updates": {
       "url": "https://u.expo.dev/5a8a7507-726a-4c74-aab9-9482265fccb9"
     }
