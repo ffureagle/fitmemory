@@ -467,43 +467,80 @@ const scannerBootstrap = String.raw`
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent || "").join(" "));
   };
-  const clickable = (element) =>
-    element?.closest?.(
-      "button, a, [role='button'], [role='radio'], [role='option'], [role='tab'], summary, " +
-      "[class*='size-selector' i], [class*='sizeSelector' i], [data-qa-anchor*='size' i]"
-    ) || element;
-  const clickElement = async (element, afterMs = 40) => {
-    const target = clickable(element);
+  const clickable = (element) => {
+    if (!element) return null;
+    // Beden şeridi kapsayıcısına tırmanma: [class*=size-selector] tüm XS/S/M'yi sarar.
+    const sizeish = sizeLabelFromText(ownText(element) || controlText(element));
+    let current = element;
+    for (let depth = 0; current && depth < 5; depth += 1) {
+      const role = clean(current.getAttribute?.("role")).toLowerCase();
+      const tag = current.tagName || "";
+      if (/^(BUTTON|INPUT|LABEL|A|SUMMARY)$/.test(tag) ||
+          /^(button|radio|option|tab)$/.test(role)) {
+        const currentLabel = sizeLabelFromText(ownText(current) || controlText(current));
+        if (!sizeish || !currentLabel || currentLabel === sizeish) return current;
+        break;
+      }
+      const rect = current.getBoundingClientRect?.();
+      if (sizeish && rect && rect.width > 8 && rect.width <= 120 && rect.height <= 96) {
+        const currentLabel = sizeLabelFromText(ownText(current) || controlText(current));
+        if (currentLabel === sizeish) return current;
+      }
+      current = current.parentElement;
+    }
+    return element;
+  };
+  const pointFromRect = (rect) => ({
+    x: Math.max(1, Math.min((innerWidth || rect.right) - 1, rect.left + rect.width / 2)),
+    y: Math.max(1, Math.min((innerHeight || rect.bottom) - 1, rect.top + rect.height / 2))
+  });
+  const dispatchTap = (target, x, y) => {
     if (!target) return false;
-    if (target.tagName === "A") {
-      const href = clean(target.getAttribute("href"));
-      if (href && !href.startsWith("#") &&
-          !href.toLowerCase().startsWith("javascript:")) return false;
-    }
-    const rect = target.getBoundingClientRect?.();
-    const inView = rect &&
-      rect.top >= 0 && rect.bottom <= (innerHeight || 0) &&
-      rect.left >= 0 && rect.right <= (innerWidth || 0);
-    if (!inView) {
-      target.scrollIntoView?.({ block: "center", inline: "center" });
-      await sleep(35);
-    }
+    const common = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      pointerId: 1,
+      pointerType: "touch",
+      isPrimary: true,
+      buttons: 1
+    };
     try { target.focus?.({ preventScroll: true }); } catch (error) { recordDiagnostic("focus", error); }
-    for (const type of ["touchstart", "pointerdown", "mousedown", "touchend", "pointerup", "mouseup"]) {
+    try {
+      if (typeof TouchEvent !== "undefined" && typeof Touch !== "undefined") {
+        const touch = new Touch({
+          identifier: 1,
+          target,
+          clientX: x,
+          clientY: y,
+          screenX: x,
+          screenY: y,
+          pageX: x + (scrollX || 0),
+          pageY: y + (scrollY || 0),
+          radiusX: 8,
+          radiusY: 8,
+          force: 1
+        });
+        target.dispatchEvent(new TouchEvent("touchstart", {
+          bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch]
+        }));
+        target.dispatchEvent(new TouchEvent("touchend", {
+          bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch]
+        }));
+      }
+    } catch (error) { recordDiagnostic("touch", error); }
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
       try {
-        const event = type.startsWith("pointer") && typeof PointerEvent !== "undefined"
-          ? new PointerEvent(type, {
-              bubbles: true,
-              cancelable: true,
-              pointerId: 1,
-              pointerType: "touch",
-              isPrimary: true
-            })
-          : type.startsWith("touch")
-            ? new Event(type, { bubbles: true, cancelable: true })
-            : new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
-        target.dispatchEvent(event);
-    } catch (error) { recordDiagnostic("scanner-operation", error); }
+        if (type.startsWith("pointer") && typeof PointerEvent !== "undefined") {
+          target.dispatchEvent(new PointerEvent(type, common));
+        } else {
+          target.dispatchEvent(new MouseEvent(type, common));
+        }
+      } catch (error) { recordDiagnostic("tap-event", error); }
     }
     try { target.click?.(); } catch (error) { recordDiagnostic("click", error); }
     const input = target.tagName === "INPUT" ? target :
@@ -515,8 +552,75 @@ const scannerBootstrap = String.raw`
         input.dispatchEvent(new Event("change", { bubbles: true }));
       } catch (error) { recordDiagnostic("input-check", error); }
     }
+    return true;
+  };
+  const clickElement = async (element, afterMs = 40) => {
+    const target = clickable(element);
+    if (!target) return false;
+    if (target.tagName === "A") {
+      const href = clean(target.getAttribute("href"));
+      if (href && !href.startsWith("#") &&
+          !href.toLowerCase().startsWith("javascript:")) return false;
+    }
+    let rect = target.getBoundingClientRect?.();
+    if (!rect || rect.width < 2 || rect.height < 2) return false;
+    const inView = rect.top >= 0 && rect.bottom <= (innerHeight || 0) &&
+      rect.left >= 0 && rect.right <= (innerWidth || 0);
+    if (!inView) {
+      target.scrollIntoView?.({ block: "center", inline: "center" });
+      await sleep(45);
+      rect = target.getBoundingClientRect?.() || rect;
+    }
+    const { x, y } = pointFromRect(rect);
+    // Önce koordinattaki gerçek DOM düğümüne bas (React hit-target).
+    let hit = null;
+    try { hit = document.elementFromPoint(x, y); } catch (error) { recordDiagnostic("elementFromPoint", error); }
+    if (hit && target.contains?.(hit)) dispatchTap(hit, x, y);
+    else if (hit && sizeLabelFromText(ownText(hit) || controlText(hit)) ===
+      sizeLabelFromText(ownText(target) || controlText(target))) dispatchTap(hit, x, y);
+    else dispatchTap(target, x, y);
     if (afterMs > 0) await sleep(afterMs);
     roots(true);
+    return true;
+  };
+  const tapSizeChip = async (element, size, afterMs = 120) => {
+    if (!element) return false;
+    let target = sizeClickTarget(element, size) || element;
+    // Şerit kapsayıcısına kaçmayı engelle: etiketi size olan en dar görünür düğüm.
+    const exactLeaves = all("button, [role='radio'], [role='option'], [role='button'], [role='tab'], li, label, span, div")
+      .filter(visible)
+      .filter((node) => sizeLabelFromText(ownText(node) || controlText(node)) === size)
+      .filter((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 10 && rect.width <= 140 && rect.height >= 10 && rect.height <= 100;
+      })
+      .sort((left, right) =>
+        (left.getBoundingClientRect().width * left.getBoundingClientRect().height) -
+        (right.getBoundingClientRect().width * right.getBoundingClientRect().height));
+    if (exactLeaves[0]) target = exactLeaves[0];
+    target.scrollIntoView?.({ block: "center", inline: "nearest" });
+    await sleep(40);
+    // Yatay şeritte taşmışsa kaydır.
+    const scroller = findScrollableX(target);
+    if (scroller) {
+      const rect = target.getBoundingClientRect();
+      const mid = (innerWidth || 0) / 2;
+      if (rect.left < 8 || rect.right > (innerWidth || 0) - 8) {
+        scroller.scrollLeft += (rect.left + rect.width / 2) - mid;
+        await sleep(60);
+      }
+    }
+    await clickElement(target, afterMs);
+    // Hâlâ seçilmediyse elementFromPoint ile tekrar dene.
+    if (selectedSizeLabel() !== size && !selectedSizeButton(target)) {
+      const rect = target.getBoundingClientRect();
+      const { x, y } = pointFromRect(rect);
+      let hit = null;
+      try { hit = document.elementFromPoint(x, y); } catch (error) { recordDiagnostic("elementFromPoint", error); }
+      if (hit) dispatchTap(hit, x, y);
+      await sleep(afterMs);
+      roots(true);
+    }
     return true;
   };
   const findShortTextControl = (pattern) => all(
@@ -1982,38 +2086,44 @@ const scannerBootstrap = String.raw`
     const activateDomSize = async (size) => {
       const button = await findDomSizeButton(size);
       if (!button || isInactiveSizeControl(button)) return false;
-      button.scrollIntoView?.({ block: "center", inline: "center" });
-      await sleep(50);
       const beforeValues = valuesNow();
       const beforeSig = measureSignature();
       const beforeSelected = selectedSizeLabel();
       guideStage = "Beden " + size + " tuşuna basılıyor";
       progress(guideStage);
-      // Her beden için DOM tuşuna gerçekten bas: ekrandaki seçim güncellensin.
-      await clickElement(button, 90);
-      let activated = selectedSizeLabel() === size ||
-        (valuesNow() && valuesNow() !== beforeValues) ||
-        measureSignature() !== beforeSig ||
-        selectedSizeButton(button);
-      if (!activated || selectedSizeLabel() !== size) {
-        const inner = [...(button.querySelectorAll?.("span, div, p, label") || [])].find((node) =>
-          sizeLabelFromText(ownText(node) || controlText(node)) === size);
-        if (inner && inner !== button) {
-          await clickElement(inner, 90);
-        } else {
-          // İkinci kez basmayı dene (bazı Inditex şeritleri ilk dokunuşu yok sayar).
-          await clickElement(button, 90);
+      await tapSizeChip(button, size, 140);
+      let onScreen = selectedSizeLabel();
+      if (onScreen !== size) {
+        await waitUntilSizeActivates(size, beforeValues, beforeSig, 3500);
+        onScreen = selectedSizeLabel();
+      }
+      if (onScreen !== size) {
+        // Aynı etiketi taşıyan tüm dar tuşlara sırayla bas.
+        const candidates = all(
+          "button, [role='radio'], [role='option'], [role='button'], [role='tab'], li, label, span"
+        ).filter(visible)
+          .filter((node) => sizeLabelFromText(ownText(node) || controlText(node)) === size)
+          .filter((node) => !isInactiveSizeControl(node))
+          .slice(0, 6);
+        for (const candidate of candidates) {
+          await tapSizeChip(candidate, size, 160);
+          onScreen = selectedSizeLabel();
+          if (onScreen === size) break;
+          if (await waitUntilSizeActivates(size, beforeValues, beforeSig, 1800)) {
+            onScreen = selectedSizeLabel();
+            if (onScreen === size) break;
+          }
         }
-        activated = await waitUntilSizeActivates(size, beforeValues, beforeSig, 4800);
-      } else {
-        await waitUntilSizeActivates(size, beforeValues, beforeSig, 1200);
       }
       await settleRead();
-      const onScreen = selectedSizeLabel();
+      onScreen = selectedSizeLabel();
       if (onScreen === size) return true;
-      if (selectedSizeButton(button)) return true;
-      if (valuesNow() && valuesNow() !== beforeValues && beforeSelected !== size) return true;
-      return Boolean(onScreen === size || valuesNow());
+      // Ölçüler değiştiyse ve önceki seçim bu beden değildi → geçiş oldu.
+      if (beforeSelected !== size &&
+          ((valuesNow() && valuesNow() !== beforeValues) || measureSignature() !== beforeSig)) {
+        return true;
+      }
+      return false;
     };
     for (const size of labels) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
@@ -2029,8 +2139,12 @@ const scannerBootstrap = String.raw`
       overlay = measureAnchor() || overlay;
       // Satır bedeni varsayılan etiket değil; tıklama sonrası ekranda seçili görünen beden.
       const onScreenSize = selectedSizeLabel() ||
-        sizeLabelFromText(selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "") ||
-        size;
+        sizeLabelFromText(selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "");
+      if (onScreenSize !== size) {
+        guideStage = "Beden " + size + " ekranda seçili görünmedi";
+        progress(guideStage);
+        continue;
+      }
       const measurements = extractMeasurements(overlay);
       if (!isCompleteRow(measurements)) continue;
       if (records.some((row) => row.cells[0] === onScreenSize)) continue;
@@ -2155,8 +2269,14 @@ const scannerBootstrap = String.raw`
       }
       const overlay = measurementOverlay();
       const overlayButtons = overlay ? containedSizeButtons(overlay) : [];
-      const shouldWalk = metricLabelsVisible() &&
-        (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2);
+      const stripCount = horizontalActiveSizeStrip(
+        measurementOverlay() || findMeasurePanel() || overlay || document.body
+      ).length;
+      // Ölçü metrikleri görünmese bile 2+ beden tuşu varsa tek tek bas.
+      const shouldWalk =
+        overlayButtons.length >= 2 ||
+        findSizeButtons(document).length >= 2 ||
+        stripCount >= 2;
       const walked = shouldWalk ? await safeChart(() => panelChart()) : null;
       if (verifiedMeasurementChart(walked) && (walked.rows?.length || 0) >= 2) {
         return walked;
@@ -2530,7 +2650,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.39";
+  window.__fitmemoryScannerVersion = "1.25.40";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2567,7 +2687,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.39" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.40" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }
