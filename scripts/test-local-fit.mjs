@@ -40,4 +40,26 @@ const result = analyzeRecommendation(profile, [], {
 assert.equal(result.recommendedSize, "L", `beklenen L, gelen ${result.recommendedSize}`);
 assert.ok(result.confidence > 30, "güven skoru üretildi");
 assert.notEqual(result.recommendedSize, "Bilinmiyor");
+
+const singleRow = analyzeRecommendation(profile, [], {
+  product: {
+    name: "Kutulu kesim tişört",
+    brand: "Bershka",
+    category: "Tees",
+    fitLabel: "",
+    fitEvidence: "",
+  },
+  sizeChart: {
+    found: true,
+    title: "Ürün ölçüleri",
+    unit: "Centimeters",
+    headers: ["Beden", "Göğüs çevresi"],
+    rows: [{ cells: ["M", "99"] }],
+    rawText: "",
+  },
+});
+assert.equal(singleRow.recommendedSize, "Bilinmiyor");
+assert.equal(singleRow.dataSource, "local-insufficient");
+assert.match(singleRow.verdict, /tek beden/i);
+
 console.log("local fit ok", result.recommendedSize, result.confidence);

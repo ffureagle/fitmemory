@@ -1699,6 +1699,84 @@ const scannerBootstrap = String.raw`
     }
     return panel;
   };
+  const isInactiveSizeControl = (element) => {
+    if (!element || typeof element.getAttribute !== "function") return false;
+    if (element.disabled || element.getAttribute("aria-disabled") === "true") return true;
+    const marker = clean([
+      element.className,
+      element.getAttribute("data-state"),
+      element.getAttribute("data-availability"),
+      element.getAttribute("aria-label")
+    ].join(" "));
+    return /(?:^|[\s_-])(disabled|sold-?out|unavailable|out-of-stock|is-disabled|tukendi)(?:$|[\s_-])/i.test(marker);
+  };
+  const horizontalActiveSizeStrip = (panel) => {
+    const controls = [];
+    const seen = new Set();
+    for (const element of all(
+      "button, [role='radio'], [role='option'], [role='button'], [role='tab'], li, a, span, label"
+    )) {
+      if (!visible(element)) continue;
+      const label = sizeLabelFromText(ownText(element) || controlText(element));
+      if (!label || !sizePattern.test(label)) continue;
+      if (isInactiveSizeControl(element)) continue;
+      let target = element;
+      const parent = clickable(element);
+      if (parent && parent !== element && !isInactiveSizeControl(parent)) {
+        const parentLabel = sizeLabelFromText(ownText(parent) || controlText(parent));
+        const parentRect = parent.getBoundingClientRect?.();
+        if (parentLabel === label && parentRect && parentRect.width <= 180 && parentRect.height <= 96) {
+          target = parent;
+        }
+      }
+      if (isInactiveSizeControl(target) || seen.has(target)) continue;
+      const rect = target.getBoundingClientRect?.();
+      if (!rect || rect.width < 10 || rect.height < 10 || rect.width > 180 || rect.height > 96) continue;
+      seen.add(target);
+      controls.push({
+        target,
+        label,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      });
+    }
+    if (controls.length < 2) return [];
+    const clusters = [];
+    for (const control of [...controls].sort((left, right) => left.y - right.y || left.x - right.x)) {
+      const cluster = clusters.find((group) => Math.abs(group.y - control.y) <= 18);
+      if (cluster) {
+        cluster.items.push(control);
+        cluster.y = cluster.items.reduce((sum, item) => sum + item.y, 0) / cluster.items.length;
+      } else {
+        clusters.push({ y: control.y, items: [control] });
+      }
+    }
+    const strips = clusters.map((cluster) => {
+      const items = [];
+      const labels = new Set();
+      for (const item of [...cluster.items].sort((left, right) => left.x - right.x)) {
+        if (labels.has(item.label)) continue;
+        labels.add(item.label);
+        items.push(item);
+      }
+      if (items.length < 2) return null;
+      const vertical = Math.max(...items.map((item) => item.y)) - Math.min(...items.map((item) => item.y));
+      const span = items[items.length - 1].x - items[0].x;
+      if (vertical > 22 || span < 28) return null;
+      return { items, y: cluster.y };
+    }).filter(Boolean);
+    if (!strips.length) return [];
+    const anchor = panel && panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
+    const anchorY = anchor ? anchor.top + Math.min(anchor.height, 240) / 2 : 0;
+    const contained = panel
+      ? strips.filter((strip) => strip.items.every((item) => panel.contains?.(item.target)))
+      : [];
+    const pool = contained.length ? contained : strips;
+    pool.sort((left, right) =>
+      Math.abs(left.y - anchorY) - Math.abs(right.y - anchorY) ||
+      right.items.length - left.items.length);
+    return pool[0].items;
+  };
   const overlaySizeControl = (overlay, size) => {
     const exact = containedSizeButtons(overlay).find((button) =>
       sizeLabelFromText(controlText(button)) === size);
@@ -1719,13 +1797,24 @@ const scannerBootstrap = String.raw`
       const nearby = findSizeButtons(overlay);
       return nearby.length ? nearby : findSizeButtons(document);
     };
-    const labels = sizeControls()
+    const measureAnchor = measurementOverlay() || findMeasurePanel() || overlay;
+    const strip = horizontalActiveSizeStrip(measureAnchor);
+    const fallbackLabels = sizeControls()
+      .filter((button) => !isInactiveSizeControl(button))
       .map((button) => sizeLabelFromText(controlText(button)))
       .filter(Boolean)
       .filter((size, index, values) => values.indexOf(size) === index);
+    const labels = (strip.length >= 2 ? strip.map((item) => item.label) : fallbackLabels).slice(0, 24);
     const records = [];
+    const seenMeasureKeys = new Set();
     let headers = null;
     if (!labels.length) return null;
+    const initialLabel = strip.find((item) => selectedSizeButton(item.target))?.label ||
+      labels.find((size) => {
+        const button = overlaySizeControl(measureAnchor, size);
+        return button && selectedSizeButton(button);
+      }) ||
+      "";
     const valuesNow = () => {
       const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
       return extractMeasurements(nextOverlay).map((item) => item.value).join("|");
@@ -1768,46 +1857,63 @@ const scannerBootstrap = String.raw`
           if (Date.now() - startedAt >= timeout) finish(false);
         }, 40);
       });
-    for (const size of labels.slice(0, 10)) {
+    const measurementKey = (measurements) =>
+      measurements.map((item) => item.label + "=" + item.value).sort().join("|");
+    const isCompleteRow = (measurements) => {
+      if (!measurements || measurements.length < 2 || measurements.some((item) => !item.value)) return false;
+      if (!headers) return true;
+      const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
+      return headers.slice(1).every((label) => byLabel.get(label));
+    };
+    for (const size of labels) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
-      const button = overlaySizeControl(overlay, size) ||
-        sizeControls().find((candidate) => sizeLabelFromText(controlText(candidate)) === size);
+      const button = strip.find((item) => item.label === size)?.target ||
+        overlaySizeControl(overlay, size) ||
+        sizeControls().find((candidate) =>
+          !isInactiveSizeControl(candidate) && sizeLabelFromText(controlText(candidate)) === size);
+      let domChanged = false;
       if (button) {
         const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
         const before = measureSignature();
         const alreadyOn = selectedSizeButton(button);
         if (!alreadyOn) {
           await clickElement(button, 0);
-          let changed = valuesNow() !== beforeValues || measureSignature() !== before;
-          if (!changed) {
+          domChanged = valuesNow() !== beforeValues || measureSignature() !== before;
+          if (!domChanged) {
             const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
               sizeLabelFromText(ownText(node) || controlText(node)) === size);
             if (inner && inner !== button && !selectedSizeButton(button)) {
               await clickElement(inner, 0);
-              changed = valuesNow() !== beforeValues || measureSignature() !== before;
+              domChanged = valuesNow() !== beforeValues || measureSignature() !== before;
             }
           }
-          if (!changed) {
-            await waitUntilValuesChange(beforeValues, before, 4200);
+          if (!domChanged) {
+            domChanged = await waitUntilValuesChange(beforeValues, before, 4200);
           }
           await settleRead();
+          if (!domChanged) continue;
         } else if (!valuesNow()) {
           await waitForStable(() => {
             return valuesNow() || measureSignature();
           }, 1800, 80, 40);
         }
+      } else {
+        continue;
       }
       overlay = measurementOverlay() || findMeasurePanel() || overlay;
       const measurements = extractMeasurements(overlay);
-      if (!measurements.length) continue;
-      headers ||= ["Beden", ...measurements.map((item) => item.label)];
+      if (!isCompleteRow(measurements)) continue;
+      const key = measurementKey(measurements);
+      if (seenMeasureKeys.has(key)) continue;
       const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
+      if (!headers) headers = ["Beden", ...measurements.map((item) => item.label)];
+      if (!isCompleteRow(measurements)) continue;
       const cells = [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")];
-      const existing = records.find((row) => row.cells[0] === size);
-      if (existing) existing.cells = cells;
-      else records.push({ cells: cells });
+      if (cells.slice(1).some((cell) => !cell)) continue;
+      seenMeasureKeys.add(key);
+      records.push({ cells });
       if (records.length >= 2 && headers) {
         postChartProgress({
           found: true,
@@ -1817,6 +1923,21 @@ const scannerBootstrap = String.raw`
           rows: records.slice(0, 30),
           rawText: [headers.join(" | "), ...records.map((row) => row.cells.join(" | "))].join("\n").slice(0, 8000)
         });
+      }
+    }
+    if (initialLabel) {
+      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const selectedNow = strip.find((item) => selectedSizeButton(item.target))?.label ||
+        sizeLabelFromText(selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "");
+      if (selectedNow !== initialLabel) {
+        const restore = strip.find((item) => item.label === initialLabel)?.target ||
+          overlaySizeControl(overlay, initialLabel);
+        if (restore && !selectedSizeButton(restore)) {
+          const beforeValues = valuesNow();
+          const before = measureSignature();
+          await clickElement(restore, 0);
+          await waitUntilValuesChange(beforeValues, before, 2500);
+        }
       }
     }
     const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);

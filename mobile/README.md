@@ -14,7 +14,7 @@ sonra Ayarlar > Erişilebilirlik > FitMemory beden tablosu okuyucu seçeneği bi
 Expo Go özel native modülleri yükleyemediği için Expo Go testinde DOM + Vision AI hattı kullanılır;
 cihaz içi OCR ve AccessibilityService, EAS ile oluşturulan APK/IPA içinde etkinleşir.
 
-iPhone Expo Go (SDK 54) için `mobile-expo-go/` kullanın:
+iPhone Expo Go (SDK 57) için `mobile-expo-go/` kullanın:
 
 ```bash
 cd ../mobile-expo-go

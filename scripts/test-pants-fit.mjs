@@ -33,8 +33,9 @@ const onlyNarrowRow = analyzeRecommendation(profile, [], {
   },
 });
 
-assert.notEqual(onlyNarrowRow.recommendedSize, "34", `34 bele oturmaz, gelen ${onlyNarrowRow.recommendedSize}`);
-assert.equal(onlyNarrowRow.recommendedSize, "42", `beklenen 42, gelen ${onlyNarrowRow.recommendedSize}`);
+assert.equal(onlyNarrowRow.recommendedSize, "Bilinmiyor", `tek satırdan beden üretilmemeli, gelen ${onlyNarrowRow.recommendedSize}`);
+assert.equal(onlyNarrowRow.dataSource, "local-insufficient");
+assert.match(onlyNarrowRow.verdict, /tek beden/i);
 assert.equal(/Hedef\s+\d/.test(onlyNarrowRow.explanation), false, "teknik Hedef metni olmamalı");
 
 const fullChart = analyzeRecommendation(profile, [], {

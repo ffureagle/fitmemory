@@ -106,7 +106,7 @@ pnpm install
 EXPO_PUBLIC_API_BASE_URL=https://fitmemory-api.onrender.com pnpm start
 ```
 
-Ardından Expo Go SDK 54 ile QR kodu okutun. Uygulamadan Zara / Bershka /
+Ardından Expo Go SDK 57 ile QR kodu okutun. Uygulamadan Zara / Bershka /
 Pull&Bear'a girin ve ürün sayfasında Tara'ya basın. Ölçü tablosunu elle
 açmanız gerekmez. Profil **Mobil · 1.25.29** görünmelidir.
 

@@ -58,6 +58,26 @@ public sealed partial class LocalFitRecommendationEngine(
                 "local");
         }
 
+        var measuredSizeCount = candidates
+            .Where(candidate => candidate.Measurements.Count > 0)
+            .Select(candidate => candidate.Label)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        if (measuredSizeCount == 1)
+        {
+            return new RecommendationResult(
+                "Bilinmiyor",
+                0,
+                "Tek beden satırıyla öneri üretilmedi.",
+                "Ölçü tablosunda karşılaştırılabilir en az iki beden satırı yok. FitMemory tek satırdan beden seçmedi.",
+                [
+                    "Yatay beden şeridindeki diğer bedenler okunana kadar öneri üretilmez."
+                ],
+                [],
+                BuildEvidenceSummary(orders),
+                "local-insufficient");
+        }
+
         var relevantOrders = orders
             .Where(order =>
             {

@@ -89,14 +89,26 @@ try {
   page.setDefaultTimeout(45000);
   await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
 
+  await page.evaluate(() => {
+    const disabled = document.createElement("button");
+    disabled.type = "button";
+    disabled.textContent = "XXL";
+    disabled.disabled = true;
+    disabled.setAttribute("aria-disabled", "true");
+    document.querySelector("#sizes").appendChild(disabled);
+    document.querySelectorAll(".sizes button")[2].click();
+  });
+  await page.waitForFunction(
+    () => document.querySelector('[data-metric="chest"]')?.textContent === "106",
+  );
   const before = await page.evaluate(() => ({
     sizes: [...document.querySelectorAll(".sizes button")].map((button) => button.textContent.trim()),
     chest: document.querySelector('[data-metric="chest"]')?.textContent,
-    selected: document.querySelector('.sizes button[aria-checked="true"]')?.textContent || "",
+    selected: document.querySelector('.sizes button[aria-checked="true"]')?.textContent.trim() || "",
   }));
-  assert.deepEqual(before.sizes, ["XS", "S", "M", "L", "XL"]);
-  assert.equal(before.chest, "-");
-  assert.equal(before.selected, "");
+  assert.deepEqual(before.sizes, ["XS", "S", "M", "L", "XL", "XXL"]);
+  assert.equal(before.chest, "106");
+  assert.equal(before.selected, "M");
 
   const posted = await page.evaluate(async (bootstrap) => {
     eval(bootstrap);
@@ -106,7 +118,7 @@ try {
         postMessage(raw) {
           try {
             const payload = JSON.parse(raw);
-            if (payload.type === "fitmemory-progress") return;
+            if (payload.type === "fitmemory-progress" || payload.type === "fitmemory-chart-progress") return;
             clearTimeout(timer);
             resolve(payload);
           } catch (error) {
@@ -134,9 +146,15 @@ try {
   );
   assert.deepEqual(rows.map((row) => row.cells?.[0]), ["XS", "S", "M", "L", "XL"]);
   assert.ok(
-    rows.every((row) => row.cells.slice(1).some((cell) => /^\d{2,3}$/.test(String(cell)))),
-    "her bedende sayısal ölçü olmalı",
+    rows.every((row) => row.cells.slice(1).every((cell) => /^\d{2,3}$/.test(String(cell)))),
+    "eksik ölçü satırı kabul edilmemeli",
   );
+  const signatures = rows.map((row) => row.cells.slice(1).join("|"));
+  assert.equal(new Set(signatures).size, signatures.length, "tekrarlanan ölçüler kabul edilmemeli");
+  const selectedAfter = await page.evaluate(
+    () => document.querySelector('.sizes button[aria-checked="true"]')?.textContent.trim() || "",
+  );
+  assert.equal(selectedAfter, "M", "ilk beden seçimi geri yüklenmeli");
   console.log("bershka scan ok", rows.length, "beden");
 } finally {
   await browser.close();

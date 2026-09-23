@@ -407,6 +407,10 @@ export function ScanScreen({
       if (options?.silent) return;
       throw new Error("Bu ürün için bedenle eşleşen sayısal ürün ölçüleri doğrulanamadı. Yanlış beden önermek yerine sonuç üretilmedi.");
     }
+    if (nextSnapshot.sizeChart.rows.length < 2) {
+      if (options?.silent) return;
+      throw new Error("Açık panelde yalnız seçili bedenin milimleri okundu; diğer bedenler toplanamadı. Ölçü tablosunu açık bırakıp tekrar dene.");
+    }
     if (!session.profile) {
       if (options?.silent) return;
       throw new Error("Beden önerisi için önce profilini kaydet.");
@@ -561,7 +565,7 @@ export function ScanScreen({
     if (
       localSnapshot &&
       hasVerifiedSnapshot(localSnapshot) &&
-      localSnapshot.sizeChart.rows.length >= 1
+      localSnapshot.sizeChart.rows.length >= 2
     ) {
       await analyzeSnapshot(localSnapshot);
       return;
@@ -1475,7 +1479,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   authWindow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: colors.paper,
     zIndex: 8,
   },

@@ -2,7 +2,7 @@
 
 Aynı FitMemory arayüzü, Expo Go içinde. Native OCR yok; tarama DOM + Render API ile çalışır. Oturum telefonda kalır.
 
-**Önemli:** Telefonda **Expo Go SDK 54** olmalı. App Store / Play Store’daki Expo Go eskiyse proje açılmaz. Expo Go içinde Hesap → SDK 54 görünmeli.
+**Önemli:** Telefonda **Expo Go SDK 57** olmalı. App Store / Play Store’daki Expo Go eskiyse proje açılmaz. Expo Go içinde Hesap → SDK 57 görünmeli.
 
 ## Telefona yükle (QR)
 
@@ -34,7 +34,7 @@ npx eas-cli@latest update --channel production --message "1.25.34"
 ```
 
 Proje: https://expo.dev/accounts/fstudio/projects/fitmemory-go  
-`runtimeVersion`: `exposdk:54.0.0`
+`runtimeVersion`: `exposdk:57.0.0`
 
 ## Render
 
