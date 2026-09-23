@@ -1983,37 +1983,37 @@ const scannerBootstrap = String.raw`
       const button = await findDomSizeButton(size);
       if (!button || isInactiveSizeControl(button)) return false;
       button.scrollIntoView?.({ block: "center", inline: "center" });
-      await sleep(40);
+      await sleep(50);
       const beforeValues = valuesNow();
       const beforeSig = measureSignature();
-      const alreadyOn = selectedSizeButton(button) || selectedSizeLabel() === size;
-      if (alreadyOn && beforeValues) {
-        await settleRead();
-        return true;
-      }
+      const beforeSelected = selectedSizeLabel();
       guideStage = "Beden " + size + " tuşuna basılıyor";
       progress(guideStage);
-      await clickElement(button, 60);
+      // Her beden için DOM tuşuna gerçekten bas: ekrandaki seçim güncellensin.
+      await clickElement(button, 90);
       let activated = selectedSizeLabel() === size ||
-        valuesNow() !== beforeValues ||
-        measureSignature() !== beforeSig;
-      if (!activated) {
-        const inner = [...(button.querySelectorAll?.("span, div, p") || [])].find((node) =>
+        (valuesNow() && valuesNow() !== beforeValues) ||
+        measureSignature() !== beforeSig ||
+        selectedSizeButton(button);
+      if (!activated || selectedSizeLabel() !== size) {
+        const inner = [...(button.querySelectorAll?.("span, div, p, label") || [])].find((node) =>
           sizeLabelFromText(ownText(node) || controlText(node)) === size);
         if (inner && inner !== button) {
-          await clickElement(inner, 60);
-          activated = selectedSizeLabel() === size ||
-            valuesNow() !== beforeValues ||
-            measureSignature() !== beforeSig;
+          await clickElement(inner, 90);
+        } else {
+          // İkinci kez basmayı dene (bazı Inditex şeritleri ilk dokunuşu yok sayar).
+          await clickElement(button, 90);
         }
-      }
-      if (!activated) {
-        activated = await waitUntilSizeActivates(size, beforeValues, beforeSig, 4500);
+        activated = await waitUntilSizeActivates(size, beforeValues, beforeSig, 4800);
       } else {
-        await waitUntilSizeActivates(size, beforeValues, beforeSig, 900);
+        await waitUntilSizeActivates(size, beforeValues, beforeSig, 1200);
       }
       await settleRead();
-      return activated || selectedSizeLabel() === size || Boolean(valuesNow());
+      const onScreen = selectedSizeLabel();
+      if (onScreen === size) return true;
+      if (selectedSizeButton(button)) return true;
+      if (valuesNow() && valuesNow() !== beforeValues && beforeSelected !== size) return true;
+      return Boolean(onScreen === size || valuesNow());
     };
     for (const size of labels) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
@@ -2027,12 +2027,16 @@ const scannerBootstrap = String.raw`
         return isCompleteRow(measurements) ? measurements : null;
       }, 2800, 180, 50);
       overlay = measureAnchor() || overlay;
+      // Satır bedeni varsayılan etiket değil; tıklama sonrası ekranda seçili görünen beden.
+      const onScreenSize = selectedSizeLabel() ||
+        sizeLabelFromText(selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "") ||
+        size;
       const measurements = extractMeasurements(overlay);
       if (!isCompleteRow(measurements)) continue;
-      if (records.some((row) => row.cells[0] === size)) continue;
+      if (records.some((row) => row.cells[0] === onScreenSize)) continue;
       const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
       if (!headers) headers = ["Beden", ...measurements.map((item) => item.label)];
-      const cells = [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")];
+      const cells = [onScreenSize, ...headers.slice(1).map((label) => byLabel.get(label) || "")];
       if (cells.slice(1).some((cell) => !cell)) continue;
       records.push({ cells });
       if (records.length >= 2 && headers) {
@@ -2154,13 +2158,23 @@ const scannerBootstrap = String.raw`
       const shouldWalk = metricLabelsVisible() &&
         (overlayButtons.length >= 2 || findSizeButtons(document).length >= 2);
       const walked = shouldWalk ? await safeChart(() => panelChart()) : null;
-      if (verifiedMeasurementChart(walked) && walked.rows?.length) return walked;
+      if (verifiedMeasurementChart(walked) && (walked.rows?.length || 0) >= 2) {
+        return walked;
+      }
+      // Beden tuşları varken tek satırlık visible* fallback kabul etme; tuşlara basılmalı.
+      if (shouldWalk) {
+        guideStage = "Beden tuşları dolaşılamadı";
+        return firstVerifiedChart(
+          verifiedMeasurementChart(table) && (table.rows?.length || 0) > 1 ? table : null,
+          walked
+        );
+      }
       return firstVerifiedChart(
         table,
         await safeChart(() => visibleLayoutChart()),
         await safeChart(() => visibleOpenChart()),
         await safeChart(() => geometryChart()),
-        shouldWalk ? walked : await safeChart(() => panelChart()),
+        await safeChart(() => panelChart()),
         await safeChart(() => visiblePanelChart())
       );
     };
@@ -2516,7 +2530,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.38";
+  window.__fitmemoryScannerVersion = "1.25.39";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2553,7 +2567,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.38" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.39" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }

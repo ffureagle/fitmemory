@@ -28,7 +28,10 @@ import { useSession } from "../session";
 import { colors, shadow } from "../theme";
 import { useFeedback } from "../feedback";
 import { Text, useI18n } from "../i18n";
-import { hasVerifiedNumericChart as hasVerifiedSnapshot } from "../scanValidation";
+import {
+  agentResultToSnapshot,
+  hasVerifiedNumericChart as hasVerifiedSnapshot,
+} from "../scanValidation";
 import { isCurrentScanResponse, isSameShopPage, normalizeScanUrl, SCAN_TIMEOUT_MS } from "../scanLifecycle";
 import {
   isAllowedShopUrl,
@@ -598,11 +601,36 @@ export function ScanScreen({
       return;
     }
     if (activeScanRef.current?.scanId !== active.scanId) return;
+
+    // Sunucu Playwright ajanı: DOM'daki XS/S/M/L tuşlarına tek tek basıp ölçü okur.
+    // Render'da tarayıcı yoksa veya mağaza engellerse sessizce vision'a düşer.
+    setScanStage("server-agent");
+    setStatus("Sunucu ajanı beden tuşlarını tek tek deniyor");
+    try {
+      const agent = await session.api.extractProductWithAgent(
+        session.token,
+        fallback.product.url,
+        active.scanId,
+      );
+      const agentSnapshot = agentResultToSnapshot(agent, fallback.product);
+      if (
+        agentSnapshot &&
+        hasVerifiedSnapshot(agentSnapshot) &&
+        agentSnapshot.sizeChart.rows.length >= 2
+      ) {
+        await analyzeSnapshot(agentSnapshot);
+        return;
+      }
+    } catch {
+      // Continue to on-device vision capture.
+    }
+
+    if (activeScanRef.current?.scanId !== active.scanId) return;
     setScanStage("vision");
 
     // Marka akisi tabloyu uygulamanin kendi WebView'i icinde acti. Once tam bu
     // ekrani oku; Render'daki basliksiz tarayicilar Inditex tarafindan zaman
-    // zaman Access Denied ile engellendigi icin sunucu ajani son yedektir.
+    // zaman Access Denied ile engellendigi icin vision ikinci yedektir.
     setStatus("Görsel ölçü okuyucu açık tabloyu doğruluyor");
     let visualFailure: unknown = null;
     try {

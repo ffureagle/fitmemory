@@ -311,27 +311,68 @@ public sealed partial class PlaywrightProductAgentService(
                 "Beden seçenekleri etkileşimli panelden okunamadı.", [exception.GetType().Name]);
             return [];
         }
+        static int SizeRank(string value)
+        {
+            var letter = value.ToUpperInvariant() switch
+            {
+                "XXXS" => 0,
+                "XXS" => 1,
+                "XS" => 2,
+                "S" => 3,
+                "M" => 4,
+                "L" => 5,
+                "XL" => 6,
+                "XXL" => 7,
+                "XXXL" => 8,
+                _ => 100
+            };
+            if (letter < 100) return letter;
+            return int.TryParse(
+                System.Text.RegularExpressions.Regex.Match(value, @"^\d+").Value,
+                out var number)
+                ? 100 + number
+                : 500;
+        }
+
+        var ordered = labels
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(SizeRank)
+            .ThenBy(static value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var rows = new List<AgentSizeTableRow>();
-        foreach (var label in labels)
+        foreach (var label in ordered)
         {
             token.ThrowIfCancellationRequested();
             bool clicked;
+            string onScreen = "";
             try
             {
-                clicked = await page.EvaluateAsync<bool>("""
+                var clickResult = await page.EvaluateAsync<string>("""
                     size => {
                       const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=='none'&&s.visibility!=='hidden'};
                       const scopes=[...document.querySelectorAll('[role=dialog],aside,[class*="drawer" i],[class*="sheet" i],[class*="modal" i],[class*="size-guide" i]')].filter(visible);
                       const root=scopes.at(-1)||document;
                       const normalizeSize=v=>{const t=String(v||'').trim().toUpperCase();return (t.match(/^EU\s*(\d{1,3})(?:\s*\([^)]*\))?$/i)||[])[1]||(t.match(/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}(?:[/-]\d{1,3})?)(?:\s*\([^)]*\))?$/i)||[])[1]||''};
+                      const selected=e=>e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-pressed')==='true'||/(?:^|[\\s_-])(active|checked|selected)(?:$|[\\s_-])/i.test(String(e.className||'')+' '+String(e.getAttribute('data-state')||''));
+                      const disabled=e=>e.disabled||e.getAttribute('aria-disabled')==='true'||/(?:^|[\\s_-])(disabled|sold-?out|unavailable|tukendi)(?:$|[\\s_-])/i.test(String(e.className||'')+' '+String(e.getAttribute('data-state')||''));
+                      const want=String(size).toUpperCase();
                       const target=[...root.querySelectorAll('button,[role=radio],[role=option],[role=button],[role=tab],li,label')]
-                        .find(e=>visible(e)&&normalizeSize(e.innerText||e.textContent)===String(size).toUpperCase());
-                      if(!target)return false;
+                        .find(e=>visible(e)&&!disabled(e)&&normalizeSize(e.innerText||e.textContent)===want);
+                      if(!target)return '';
+                      target.scrollIntoView({block:'center',inline:'center'});
                       target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'touch'}));
+                      target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
                       target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'touch'}));
-                      target.click(); return true;
+                      target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));
+                      target.click();
+                      const picked=[...root.querySelectorAll('button,[role=radio],[role=option],[role=button],[role=tab],li,label')]
+                        .find(e=>visible(e)&&selected(e));
+                      return normalizeSize((picked||target).innerText||(picked||target).textContent)||want;
                     }
                     """, label);
+                onScreen = clickResult?.Trim().ToUpperInvariant() ?? "";
+                clicked = !string.IsNullOrWhiteSpace(onScreen);
             }
             catch (PlaywrightException exception)
             {
@@ -340,7 +381,11 @@ public sealed partial class PlaywrightProductAgentService(
                 clicked = false;
             }
             if (!clicked) continue;
-            await Task.Delay(800, token);
+            interaction.Add(
+                "extracting-size-table",
+                "success",
+                $"Beden tuşuna basıldı: {label} → ekran {onScreen}.");
+            await Task.Delay(900, token);
             var measurements = await ReadCurrentMeasurementsAsync(page);
             if (measurements.Count == 0)
             {
@@ -351,7 +396,12 @@ public sealed partial class PlaywrightProductAgentService(
                     .ToDictionary(group => group.Key, group => group.Last().Value,
                         StringComparer.OrdinalIgnoreCase);
             }
-            if (measurements.Count > 0) rows.Add(new AgentSizeTableRow(label, measurements));
+            var rowSize = string.IsNullOrWhiteSpace(onScreen) ? label : onScreen;
+            if (measurements.Count > 0 &&
+                !rows.Any(row => row.Size.Equals(rowSize, StringComparison.OrdinalIgnoreCase)))
+            {
+                rows.Add(new AgentSizeTableRow(rowSize, measurements));
+            }
         }
         return rows;
     }
