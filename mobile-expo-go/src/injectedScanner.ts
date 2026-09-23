@@ -1891,32 +1891,40 @@ const scannerBootstrap = String.raw`
   const panelChart = async () => {
     let overlay = measurementOverlay() || findMeasurePanel() || findSizePanel() || document.body;
     if (!overlay) return null;
-    const sizeControls = () => {
+    const measureAnchor = () => measurementOverlay() || findMeasurePanel() || overlay;
+    const readStripControls = () => {
+      const strip = horizontalActiveSizeStrip(measureAnchor());
+      if (strip.length >= 2) return strip.map((item) => item.target);
       const local = containedSizeButtons(overlay);
-      if (local.length >= 2) return local;
+      if (local.length >= 2) return local.filter((button) => !isInactiveSizeControl(button));
       const nearby = findSizeButtons(overlay);
-      return nearby.length ? nearby : findSizeButtons(document);
+      const pool = nearby.length ? nearby : findSizeButtons(document);
+      return pool.filter((button) => !isInactiveSizeControl(button));
     };
-    const measureAnchor = measurementOverlay() || findMeasurePanel() || overlay;
-    const strip = horizontalActiveSizeStrip(measureAnchor);
-    const fallbackLabels = sizeControls()
-      .filter((button) => !isInactiveSizeControl(button))
-      .map((button) => sizeLabelFromText(controlText(button)))
-      .filter(Boolean)
-      .filter((size, index, values) => values.indexOf(size) === index);
-    const labels = (strip.length >= 2 ? strip.map((item) => item.label) : fallbackLabels).slice(0, 24);
+    const sizeRank = (label) => {
+      const letter = {
+        XXXS: 0, XXS: 1, XS: 2, S: 3, M: 4, L: 5, XL: 6, XXL: 7, XXXL: 8
+      };
+      if (Object.prototype.hasOwnProperty.call(letter, label)) return letter[label];
+      const numeric = Number(String(label).match(/^\d+/)?.[0] || NaN);
+      return Number.isFinite(numeric) ? 100 + numeric : 500;
+    };
+    const labels = (await collectSizeLabelsAcrossStrip(measureAnchor(), readStripControls))
+      .filter((size) => sizePattern.test(size))
+      .filter((size, index, values) => values.indexOf(size) === index)
+      .sort((left, right) => sizeRank(left) - sizeRank(right) || left.localeCompare(right))
+      .slice(0, 24);
+    if (labels.length < 2) return null;
     const records = [];
-    const seenMeasureKeys = new Set();
     let headers = null;
-    if (!labels.length) return null;
-    const initialLabel = strip.find((item) => selectedSizeButton(item.target))?.label ||
+    const initialLabel = selectedSizeLabel() ||
       labels.find((size) => {
-        const button = overlaySizeControl(measureAnchor, size);
+        const button = overlaySizeControl(measureAnchor(), size);
         return button && selectedSizeButton(button);
       }) ||
       "";
     const valuesNow = () => {
-      const nextOverlay = measurementOverlay() || findMeasurePanel() || overlay;
+      const nextOverlay = measureAnchor();
       return extractMeasurements(nextOverlay).map((item) => item.value).join("|");
     };
     const settleRead = () => new Promise((resolve) => {
@@ -1948,7 +1956,7 @@ const scannerBootstrap = String.raw`
         observer = new MutationObserver(() => { check(); });
         try {
           observer.observe(
-            measurementOverlay() || findMeasurePanel() || overlay || document.body,
+            measureAnchor() || document.body,
             { childList: true, subtree: true, characterData: true, attributes: true }
           );
         } catch (error) { recordDiagnostic("observer", error); }
@@ -1958,65 +1966,74 @@ const scannerBootstrap = String.raw`
           if (Date.now() - startedAt >= timeout) finish(false);
         }, 40);
       });
-    const measurementKey = (measurements) =>
-      measurements.map((item) => item.label + "=" + item.value).sort().join("|");
     const isCompleteRow = (measurements) => {
       if (!measurements || measurements.length < 2 || measurements.some((item) => !item.value)) return false;
       if (!headers) return true;
       const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
       return headers.slice(1).every((label) => byLabel.get(label));
     };
+    const findDomSizeButton = async (size) => {
+      overlay = measureAnchor() || overlay;
+      return await findSizeControlAcrossStrip(overlay, size, readStripControls) ||
+        overlaySizeControl(overlay, size) ||
+        horizontalActiveSizeStrip(overlay).find((item) => item.label === size)?.target ||
+        null;
+    };
+    const activateDomSize = async (size) => {
+      const button = await findDomSizeButton(size);
+      if (!button || isInactiveSizeControl(button)) return false;
+      button.scrollIntoView?.({ block: "center", inline: "center" });
+      await sleep(40);
+      const beforeValues = valuesNow();
+      const beforeSig = measureSignature();
+      const alreadyOn = selectedSizeButton(button) || selectedSizeLabel() === size;
+      if (alreadyOn && beforeValues) {
+        await settleRead();
+        return true;
+      }
+      guideStage = "Beden " + size + " tuşuna basılıyor";
+      progress(guideStage);
+      await clickElement(button, 60);
+      let activated = selectedSizeLabel() === size ||
+        valuesNow() !== beforeValues ||
+        measureSignature() !== beforeSig;
+      if (!activated) {
+        const inner = [...(button.querySelectorAll?.("span, div, p") || [])].find((node) =>
+          sizeLabelFromText(ownText(node) || controlText(node)) === size);
+        if (inner && inner !== button) {
+          await clickElement(inner, 60);
+          activated = selectedSizeLabel() === size ||
+            valuesNow() !== beforeValues ||
+            measureSignature() !== beforeSig;
+        }
+      }
+      if (!activated) {
+        activated = await waitUntilSizeActivates(size, beforeValues, beforeSig, 4500);
+      } else {
+        await waitUntilSizeActivates(size, beforeValues, beforeSig, 900);
+      }
+      await settleRead();
+      return activated || selectedSizeLabel() === size || Boolean(valuesNow());
+    };
     for (const size of labels) {
       guideStage = "Beden " + size + " ölçüleri okunuyor";
       progress(guideStage);
-      overlay = measurementOverlay() || findMeasurePanel() || overlay;
-      const button = strip.find((item) => item.label === size)?.target ||
-        overlaySizeControl(overlay, size) ||
-        sizeControls().find((candidate) =>
-          !isInactiveSizeControl(candidate) && sizeLabelFromText(controlText(candidate)) === size);
-      let domChanged = false;
-      if (button) {
-        const beforeValues = extractMeasurements(overlay).map((item) => item.value).join("|");
-        const before = measureSignature();
-        const alreadyOn = selectedSizeButton(button);
-        activated = alreadyOn;
-        if (!alreadyOn) {
-          await clickElement(button, 0);
-          domChanged = valuesNow() !== beforeValues || measureSignature() !== before;
-          if (!domChanged) {
-            const inner = [...(button.querySelectorAll?.("span, div") || [])].find((node) =>
-              sizeLabelFromText(ownText(node) || controlText(node)) === size);
-            if (inner && inner !== button && !selectedSizeButton(button)) {
-              await clickElement(inner, 0);
-              domChanged = valuesNow() !== beforeValues || measureSignature() !== before;
-            }
-          }
-          if (!domChanged) {
-            domChanged = await waitUntilValuesChange(beforeValues, before, 4200);
-          }
-          activated = changed || selectedSizeLabel() === size;
-          await settleRead();
-          if (!domChanged) continue;
-        } else if (!valuesNow()) {
-          await waitForStable(() => {
-            return valuesNow() || measureSignature();
-          }, 1800, 80, 40);
-        }
-      } else {
-        continue;
-      }
+      const activated = await activateDomSize(size);
       if (!activated) continue;
-      overlay = measurementOverlay() || findMeasurePanel() || overlay;
+      overlay = measureAnchor() || overlay;
+      await waitForStable(() => {
+        overlay = measureAnchor() || overlay;
+        const measurements = extractMeasurements(overlay);
+        return isCompleteRow(measurements) ? measurements : null;
+      }, 2800, 180, 50);
+      overlay = measureAnchor() || overlay;
       const measurements = extractMeasurements(overlay);
       if (!isCompleteRow(measurements)) continue;
-      const key = measurementKey(measurements);
-      if (seenMeasureKeys.has(key)) continue;
+      if (records.some((row) => row.cells[0] === size)) continue;
       const byLabel = new Map(measurements.map((item) => [item.label, item.value]));
       if (!headers) headers = ["Beden", ...measurements.map((item) => item.label)];
-      if (!isCompleteRow(measurements)) continue;
       const cells = [size, ...headers.slice(1).map((label) => byLabel.get(label) || "")];
       if (cells.slice(1).some((cell) => !cell)) continue;
-      seenMeasureKeys.add(key);
       records.push({ cells });
       if (records.length >= 2 && headers) {
         postChartProgress({
@@ -2031,21 +2048,12 @@ const scannerBootstrap = String.raw`
       }
     }
     if (initialLabel) {
-      overlay = measurementOverlay() || findMeasurePanel() || overlay;
-      const selectedNow = strip.find((item) => selectedSizeButton(item.target))?.label ||
-        sizeLabelFromText(selectedSizeEvidence().match(/\[selected\]\s*(\S+)/i)?.[1] || "");
-      if (selectedNow !== initialLabel) {
-        const restore = strip.find((item) => item.label === initialLabel)?.target ||
-          overlaySizeControl(overlay, initialLabel);
-        if (restore && !selectedSizeButton(restore)) {
-          const beforeValues = valuesNow();
-          const before = measureSignature();
-          await clickElement(restore, 0);
-          await waitUntilValuesChange(beforeValues, before, 2500);
-        }
+      overlay = measureAnchor() || overlay;
+      if (selectedSizeLabel() !== initialLabel) {
+        await activateDomSize(initialLabel);
       }
     }
-    const finalText = panelText(measurementOverlay() || findMeasurePanel() || overlay);
+    const finalText = panelText(measureAnchor() || overlay);
     if (!records.length || !headers || records.length < labels.length) return null;
     return {
       found: true,
@@ -2508,7 +2516,7 @@ const scannerBootstrap = String.raw`
       orderCards
     };
   };
-  window.__fitmemoryScannerVersion = "1.25.37";
+  window.__fitmemoryScannerVersion = "1.25.38";
   window.__fitmemoryScan = async (mode, visibleMeasurementsOnly) => {
     try {
       const snapshot = mode === "orders"
@@ -2545,7 +2553,7 @@ export function createScanScript(
   mode: "product" | "orders",
   visibleMeasurementsOnly = false,
 ) {
-  return `if (window.__fitmemoryScannerVersion !== "1.25.37" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
+  return `if (window.__fitmemoryScannerVersion !== "1.25.38" || typeof window.__fitmemoryScan !== "function") { ${scannerBootstrap} }
 window.__fitmemoryScan(${JSON.stringify(mode)}, ${JSON.stringify(visibleMeasurementsOnly)});
 true;`;
 }
