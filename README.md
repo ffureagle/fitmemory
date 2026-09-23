@@ -132,12 +132,13 @@ geçmeyin.
 Ücretsiz Render örneği uykuya yatar; ilk istek 50 saniyeden uzun sürebilir.
 Kalıcı çözüm plan yükseltmektir. İstemciler önce `/health` ile uyandırır.
 
-Üretim deposu SQLite dosyasıdır (`/app/data/fitmemory.db`). Silinmiş
-Supabase projesi (`lwjynpkzpwzhofcgvzti`) açılışta denenmez. Ücretsiz
-örnek uyuyunca bu dosya silinebilir; telefon aynı e-posta ile girince
-yerel kasa profili ve dolabı geri yükler. Kalıcı sunucu dolabı için
-Render Environment ekranına yeni bir `DATABASE_URL` yazın. Parolayı
-sohbete yapıştırmayın.
+Üretim deposu Frankfurt’taki ücretsiz Render Postgres örneğidir
+(`fitmemory-db`). Blueprint senkronu bu örneği kurar ve özel ağ
+adresini `DATABASE_URL` olarak API’ye yazar. Parola dosyada durmaz.
+Ücretsiz veritabanı 30 gün sonra kapanır; plan yükseltilmezse Render
+14 günlük ek süreden sonra veriyi siler. Silinmiş Supabase projesi
+(`lwjynpkzpwzhofcgvzti`) açılışta denenmez. Telefon aynı e-posta ile
+girince yerel kasa profili ve dolabı geri yükler.
 
 Eski kırmızı **Exited with status 139** kartı 1 Ağustos sürümüdür.
 Onu yeniden başlatmayın ve Rollback yapmayın. Güncel imaj

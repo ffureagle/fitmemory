@@ -210,13 +210,21 @@ public static class FitMemoryDatabaseSelection
 
     public static void ApplyPostgresHardening(NpgsqlConnectionStringBuilder builder)
     {
-        builder.SslMode = SslMode.Require;
+        // Render's private-network host has no dot (dpg-…). Requiring TLS
+        // there makes the probe fail and the API falls back to SQLite.
+        builder.SslMode = RequiresTls(builder.Host) ? SslMode.Require : SslMode.Disable;
         builder.Timeout = Math.Max(builder.Timeout, 30);
         builder.CommandTimeout = Math.Max(builder.CommandTimeout, 30);
         builder.MaxAutoPrepare = 0;
         builder["GSS Encryption Mode"] = "Disable";
         builder["Channel Binding"] = "Disable";
         builder["No Reset On Close"] = "true";
+    }
+
+    public static bool RequiresTls(string? host)
+    {
+        return !string.IsNullOrWhiteSpace(host) &&
+               host.Contains('.', StringComparison.Ordinal);
     }
 
     private static bool ContainsRetiredRef(string? value)
