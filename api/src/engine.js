@@ -45,6 +45,17 @@ export function analyzeRecommendation(profile, orders, request) {
       [], "local");
   }
 
+  const measuredSizeCount = new Set(candidates
+    .filter((item) => item.measurements && Object.keys(item.measurements).length > 0)
+    .map((item) => item.label)).size;
+  if (measuredSizeCount === 1) {
+    return result("Bilinmiyor", 0,
+      "Tek beden satırıyla öneri üretilmedi.",
+      "Ölçü tablosunda karşılaştırılabilir en az iki beden satırı yok. FitMemory tek satırdan beden seçmedi.",
+      ["Yatay beden şeridindeki diğer bedenler okunana kadar öneri üretilmez."],
+      [], "local-insufficient");
+  }
+
   const targets = buildTargets(profile, orders, request.product);
   const evaluated = candidates.map((candidate, index) =>
     scoreCandidate(candidate, targets, profile, request.product, index));
@@ -290,6 +301,13 @@ function chestTargetValue(profile, product, measurementKind) {
     return body / 2 + chestEaseWidth(product, profile.fitPreference);
   }
   return body;
+}
+
+function evenEuFromWaist(waistCircumferenceCm) {
+  const waist = Number(waistCircumferenceCm);
+  if (!Number.isFinite(waist) || waist <= 0) return 0;
+  const raw = Math.round(waist / 2);
+  return raw % 2 === 0 ? raw : raw - 1;
 }
 
 function scoreCandidate(candidate, targets, profile, product, index) {

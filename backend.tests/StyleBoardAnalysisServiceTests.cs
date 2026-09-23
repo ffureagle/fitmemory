@@ -1,6 +1,6 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
-using System.Text.Json;
 using FitMemory.Api.Models;
 using FitMemory.Api.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -11,152 +11,148 @@ namespace FitMemory.Api.Tests;
 public sealed class StyleBoardAnalysisServiceTests
 {
     [Fact]
-    public async Task GeminiRequestIncludesTrustedProductImages()
+    public async Task AiFailureNamesProductsInsteadOfFixedStrongScore()
     {
-        string? geminiRequest = null;
-        var handler = new StubHandler(async request =>
+        var posts = 0;
+        var service = Create(_ =>
         {
-            if (request.Method == HttpMethod.Get)
+            posts++;
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new ByteArrayContent([1, 2, 3, 4])
-                    {
-                        Headers =
-                        {
-                            ContentType =
-                                new System.Net.Http.Headers.MediaTypeHeaderValue(
-                                    "image/jpeg")
-                        }
-                    }
-                };
-            }
-
-            geminiRequest = await request.Content!.ReadAsStringAsync();
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    """
-                    {
-                      "candidates": [{
-                        "content": {
-                          "parts": [{
-                            "text": "{\"verdict\":\"Güçlü\",\"score\":82,\"headline\":\"Renk ve oran dengeli\",\"explanation\":\"Görseller birlikte çalışıyor.\",\"notes\":[],\"seasonContext\":\"Eylül · Sonbahar\"}"
-                          }]
-                        }
-                      }]
-                    }
-                    """,
-                    Encoding.UTF8,
-                    "application/json")
+                Content = new StringContent("unavailable")
             };
         });
-        var service = CreateService(new HttpClient(handler));
-        var profile = Profile();
 
         var result = await service.AnalyzeAsync(
-            profile,
-            [
-                Item(
-                    profile,
-                    1,
-                    "Gömlek",
-                    "Üst",
-                    "https://static.pullandbear.net/image.jpg"),
-                Item(profile, 2, "Jean", "Alt", "")
-            ],
+            Profile(),
+            Items(inditexImage: false),
             "tr",
             "",
             CancellationToken.None);
 
-        Assert.NotNull(geminiRequest);
-        Assert.Contains("\"inlineData\"", geminiRequest);
-        Assert.Contains(Convert.ToBase64String([1, 2, 3, 4]), geminiRequest);
-        using var payload = JsonDocument.Parse(geminiRequest);
-        var evidence = payload.RootElement
-            .GetProperty("contents")[0]
-            .GetProperty("parts")
-            .EnumerateArray()
-            .Last(part => part.TryGetProperty("text", out var text) &&
-                          text.GetString()?.Contains(
-                              "selectedProducts",
-                              StringComparison.Ordinal) == true)
-            .GetProperty("text")
-            .GetString();
-        Assert.Contains("\"hasAttachedImage\":true", evidence);
-        Assert.Equal(82, result.Score);
+        Assert.Equal(2, posts);
+        Assert.Equal("Kanıt eksik", result.Verdict);
+        Assert.Equal(0, result.Score);
+        Assert.NotEqual("Güçlü", result.Verdict);
+        Assert.Contains("Zara Boxy tişört", result.Explanation);
+        Assert.Contains("Pull&Bear Straight jean", result.Explanation);
+        Assert.Contains("Zara Boxy tişört", result.Notes);
+        Assert.Contains("Pull&Bear Straight jean", result.Notes);
     }
 
     [Fact]
-    public async Task AiFailureDoesNotClaimUnverifiedVisualCompatibility()
+    public async Task GeminiSendsInditexInlineImageAndRetriesOnce()
     {
-        var handler = new StubHandler(_ =>
-            Task.FromResult(new HttpResponseMessage(
-                HttpStatusCode.ServiceUnavailable)));
-        var service = CreateService(new HttpClient(handler));
-        var profile = Profile();
+        var posts = 0;
+        var downloads = new List<string>();
+        string? geminiBody = null;
+        var service = Create(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                downloads.Add(request.RequestUri!.Host);
+                if (!request.RequestUri.Host.Equals("static.zara.net", StringComparison.Ordinal))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+
+                var image = new ByteArrayContent([0xFF, 0xD8, 0xFF]);
+                image.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = image };
+            }
+
+            posts++;
+            geminiBody = request.Content is null
+                ? ""
+                : request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (posts == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("busy")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(GeminiOk, Encoding.UTF8, "application/json")
+            };
+        });
 
         var result = await service.AnalyzeAsync(
-            profile,
-            [
-                Item(profile, 1, "Ceket", "Dış giyim", ""),
-                Item(profile, 2, "Jean", "Alt", "")
-            ],
+            Profile(),
+            Items(inditexImage: true),
             "tr",
-            "",
+            "iş için",
             CancellationToken.None);
 
-        Assert.Equal("Kanıt eksik", result.Verdict);
-        Assert.True(result.Score <= 58);
-        Assert.Contains(
-            "görsel",
-            result.Explanation,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["static.zara.net"], downloads);
+        Assert.Equal(2, posts);
+        Assert.NotNull(geminiBody);
+        Assert.Contains("inlineData", geminiBody, StringComparison.Ordinal);
+        Assert.Contains("/9j/", geminiBody, StringComparison.Ordinal);
+        Assert.Contains("image/jpeg", geminiBody, StringComparison.Ordinal);
+        Assert.Equal("Güçlü", result.Verdict);
+        Assert.Equal(81, result.Score);
+        Assert.NotEqual("Kanıt eksik", result.Verdict);
     }
 
-    private static StyleBoardAnalysisService CreateService(HttpClient client) =>
-        new(
+    private const string GeminiOk =
+        """
+        {"candidates":[{"content":{"parts":[{"text":"{\"verdict\":\"Güçlü\",\"score\":81,\"headline\":\"Dengeli üst ve alt\",\"explanation\":\"Parçalar birlikte çalışıyor.\",\"notes\":[\"Üst ve alt dengeli.\"],\"seasonContext\":\"Eylül\"}"}]}}]}
+        """;
+
+    private static StyleBoardAnalysisService Create(
+        Func<HttpRequestMessage, HttpResponseMessage> respond)
+    {
+        var client = new HttpClient(new ScriptedHandler(respond));
+        return new StyleBoardAnalysisService(
             client,
             Options.Create(new AiProviderOptions { Provider = "Gemini" }),
-            Options.Create(new GeminiOptions { ApiKey = "test-key" }),
+            Options.Create(new GeminiOptions { ApiKey = "test-key", Model = "gemini-test" }),
             Options.Create(new OpenAiOptions()),
             NullLogger<StyleBoardAnalysisService>.Instance);
+    }
 
     private static UserProfile Profile() => new()
     {
-        UserId = "test-user",
-        Age = 26,
-        HeightCm = 175,
-        WeightKg = 70,
-        ShoulderWidthCm = 44,
-        WaistCircumferenceCm = 80
+        UserId = "style-board-user",
+        FitPreference = FitPreference.TrueToSize
     };
+
+    private static IReadOnlyList<StyleBoardItem> Items(bool inditexImage)
+    {
+        var profile = Profile();
+        return
+        [
+            Item(profile, "Zara", "Boxy tişört", "Tişört",
+                inditexImage ? "https://static.zara.net/photos/boxy.jpg" : ""),
+            Item(profile, "Pull&Bear", "Straight jean", "Pantolon",
+                "https://cdn.evil.test/look.jpg")
+        ];
+    }
 
     private static StyleBoardItem Item(
         UserProfile profile,
-        int id,
+        string brand,
         string name,
         string category,
         string imageUrl) => new()
     {
-        Id = id,
         UserProfile = profile,
-        ProductUrl = $"https://www.pullandbear.com/{id}",
-        Brand = "Pull&Bear",
+        ProductUrl = $"https://www.zara.com/tr/tr/{name.ToLowerInvariant()}-p1.html",
+        Brand = brand,
         ProductName = name,
         Category = category,
-        ImageUrl = imageUrl,
-        FitLabel = "Regular",
-        IsSelected = true,
-        IsInStudio = true
+        ImageUrl = imageUrl
     };
 
-    private sealed class StubHandler(
-        Func<HttpRequestMessage, Task<HttpResponseMessage>> send)
+    private sealed class ScriptedHandler(Func<HttpRequestMessage, HttpResponseMessage> respond)
         : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) => send(request);
+            CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
     }
 }

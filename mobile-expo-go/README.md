@@ -2,7 +2,7 @@
 
 Aynı FitMemory arayüzü, Expo Go içinde. Native OCR yok; tarama DOM + Render API ile çalışır. Oturum telefonda kalır.
 
-**Önemli:** Telefonda **Expo Go SDK 57** olmalı. App Store’daki güncel Expo Go budur. Eski `exposdk:54.0.0` güncelleme bağlantısı bu sürümle açılmaz; aşağıdaki komutla yeni QR üret.
+**Önemli:** Telefonda **Expo Go SDK 57** olmalı. App Store / Play Store’daki Expo Go eskiyse proje açılmaz. Expo Go içinde Hesap → SDK 57 görünmeli.
 
 ## Telefona yükle (QR)
 

@@ -291,7 +291,21 @@ export function SessionProvider({ children }: PropsWithChildren) {
             .saveProfile(
               currentAccount.userId,
               currentToken,
-              profileForServerSync(pending),
+              profileForServerSync({
+                age: pending.age,
+                heightCm: pending.heightCm,
+                weightKg: pending.weightKg,
+                shoulderWidthCm: pending.shoulderWidthCm,
+                chestCircumferenceCm: pending.chestCircumferenceCm,
+                waistCircumferenceCm: pending.waistCircumferenceCm,
+                hipCircumferenceCm: pending.hipCircumferenceCm,
+                frontWaistCm: pending.frontWaistCm,
+                inseamCm: pending.inseamCm,
+                backWaistCm: pending.backWaistCm,
+                footLengthCm: pending.footLengthCm,
+                usualShoeSizeEu: pending.usualShoeSizeEu,
+                fitPreference: pending.fitPreference,
+              }),
             )
             .then(async (saved) => {
               setProfile(saved);
@@ -599,7 +613,21 @@ export function SessionProvider({ children }: PropsWithChildren) {
     const saved = await api.saveProfile(
       account.userId,
       token,
-      profileForServerSync(pending),
+      profileForServerSync({
+        age: pending.age,
+        heightCm: pending.heightCm,
+        weightKg: pending.weightKg,
+        shoulderWidthCm: pending.shoulderWidthCm,
+        chestCircumferenceCm: pending.chestCircumferenceCm,
+        waistCircumferenceCm: pending.waistCircumferenceCm,
+        hipCircumferenceCm: pending.hipCircumferenceCm,
+        frontWaistCm: pending.frontWaistCm,
+        inseamCm: pending.inseamCm,
+        backWaistCm: pending.backWaistCm,
+        footLengthCm: pending.footLengthCm,
+        usualShoeSizeEu: pending.usualShoeSizeEu,
+        fitPreference: pending.fitPreference,
+      }),
     );
     setProfile(saved);
     await clearPendingProfile();

@@ -434,6 +434,10 @@ export function ScanScreen({
         "açık bırakıp tekrar dene.",
       );
     }
+    if (nextSnapshot.sizeChart.rows.length < 2) {
+      if (options?.silent) return;
+      throw new Error("Açık panelde yalnız seçili bedenin milimleri okundu; diğer bedenler toplanamadı. Ölçü tablosunu açık bırakıp tekrar dene.");
+    }
     if (!session.profile) {
       if (options?.silent) return;
       throw new Error("Beden önerisi için önce profilini kaydet.");
@@ -588,7 +592,7 @@ export function ScanScreen({
     if (
       localSnapshot &&
       hasVerifiedSnapshot(localSnapshot) &&
-      hasCompleteSizeCoverage(localSnapshot.sizeChart)
+      localSnapshot.sizeChart.rows.length >= 2
     ) {
       await analyzeSnapshot(localSnapshot);
       return;

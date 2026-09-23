@@ -34,63 +34,82 @@ public sealed class StyleBoardAnalysisService(
 
         try
         {
-            AiStyleBoardResult? result = null;
-            if (providerOptions.Value.IsGemini &&
-                !string.IsNullOrWhiteSpace(geminiOptions.Value.ApiKey))
-            {
-                result = await RetryProviderAsync(
-                    () => AnalyzeWithGeminiAsync(
-                        profile,
-                        items,
-                        local,
-                        language,
-                        userRequest,
-                        cancellationToken),
-                    cancellationToken);
-            }
-            else if (providerOptions.Value.IsOpenAi &&
-                     !string.IsNullOrWhiteSpace(openAiOptions.Value.ApiKey))
-            {
-                result = await RetryProviderAsync(
-                    () => AnalyzeWithOpenAiAsync(
-                        profile,
-                        items,
-                        local,
-                        language,
-                        userRequest,
-                        cancellationToken),
-                    cancellationToken);
-            }
-
-            return result is null ? local : Normalize(result, local);
+            var result = await AnalyzeProviderWithRetryAsync(
+                profile,
+                items,
+                local,
+                language,
+                userRequest,
+                cancellationToken);
+            return result is null
+                ? MissingEvidence(items, language)
+                : Normalize(result, local);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning(
                 exception,
-                "Kombin Stüdyosu AI değerlendirmesi kullanılamadı; yerel stil eleştirisi korunuyor.");
-            return BuildAiUnavailableFallback(local, items);
+                "Kombin Stüdyosu AI değerlendirmesi kullanılamadı; sabit puan yerine kanıt eksik sonucu dönülüyor.");
+            return MissingEvidence(items, language);
         }
     }
 
-    private async Task<AiStyleBoardResult> RetryProviderAsync(
-        Func<Task<AiStyleBoardResult>> analyze,
+    private async Task<AiStyleBoardResult?> AnalyzeProviderWithRetryAsync(
+        UserProfile profile,
+        IReadOnlyList<StyleBoardItem> items,
+        StyleBoardAnalysisResponse local,
+        string language,
+        string userRequest,
         CancellationToken cancellationToken)
     {
-        try
+        IReadOnlyList<ProductInlineImage> images = providerOptions.Value.IsGemini
+            ? await DownloadInditexImagesAsync(items, cancellationToken)
+            : Array.Empty<ProductInlineImage>();
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            return await analyze();
+            try
+            {
+                if (providerOptions.Value.IsGemini &&
+                    !string.IsNullOrWhiteSpace(geminiOptions.Value.ApiKey))
+                {
+                    return await AnalyzeWithGeminiAsync(
+                        profile,
+                        items,
+                        local,
+                        language,
+                        userRequest,
+                        images,
+                        cancellationToken);
+                }
+
+                if (providerOptions.Value.IsOpenAi &&
+                    !string.IsNullOrWhiteSpace(openAiOptions.Value.ApiKey))
+                {
+                    return await AnalyzeWithOpenAiAsync(
+                        profile,
+                        items,
+                        local,
+                        language,
+                        userRequest,
+                        cancellationToken);
+                }
+
+                return null;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Kombin Stüdyosu AI isteği başarısız oldu (deneme {Attempt}/2).",
+                    attempt);
+                if (attempt == 2)
+                {
+                    return null;
+                }
+            }
         }
-        catch (Exception exception)
-            when (exception is not OperationCanceledException &&
-                  !cancellationToken.IsCancellationRequested)
-        {
-            logger.LogWarning(
-                exception,
-                "Kombin Stüdyosu AI isteği ilk denemede başarısız oldu; bir kez daha denenecek.");
-            await Task.Delay(TimeSpan.FromMilliseconds(650), cancellationToken);
-            return await analyze();
-        }
+
+        return null;
     }
 
     private async Task<AiStyleBoardResult> AnalyzeWithGeminiAsync(
@@ -99,16 +118,26 @@ public sealed class StyleBoardAnalysisService(
         StyleBoardAnalysisResponse local,
         string language,
         string userRequest,
+        IReadOnlyList<ProductInlineImage> images,
         CancellationToken cancellationToken)
     {
         var settings = geminiOptions.Value;
-        var parts = await BuildGeminiPartsAsync(
-            profile,
-            items,
-            local,
-            language,
-            userRequest,
-            cancellationToken);
+        var parts = new List<object>
+        {
+            new { text = BuildEvidence(profile, items, local, userRequest) }
+        };
+        foreach (var image in images)
+        {
+            parts.Add(new { text = $"Ürün görseli: {image.Name}" });
+            parts.Add(new
+            {
+                inlineData = new
+                {
+                    mimeType = image.MimeType,
+                    data = image.Base64
+                }
+            });
+        }
         var payload = new
         {
             systemInstruction = new
@@ -390,6 +419,169 @@ public sealed class StyleBoardAnalysisService(
                    "OpenAI kombin değerlendirmesi okunamadı.");
     }
 
+    private async Task<IReadOnlyList<ProductInlineImage>> DownloadInditexImagesAsync(
+        IReadOnlyList<StyleBoardItem> items,
+        CancellationToken cancellationToken)
+    {
+        var images = new List<ProductInlineImage>();
+        foreach (var item in items)
+        {
+            if (images.Count >= 8)
+            {
+                break;
+            }
+
+            var image = await TryReadInditexImageAsync(item, cancellationToken);
+            if (image is not null)
+            {
+                images.Add(image);
+            }
+        }
+
+        return images;
+    }
+
+    private async Task<ProductInlineImage?> TryReadInditexImageAsync(
+        StyleBoardItem item,
+        CancellationToken cancellationToken)
+    {
+        var value = item.ImageUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(value) ||
+            !Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            !IsTrustedInditexImageHost(uri.Host))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(12));
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.TryAddWithoutValidation(
+                "User-Agent",
+                "Mozilla/5.0 (compatible; FitMemory/1.0)");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/jpeg"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/png"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/webp"));
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeout.Token);
+            var finalUri = response.RequestMessage?.RequestUri ?? uri;
+            if (!response.IsSuccessStatusCode ||
+                finalUri.Scheme != Uri.UriSchemeHttps ||
+                !IsTrustedInditexImageHost(finalUri.Host))
+            {
+                return null;
+            }
+
+            var mimeType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
+            if (mimeType is not ("image/jpeg" or "image/png" or "image/webp"))
+            {
+                return null;
+            }
+
+            if (response.Content.Headers.ContentLength is > MaxImageBytes)
+            {
+                return null;
+            }
+
+            await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var output = new MemoryStream();
+            var buffer = new byte[32_768];
+            while (true)
+            {
+                var read = await input.ReadAsync(buffer, timeout.Token);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                if (output.Length + read > MaxImageBytes)
+                {
+                    return null;
+                }
+
+                output.Write(buffer, 0, read);
+            }
+
+            if (output.Length == 0)
+            {
+                return null;
+            }
+
+            var name = string.Join(" ", new[] { item.Brand, item.ProductName }
+                .Where(part => !string.IsNullOrWhiteSpace(part))
+                .Select(part => part.Trim()));
+            return new ProductInlineImage(
+                string.IsNullOrWhiteSpace(name) ? "Seçili ürün" : name,
+                mimeType,
+                Convert.ToBase64String(output.ToArray()));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Inditex ürün görseli AI isteğine eklenemedi.");
+            return null;
+        }
+    }
+
+    private static bool IsTrustedInditexImageHost(string host)
+    {
+        var normalized = host.Trim().Trim('.').ToLowerInvariant();
+        string[] suffixes =
+        [
+            "zara.com", "zara.net",
+            "pullandbear.com", "pullandbear.net",
+            "bershka.com", "bershka.net",
+            "massimodutti.com", "massimodutti.net",
+            "stradivarius.com", "stradivarius.net", "e-stradivarius.net",
+            "oysho.com", "oysho.net",
+            "lefties.com",
+            "inditex.com", "inditex.net"
+        ];
+        return suffixes.Any(suffix =>
+            normalized == suffix ||
+            normalized.EndsWith($".{suffix}", StringComparison.Ordinal));
+    }
+
+    private static StyleBoardAnalysisResponse MissingEvidence(
+        IReadOnlyList<StyleBoardItem> items,
+        string language)
+    {
+        var names = items
+            .Select(item => string.Join(" ", new[] { item.Brand, item.ProductName }
+                .Where(part => !string.IsNullOrWhiteSpace(part))
+                .Select(part => part.Trim())))
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToArray();
+        var listed = names.Length == 0 ? "seçili ürünler" : string.Join(", ", names);
+        var english = language.Equals("en", StringComparison.OrdinalIgnoreCase);
+        var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(3));
+        return new StyleBoardAnalysisResponse(
+            english ? "Evidence missing" : "Kanıt eksik",
+            0,
+            english
+                ? "Visual evidence for the selected products is incomplete."
+                : "Seçili ürünler için görsel kanıt tamamlanamadı.",
+            english
+                ? $"Evidence missing: {listed}. Product photos could not be read from a trusted Inditex address or the AI request failed, so no fixed outfit score was produced."
+                : $"Kanıt eksik: {listed}. Ürün görselleri güvenilir bir Inditex adresinden okunamadı veya AI isteği başarısız oldu; sabit bir kombin puanı üretilmedi.",
+            names.Length == 0
+                ? ["Kanıt eksik"]
+                : names,
+            $"{TurkishMonth(now.Month)} · {(english ? "Evidence missing" : "Kanıt eksik")}",
+            DateTimeOffset.UtcNow);
+    }
+
     private static StyleBoardAnalysisResponse BuildLocal(
         IReadOnlyList<StyleBoardItem> items)
     {
@@ -556,7 +748,7 @@ public sealed class StyleBoardAnalysisService(
         return $"""
             Sen FitMemory Kombin Stüdyosu'nun eleştirel kıdemli stilistisin. Kullanıcı henüz satın almadığı gerçek ürünleri seçti.
             Her seti otomatik olarak övme. Yalnız verilen ürün kanıtını kullan; renk, kumaş veya kalıp uydurma.
-            Her "SEÇİLİ PARÇA #id" metninin hemen arkasındaki görsel o parçaya aittir. hasAttachedImage=true olan her parçanın görselini gerçekten incele; renk, desen, ürün boyu, hacim ve üst-alt oranı değerlendirmene dahil et. Görseli eklenemeyen parça için görünüş uydurma.
+            Ekli inline görseller seçili ürünlerin fotoğraflarıdır. Renk, desen ve silueti yalnız o görsellerde gerçekten gördüğün kanıttan yaz.
             Renk uyumu, siluet hacmi, üst-alt boy oranı, katman mantığı, yaş/kullanım bağlamı ve Türkiye'deki mevcut ayı birlikte değerlendir.
             currentLocalTime ve localGuard mevsim konusunda bağlayıcıdır. Yazın kalın dış giyim, kaban, yoğun triko ve gereksiz çok katman; kışın korumasız ince yaz parçaları önerme. Kullanıcı açıkça farklı bir şehir, seyahat veya hava koşulu yazmadıkça Türkiye'nin mevcut mevsimini esas al.
             Mevsimsel renkleri katı moda kuralı gibi dayatma; yazın açık/nötr/doğal veya kontrollü canlı tonları, sonbaharda toprak ve derin nötrleri, kışın doygun koyu/nötrleri, ilkbaharda daha ferah ve yumuşak kontrastları önceliklendir. Yalnız ürün adında ya da kanıtta gerçekten görülen renkler hakkında konuş.
@@ -696,6 +888,10 @@ public sealed class StyleBoardAnalysisService(
             ? normalized
             : normalized[..maxLength];
     }
+
+    private const int MaxImageBytes = 1_500_000;
+
+    private sealed record ProductInlineImage(string Name, string MimeType, string Base64);
 
     private sealed record AiStyleBoardResult(
         string Verdict,

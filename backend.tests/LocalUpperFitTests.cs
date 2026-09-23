@@ -33,6 +33,25 @@ public sealed class LocalUpperFitTests
     }
 
     [Fact]
+    public void SingleMeasuredSizeRowDoesNotRecommend()
+    {
+        var result = AnalyzeTee(new SizeChartDto
+        {
+            Found = true,
+            Title = "Ürün ölçüleri",
+            Unit = "Centimeters",
+            Headers = ["Beden", "Göğüs"],
+            Rows = [new SizeChartRowDto { Cells = ["M", "52"] }],
+            RawText = ""
+        });
+
+        Assert.Equal("Bilinmiyor", result.RecommendedSize);
+        Assert.Equal("local-insufficient", result.DataSource);
+        Assert.Contains("tek", result.Verdict, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(78, result.Confidence);
+    }
+
+    [Fact]
     public void MerchantOneSizeDownShiftsMeasuredTee()
     {
         var result = AnalyzeTee(
