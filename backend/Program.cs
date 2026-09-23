@@ -100,6 +100,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var databaseOptions = FitMemoryDatabaseSelection.Resolve(builder.Configuration);
+if (!string.IsNullOrWhiteSpace(databaseOptions.Notice))
+{
+    Console.Error.WriteLine(databaseOptions.Notice);
+}
+
 if (!string.IsNullOrWhiteSpace(databaseOptions.FallbackReason))
 {
     Console.Error.WriteLine(
@@ -120,7 +125,8 @@ builder.Services.AddDbContext<FitMemoryDbContext>(options =>
         return;
     }
 
-    options.UseSqlite(databaseOptions.ConnectionString);
+    options.UseSqlite(databaseOptions.ConnectionString)
+        .AddInterceptors(new SqliteSessionPragmasInterceptor());
 });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>

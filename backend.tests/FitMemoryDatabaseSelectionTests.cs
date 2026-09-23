@@ -51,6 +51,38 @@ public sealed class FitMemoryDatabaseSelectionTests
     }
 
     [Fact]
+    public void RetiredSupabaseProjectUsesSqliteWithoutProbe()
+    {
+        var probed = false;
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DB_PROVIDER"] = "postgres",
+                ["DATABASE_URL"] =
+                    "postgres://postgres.lwjynpkzpwzhofcgvzti:secret-value@aws-0-eu-central-1.pooler.supabase.com:5432/postgres",
+                ["SQLITE_PATH"] = "/tmp/fitmemory-retired.db"
+            })
+            .Build();
+
+        var options = FitMemoryDatabaseSelection.Resolve(
+            configuration,
+            _ =>
+            {
+                probed = true;
+                return "should not probe";
+            });
+
+        Assert.False(probed);
+        Assert.False(options.UsePostgreSql);
+        Assert.Null(options.FallbackReason);
+        Assert.Equal(
+            FitMemoryDatabaseSelection.RetiredSupabaseNotice,
+            options.Notice);
+        Assert.Equal("Data Source=/tmp/fitmemory-retired.db", options.ConnectionString);
+        Assert.DoesNotContain("secret-value", options.Notice, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void KeepsPostgresWhenProbeSucceeds()
     {
         var configuration = new ConfigurationBuilder()

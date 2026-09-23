@@ -132,11 +132,12 @@ geçmeyin.
 Ücretsiz Render örneği uykuya yatar; ilk istek 50 saniyeden uzun sürebilir.
 Kalıcı çözüm plan yükseltmektir. İstemciler önce `/health` ile uyandırır.
 
-`render.yaml` içindeki eski Supabase proje kimliği artık yok. Postgres
-yanıt vermezse API `/app/data/fitmemory.db` dosyasına yazar. Bu dosya
-ücretsiz örnek uyuyunca silinebilir; kalıcı dolap için canlı bir
-PostgreSQL adresi (`DATABASE_URL` veya `POSTGRES_HOST`) gerekir. Parolayı
-sohbete yapıştırmayın, Render Environment ekranına yazın.
+Üretim deposu SQLite dosyasıdır (`/app/data/fitmemory.db`). Silinmiş
+Supabase projesi (`lwjynpkzpwzhofcgvzti`) açılışta denenmez. Ücretsiz
+örnek uyuyunca bu dosya silinebilir; telefon aynı e-posta ile girince
+yerel kasa profili ve dolabı geri yükler. Kalıcı sunucu dolabı için
+Render Environment ekranına yeni bir `DATABASE_URL` yazın. Parolayı
+sohbete yapıştırmayın.
 
 Eski kırmızı **Exited with status 139** kartı 1 Ağustos sürümüdür.
 Onu yeniden başlatmayın ve Rollback yapmayın. Güncel imaj

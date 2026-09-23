@@ -6,10 +6,20 @@ namespace FitMemory.Api.Data;
 public sealed record FitMemoryDatabaseOptions(
     bool UsePostgreSql,
     string ConnectionString,
-    string? FallbackReason);
+    string? FallbackReason,
+    string? Notice = null);
 
 public static class FitMemoryDatabaseSelection
 {
+    /// <summary>
+    /// Supabase project deleted upstream. Every pooler answers
+    /// "tenant/user not found" before authentication, so probing it only
+    /// delays startup and marks the healthy SQLite store as a fallback.
+    /// </summary>
+    public const string RetiredSupabaseProjectRef = "lwjynpkzpwzhofcgvzti";
+
+    public const string RetiredSupabaseNotice =
+        "Configured Supabase project is retired; using the local SQLite store.";
     public static FitMemoryDatabaseOptions Resolve(
         IConfiguration configuration,
         Func<string, string?>? probePostgresError = null)
@@ -43,6 +53,15 @@ public static class FitMemoryDatabaseSelection
             return new FitMemoryDatabaseOptions(false, sqliteConnection, null);
         }
 
+        if (IsRetiredSupabaseConnection(postgresConnection))
+        {
+            return new FitMemoryDatabaseOptions(
+                false,
+                sqliteConnection,
+                null,
+                RetiredSupabaseNotice);
+        }
+
         var probe = probePostgresError ?? ProbePostgresError;
         var probeError = probe(postgresConnection);
         if (string.IsNullOrWhiteSpace(probeError))
@@ -54,6 +73,13 @@ public static class FitMemoryDatabaseSelection
             false,
             sqliteConnection,
             Sanitize(probeError));
+    }
+
+    public static bool IsRetiredSupabaseConnection(string connectionString)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString);
+        return ContainsRetiredRef(builder.Username) ||
+               ContainsRetiredRef(builder.Host);
     }
 
     public static string? ProbePostgresError(string connectionString)
@@ -191,6 +217,14 @@ public static class FitMemoryDatabaseSelection
         builder["GSS Encryption Mode"] = "Disable";
         builder["Channel Binding"] = "Disable";
         builder["No Reset On Close"] = "true";
+    }
+
+    private static bool ContainsRetiredRef(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.Contains(
+                   RetiredSupabaseProjectRef,
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     public static string SqliteConnectionString(IConfiguration configuration)
